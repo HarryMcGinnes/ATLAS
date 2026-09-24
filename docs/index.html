@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>ATLAS | Defence</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Arial, Helvetica, sans-serif;
+            background: #f6f6f6;
+            color: #222;
+        }
+
+        header {
+            background: #000;
+            color: white;
+            padding: 24px 40px;
+        }
+
+        .brand {
+            font-size: 34px;
+            font-weight: 700;
+            letter-spacing: 3px;
+        }
+
+        .subtitle {
+            margin-top: 6px;
+            color: #d0d0d0;
+            font-size: 15px;
+        }
+
+        main {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 60px 30px;
+        }
+
+        h1 {
+            font-size: 38px;
+            margin-bottom: 8px;
+        }
+
+        .intro {
+            color: #666;
+            margin-bottom: 40px;
+            font-size: 17px;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 24px;
+        }
+
+        .dashboard-card {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            text-decoration: none;
+            color: #222;
+            border: 1px solid #e6e6e6;
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .dashboard-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+        }
+
+        .dashboard-card h2 {
+            margin: 0 0 10px 0;
+            font-size: 22px;
+        }
+
+        .dashboard-card p {
+            margin: 0;
+            color: #666;
+            line-height: 1.5;
+        }
+
+        footer {
+            margin-top: 60px;
+            padding-top: 24px;
+            border-top: 1px solid #ddd;
+            color: #777;
+            font-size: 13px;
+        }
+
+        @media (max-width: 700px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+
+            header {
+                padding: 20px;
+            }
+
+            main {
+                padding: 40px 20px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+<header>
+    <div class="brand">ATLAS</div>
+    <div class="subtitle">Addressable Market Intelligence</div>
+</header>
+
+<main>
+
+    <h1>Defence Market Intelligence</h1>
+
+    <div class="intro">
+        Explore the Australian Defence procurement market, competitive landscape,
+        spending trends and contract activity.
+    </div>
+
+    <div class="dashboard-grid">
+
+        <a class="dashboard-card" href="#">
+            <h2>TAM Overview</h2>
+            <p>
+                Understand total Defence procurement, the addressable market,
+                Accenture performance and supplier market share.
+            </p>
+        </a>
+
+        <a class="dashboard-card" href="#">
+            <h2>Competitive Intelligence</h2>
+            <p>
+                Compare suppliers across market share, Service Offerings,
+                domains and active contracts.
+            </p>
+        </a>
+
+        <a class="dashboard-card" href="#">
+            <h2>Service Offering Growth</h2>
+            <p>
+                Explore historical spending patterns and growth across
+                Service Offerings and market segments.
+            </p>
+        </a>
+
+        <a class="dashboard-card" href="#">
+            <h2>Contract Explorer</h2>
+            <p>
+                Drill into agencies, divisions, branches, suppliers,
+                domains and individual contracts.
+            </p>
+        </a>
+
+    </div>
+
+    <footer>
+        Data source: Australian Government AusTender
+    </footer>
+
+</main>
+
+</body>
+</html>
