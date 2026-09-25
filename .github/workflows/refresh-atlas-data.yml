@@ -38,7 +38,7 @@ jobs:
       # the API result against the manual AusTender Excel export.
       - name: Test AusTender API fetch for September 2026
         run: |
-          python pipeline/fetch_austender_monthly.py --year 2026 --month 9
+          python pipeline/fetch_austender_monthly.py --year 2026 --month 9 --include-modified
 
       # For now this continues to build the production combined dataset
       # from our existing historical + manually downloaded monthly files.
