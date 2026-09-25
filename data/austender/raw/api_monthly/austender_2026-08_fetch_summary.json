@@ -1,0 +1,15 @@
+{
+  "period": "2026-08",
+  "start": "2026-08-01T00:00:00Z",
+  "end": "2026-08-31T23:59:59Z",
+  "published_raw_releases": 4673,
+  "published_rows_saved": 4673,
+  "published_pages": 48,
+  "modified_raw_releases": 15465,
+  "modified_rows_saved": 15465,
+  "modified_pages": 156,
+  "published_value_aud": 5800390584.57,
+  "modified_value_aud": 355897050190.43,
+  "published_output": "data/austender/raw/api_monthly/austender_2026-08_published.parquet",
+  "modified_output": "data/austender/raw/api_monthly/austender_2026-08_modified.parquet"
+}
