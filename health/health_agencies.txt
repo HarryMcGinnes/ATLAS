@@ -1,0 +1,19 @@
+# ATLAS Health market agency scope
+# One exact AusTender Agency name per line.
+#
+# This is deliberately a configuration file rather than hard-coded Python.
+# Review audits/health/health_agency_candidates.csv after the first run and
+# add/remove agencies here to define the Health TAM scope.
+
+Department of Health, Disability and Ageing
+Department of Health and Aged Care
+Department of Health
+Australian Digital Health Agency
+Australian Institute of Health and Welfare
+Aged Care Quality and Safety Commission
+Australian Aged Care Quality Agency
+Independent Health and Aged Care Pricing Authority
+National Health Funding Body
+National Health and Medical Research Council
+National Mental Health Commission
+Department of Health and Aged Care - Therapeutic Goods Administration
