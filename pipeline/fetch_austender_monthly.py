@@ -7,7 +7,7 @@ import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 import pandas as pd
 import requests
@@ -20,28 +20,22 @@ MAX_RETRIES = 4
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fetch one calendar month of Contract Notices from the official AusTender OCDS API."
+        description=(
+            "Fetch one calendar month from the official AusTender OCDS API. "
+            "Published and last-modified records are saved separately so the "
+            "ATLAS combine stage can reconcile amendments explicitly."
+        )
     )
-    parser.add_argument(
-        "--year",
-        type=int,
-        help="Calendar year to fetch. If omitted, fetches the previous calendar month.",
-    )
-    parser.add_argument(
-        "--month",
-        type=int,
-        choices=range(1, 13),
-        help="Calendar month (1-12). Must be supplied with --year.",
-    )
+    parser.add_argument("--year", type=int)
+    parser.add_argument("--month", type=int, choices=range(1, 13))
     parser.add_argument(
         "--output-dir",
         default="data/austender/raw/api_monthly",
-        help="Directory for API monthly parquet and raw JSON files.",
     )
     parser.add_argument(
-        "--include-modified",
+        "--published-only",
         action="store_true",
-        help="Also fetch contracts last modified during the month. Recommended for amendment testing.",
+        help="Skip the last-modified stream. Production refreshes should normally omit this flag.",
     )
     return parser.parse_args()
 
@@ -55,21 +49,26 @@ def previous_calendar_month(today: date | None = None) -> tuple[int, int]:
 
 def month_range_iso(year: int, month: int) -> tuple[str, str]:
     last_day = calendar.monthrange(year, month)[1]
-    start = f"{year:04d}-{month:02d}-01T00:00:00Z"
-    end = f"{year:04d}-{month:02d}-{last_day:02d}T23:59:59Z"
-    return start, end
+    return (
+        f"{year:04d}-{month:02d}-01T00:00:00Z",
+        f"{year:04d}-{month:02d}-{last_day:02d}T23:59:59Z",
+    )
+
+
+def api_url(kind: str, start_iso: str, end_iso: str) -> str:
+    # Keep ':' readable but encode anything else unsafe.
+    return f"{API_ROOT}/findByDates/{kind}/{quote(start_iso, safe=':-TZ')}/{quote(end_iso, safe=':-TZ')}"
 
 
 def get_json(session: requests.Session, url: str) -> dict[str, Any]:
     last_error: Exception | None = None
-
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             response = session.get(url, timeout=TIMEOUT_SECONDS)
             response.raise_for_status()
             payload = response.json()
             if not isinstance(payload, dict):
-                raise RuntimeError(f"Unexpected non-object JSON response from {url}")
+                raise RuntimeError("Unexpected non-object JSON response")
             return payload
         except (requests.RequestException, ValueError, RuntimeError) as exc:
             last_error = exc
@@ -79,60 +78,51 @@ def get_json(session: requests.Session, url: str) -> dict[str, Any]:
             print(f"Request failed ({attempt}/{MAX_RETRIES}): {exc}")
             print(f"Retrying in {wait}s...")
             time.sleep(wait)
+    raise RuntimeError(f"AusTender API request failed: {last_error}")
 
-    raise RuntimeError(f"AusTender API request failed after {MAX_RETRIES} attempts: {last_error}")
 
-
-def next_link(payload: dict[str, Any]) -> str | None:
+def get_next_link(payload: dict[str, Any]) -> str | None:
     links = payload.get("links")
     if isinstance(links, dict):
-        nxt = links.get("next")
-        if isinstance(nxt, str) and nxt.strip():
-            return nxt.strip()
-
-    # Defensive support for APIs that return top-level next.
-    nxt = payload.get("next")
-    if isinstance(nxt, str) and nxt.strip():
-        return nxt.strip()
-
-    return None
+        value = links.get("next")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    value = payload.get("next")
+    return value.strip() if isinstance(value, str) and value.strip() else None
 
 
-def fetch_all_pages(session: requests.Session, first_url: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Return (releases, raw_page_payloads), following OCDS links.next."""
+def fetch_all_pages(
+    session: requests.Session,
+    first_url: str,
+) -> tuple[list[dict[str, Any]], int]:
     url: str | None = first_url
     releases: list[dict[str, Any]] = []
-    pages: list[dict[str, Any]] = []
-    seen_urls: set[str] = set()
-    page_no = 0
+    seen: set[str] = set()
+    page_count = 0
 
     while url:
-        if url in seen_urls:
-            raise RuntimeError(f"Pagination loop detected at {url}")
-        seen_urls.add(url)
+        if url in seen:
+            raise RuntimeError(f"Pagination loop detected: {url}")
+        seen.add(url)
+        page_count += 1
+        print(f"Fetching page {page_count}: {url}")
 
-        page_no += 1
-        print(f"Fetching page {page_no}: {url}")
         payload = get_json(session, url)
-        pages.append(payload)
-
         page_releases = payload.get("releases", [])
         if not isinstance(page_releases, list):
-            raise RuntimeError(f"Expected 'releases' list on page {page_no}")
+            raise RuntimeError(f"Page {page_count} does not contain a releases list")
+        releases.extend(r for r in page_releases if isinstance(r, dict))
 
-        releases.extend(x for x in page_releases if isinstance(x, dict))
-
-        nxt = next_link(payload)
+        nxt = get_next_link(payload)
         url = urljoin(url, nxt) if nxt else None
 
-    return releases, pages
+    return releases, page_count
 
 
 def party_by_role(release: dict[str, Any], role: str) -> dict[str, Any] | None:
     parties = release.get("parties", [])
     if not isinstance(parties, list):
         return None
-
     for party in parties:
         if not isinstance(party, dict):
             continue
@@ -143,49 +133,35 @@ def party_by_role(release: dict[str, Any], role: str) -> dict[str, Any] | None:
 
 
 def first_dict(value: Any) -> dict[str, Any]:
-    if isinstance(value, list) and value and isinstance(value[0], dict):
-        return value[0]
     if isinstance(value, dict):
         return value
+    if isinstance(value, list) and value and isinstance(value[0], dict):
+        return value[0]
     return {}
-
-
-def nested(d: dict[str, Any], *keys: str, default: Any = "") -> Any:
-    cur: Any = d
-    for key in keys:
-        if not isinstance(cur, dict) or key not in cur:
-            return default
-        cur = cur[key]
-    return cur if cur is not None else default
 
 
 def supplier_details(release: dict[str, Any]) -> tuple[str, str]:
     supplier = party_by_role(release, "supplier")
     if supplier:
-        name = str(supplier.get("name", "") or "").strip()
-        identifier = supplier.get("identifier", {})
-        abn = ""
-        if isinstance(identifier, dict):
-            abn = str(identifier.get("id", "") or "").strip()
-        return name, abn
+        ident = supplier.get("identifier", {})
+        return (
+            str(supplier.get("name", "") or "").strip(),
+            str(ident.get("id", "") or "").strip() if isinstance(ident, dict) else "",
+        )
 
-    # Defensive fallback to award suppliers.
     awards = release.get("awards", [])
     if isinstance(awards, list):
         for award in awards:
             if not isinstance(award, dict):
                 continue
             suppliers = award.get("suppliers", [])
-            if isinstance(suppliers, list) and suppliers:
+            if isinstance(suppliers, list) and suppliers and isinstance(suppliers[0], dict):
                 supplier = suppliers[0]
-                if isinstance(supplier, dict):
-                    name = str(supplier.get("name", "") or "").strip()
-                    identifier = supplier.get("identifier", {})
-                    abn = ""
-                    if isinstance(identifier, dict):
-                        abn = str(identifier.get("id", "") or "").strip()
-                    return name, abn
-
+                ident = supplier.get("identifier", {})
+                return (
+                    str(supplier.get("name", "") or "").strip(),
+                    str(ident.get("id", "") or "").strip() if isinstance(ident, dict) else "",
+                )
     return "", ""
 
 
@@ -197,21 +173,19 @@ def agency_name(release: dict[str, Any]) -> str:
     buyer = release.get("buyer", {})
     if isinstance(buyer, dict):
         return str(buyer.get("name", "") or "").strip()
-
     return ""
 
 
-def category_from_release(release: dict[str, Any]) -> tuple[str, str]:
-    """Return (category description, category code) using OCDS tender classification."""
+def category_details(release: dict[str, Any]) -> tuple[str, str]:
     tender = release.get("tender", {})
     if not isinstance(tender, dict):
         return "", ""
 
-    classification = tender.get("classification", {})
-    if isinstance(classification, dict):
+    cls = tender.get("classification", {})
+    if isinstance(cls, dict) and (cls.get("description") or cls.get("id")):
         return (
-            str(classification.get("description", "") or "").strip(),
-            str(classification.get("id", "") or "").strip(),
+            str(cls.get("description", "") or "").strip(),
+            str(cls.get("id", "") or "").strip(),
         )
 
     items = tender.get("items", [])
@@ -225,30 +199,21 @@ def category_from_release(release: dict[str, Any]) -> tuple[str, str]:
                     str(cls.get("description", "") or "").strip(),
                     str(cls.get("id", "") or "").strip(),
                 )
-
     return "", ""
 
 
-def release_to_row(release: dict[str, Any], source_kind: str) -> dict[str, Any]:
+def release_to_row(release: dict[str, Any], stream: str) -> dict[str, Any]:
     contract = first_dict(release.get("contracts", []))
-    tender = release.get("tender", {})
-    if not isinstance(tender, dict):
-        tender = {}
-
+    tender = first_dict(release.get("tender", {}))
     supplier_name, supplier_abn = supplier_details(release)
-    category, category_code = category_from_release(release)
+    category, category_code = category_details(release)
+
+    contract_period = first_dict(contract.get("period", {}))
+    value = first_dict(contract.get("value", {}))
 
     cn_id = str(contract.get("id", "") or "").strip()
     if not cn_id:
         cn_id = str(tender.get("id", "") or "").strip()
-
-    contract_period = contract.get("period", {})
-    if not isinstance(contract_period, dict):
-        contract_period = {}
-
-    value = contract.get("value", {})
-    if not isinstance(value, dict):
-        value = {}
 
     description = str(tender.get("description", "") or "").strip()
     if not description:
@@ -256,104 +221,84 @@ def release_to_row(release: dict[str, Any], source_kind: str) -> dict[str, Any]:
     if not description:
         description = str(contract.get("description", "") or "").strip()
 
-    # SON ID is not consistently exposed in the API. Keep blank unless present.
-    son_id = str(
-        contract.get("SON ID", "")
-        or contract.get("sonId", "")
-        or contract.get("standingOfferId", "")
-        or ""
-    ).strip()
-
-    agency_ref = str(
-        tender.get("procuringEntity", {}).get("id", "")
-        if isinstance(tender.get("procuringEntity"), dict)
-        else ""
-    ).strip()
-
+    # The public OCDS representation does not always expose all fields found in
+    # the website Excel export. Keep blanks rather than inventing them.
     return {
         "Agency": agency_name(release),
         "CN ID": cn_id,
-        "SON ID": son_id,
+        "SON ID": str(
+            contract.get("sonId", "")
+            or contract.get("standingOfferId", "")
+            or ""
+        ).strip(),
         "Supplier Name": supplier_name,
         "Supplier ABN": supplier_abn,
         "Description": description,
         "Category": category,
         "Category Code": category_code,
-        "Agency Ref. ID": agency_ref,
+        "Agency Ref. ID": "",
         "Publish Date": release.get("date", ""),
         "Start Date": contract_period.get("startDate", ""),
         "End Date": contract_period.get("endDate", ""),
         "Value (AUD)": value.get("amount", 0),
         "Currency": value.get("currency", ""),
-        "ocid": release.get("ocid", ""),
-        "release_id": release.get("id", ""),
+        "ocid": str(release.get("ocid", "") or ""),
+        "release_id": str(release.get("id", "") or ""),
         "release_tags": "|".join(map(str, release.get("tag", [])))
         if isinstance(release.get("tag"), list)
         else str(release.get("tag", "") or ""),
-        "api_source_kind": source_kind,
+        "api_stream": stream,
+        "api_record_timestamp": release.get("date", ""),
     }
 
 
-def normalise_rows(releases: list[dict[str, Any]], source_kind: str) -> pd.DataFrame:
-    rows = [release_to_row(r, source_kind) for r in releases]
-    df = pd.DataFrame(rows)
-
+def normalise_release_rows(
+    releases: list[dict[str, Any]],
+    stream: str,
+) -> pd.DataFrame:
+    df = pd.DataFrame([release_to_row(r, stream) for r in releases])
     if df.empty:
         return pd.DataFrame(columns=[
             "Agency", "CN ID", "SON ID", "Supplier Name", "Supplier ABN",
             "Description", "Category", "Category Code", "Agency Ref. ID",
             "Publish Date", "Start Date", "End Date", "Value (AUD)",
-            "Currency", "ocid", "release_id", "release_tags", "api_source_kind",
+            "Currency", "ocid", "release_id", "release_tags",
+            "api_stream", "api_record_timestamp",
         ])
 
-    for col in ["Publish Date", "Start Date", "End Date"]:
+    for col in ["Publish Date", "Start Date", "End Date", "api_record_timestamp"]:
         df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
 
     df["Value (AUD)"] = pd.to_numeric(df["Value (AUD)"], errors="coerce").fillna(0.0)
-
     return df
 
 
-def deduplicate_api_rows(df: pd.DataFrame) -> pd.DataFrame:
+def dedupe_release_ids(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove duplicate API representations without collapsing amendments."""
     if df.empty:
         return df
-
     out = df.copy()
-    out["_cn_base"] = (
-        out["CN ID"]
-        .fillna("")
-        .astype(str)
-        .str.replace(r"-A\d+$", "", regex=True)
-        .str.strip()
-    )
+    key = out["release_id"].fillna("").astype(str).str.strip()
+    populated = key.ne("")
+    keep = out.loc[populated].drop_duplicates("release_id", keep="last")
+    blanks = out.loc[~populated]
+    return pd.concat([keep, blanks], ignore_index=True)
 
-    # Prefer records with populated CN IDs. If the same parent CN appears via both
-    # published and modified searches, keep the most recent release date, preferring
-    # the modified feed on an exact tie.
-    out["_source_priority"] = out["api_source_kind"].map(
-        {"contractPublished": 0, "contractLastModified": 1}
-    ).fillna(0)
 
-    out.sort_values(
-        ["_cn_base", "Publish Date", "_source_priority", "release_id"],
-        inplace=True,
-        na_position="first",
-    )
-
-    populated = out["_cn_base"].ne("")
-    keep_populated = out.loc[populated].drop_duplicates("_cn_base", keep="last")
-    keep_blank = out.loc[~populated]
-
-    out = pd.concat([keep_populated, keep_blank], ignore_index=True)
-    out.drop(columns=["_cn_base", "_source_priority"], inplace=True)
-    out.sort_values(["Publish Date", "CN ID"], inplace=True, na_position="last")
-    out.reset_index(drop=True, inplace=True)
-    return out
+def fetch_stream(
+    session: requests.Session,
+    kind: str,
+    start_iso: str,
+    end_iso: str,
+) -> tuple[pd.DataFrame, int, int]:
+    releases, pages = fetch_all_pages(session, api_url(kind, start_iso, end_iso))
+    df = normalise_release_rows(releases, kind)
+    df = dedupe_release_ids(df)
+    return df, len(releases), pages
 
 
 def main() -> None:
     args = parse_args()
-
     if (args.year is None) != (args.month is None):
         raise SystemExit("Supply both --year and --month, or neither.")
 
@@ -362,83 +307,63 @@ def main() -> None:
         if args.year is not None
         else previous_calendar_month()
     )
-
     start_iso, end_iso = month_range_iso(year, month)
+    period = f"{year:04d}-{month:02d}"
+
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    period = f"{year:04d}-{month:02d}"
 
     session = requests.Session()
     session.headers.update({
         "Accept": "application/json",
-        "User-Agent": "ATLAS-Market-Intelligence/1.0",
+        "User-Agent": "ATLAS-Market-Intelligence/2.0",
     })
 
-    published_url = (
-        f"{API_ROOT}/findByDates/contractPublished/{start_iso}/{end_iso}"
+    published, published_raw_count, published_pages = fetch_stream(
+        session, "contractPublished", start_iso, end_iso
     )
-    published_releases, published_pages = fetch_all_pages(session, published_url)
+    published_path = output_dir / f"austender_{period}_published.parquet"
+    published.to_parquet(published_path, index=False)
 
-    raw_published_path = output_dir / f"austender_{period}_published_raw.json"
-    raw_published_path.write_text(
-        json.dumps(published_pages, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-
-    frames = [normalise_rows(published_releases, "contractPublished")]
-
-    modified_count = 0
-    if args.include_modified:
-        modified_url = (
-            f"{API_ROOT}/findByDates/contractLastModified/{start_iso}/{end_iso}"
+    modified = pd.DataFrame()
+    modified_raw_count = 0
+    modified_pages = 0
+    if not args.published_only:
+        modified, modified_raw_count, modified_pages = fetch_stream(
+            session, "contractLastModified", start_iso, end_iso
         )
-        modified_releases, modified_pages = fetch_all_pages(session, modified_url)
-        modified_count = len(modified_releases)
-
-        raw_modified_path = output_dir / f"austender_{period}_modified_raw.json"
-        raw_modified_path.write_text(
-            json.dumps(modified_pages, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-
-        frames.append(normalise_rows(modified_releases, "contractLastModified"))
-
-    monthly = pd.concat(frames, ignore_index=True, sort=False)
-    monthly = deduplicate_api_rows(monthly)
-
-    parquet_path = output_dir / f"austender_{period}.parquet"
-    monthly.to_parquet(parquet_path, index=False)
+        modified_path = output_dir / f"austender_{period}_modified.parquet"
+        modified.to_parquet(modified_path, index=False)
 
     summary = {
         "period": period,
         "start": start_iso,
         "end": end_iso,
-        "published_releases_fetched": len(published_releases),
-        "modified_releases_fetched": modified_count,
-        "rows_after_api_deduplication": int(len(monthly)),
-        "unique_cn_ids": int(monthly["CN ID"].replace("", pd.NA).nunique()),
-        "total_value_aud": float(monthly["Value (AUD)"].sum()),
-        "output": str(parquet_path),
-        "include_modified": bool(args.include_modified),
+        "published_raw_releases": published_raw_count,
+        "published_rows_saved": int(len(published)),
+        "published_pages": published_pages,
+        "modified_raw_releases": modified_raw_count,
+        "modified_rows_saved": int(len(modified)),
+        "modified_pages": modified_pages,
+        "published_value_aud": float(published["Value (AUD)"].sum()) if not published.empty else 0.0,
+        "modified_value_aud": float(modified["Value (AUD)"].sum()) if not modified.empty else 0.0,
+        "published_output": str(published_path),
+        "modified_output": (
+            str(output_dir / f"austender_{period}_modified.parquet")
+            if not args.published_only else None
+        ),
     }
 
-    summary_path = output_dir / f"austender_{period}_summary.json"
-    summary_path.write_text(
-        json.dumps(summary, indent=2, default=str),
-        encoding="utf-8",
-    )
+    summary_path = output_dir / f"austender_{period}_fetch_summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
 
     print()
-    print("AusTender monthly API fetch complete.")
+    print("AusTender API monthly fetch complete.")
     print(f"Period: {period}")
-    print(f"Published releases fetched: {len(published_releases):,}")
-    if args.include_modified:
-        print(f"Modified releases fetched:  {modified_count:,}")
-    print(f"Rows written:               {len(monthly):,}")
-    print(f"Total value:                ${monthly['Value (AUD)'].sum():,.2f}")
-    print(f"Wrote: {parquet_path}")
-    print(f"Summary: {summary_path}")
+    print(f"Published: {len(published):,} rows -> {published_path}")
+    if not args.published_only:
+        print(f"Modified:  {len(modified):,} rows -> {output_dir / f'austender_{period}_modified.parquet'}")
+    print(f"Summary:   {summary_path}")
 
 
 if __name__ == "__main__":
