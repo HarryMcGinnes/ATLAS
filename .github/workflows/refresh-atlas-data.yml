@@ -8,10 +8,12 @@ on:
       - "data/austender/raw/monthly/**"
       - "data/austender/raw/historical/**"
       - "pipeline/combine_austender.py"
+      - "pipeline/fetch_austender_monthly.py"
       - "defence/filter_defence.py"
       - "health/filter_health.py"
       - "health/config/health_agencies.txt"
       - "requirements.txt"
+      - ".github/workflows/refresh-atlas-data.yml"
 
 jobs:
   refresh:
@@ -31,10 +33,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # TEMPORARY TEST:
+      # Fetch September 2026 from the AusTender API so we can compare
+      # the API result against the manual AusTender Excel export.
       - name: Test AusTender API fetch for September 2026
         run: |
           python pipeline/fetch_austender_monthly.py --year 2026 --month 9
 
+      # For now this continues to build the production combined dataset
+      # from our existing historical + manually downloaded monthly files.
+      # The API September file is NOT yet incorporated into production.
       - name: Combine AusTender exports
         run: |
           python pipeline/combine_austender.py
@@ -47,11 +55,15 @@ jobs:
         run: |
           python health/filter_health.py
 
+      # Upload everything we need for the commissioning/validation stage.
+      # This includes the API September data so we can reconcile it
+      # against the manual September AusTender export.
       - name: Upload ATLAS data build
         uses: actions/upload-artifact@v4
         with:
           name: atlas-data-build
           path: |
+            data/austender/raw/api_monthly/
             data/austender/combined/austender_combined.parquet
             defence/data/defence_contracts_raw.parquet
             health/data/health_contracts_raw.parquet
