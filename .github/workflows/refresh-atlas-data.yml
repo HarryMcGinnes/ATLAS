@@ -1,19 +1,28 @@
 name: Refresh ATLAS Data
 
 on:
+  # Manual backup / commissioning button.
   workflow_dispatch:
 
+  # 00:30 UTC on the 1st of every month.
+  # The fetch script automatically requests the previous calendar month.
+  schedule:
+    - cron: "30 0 1 * *"
+
+  # Rebuild when a human adds/corrects a website export or changes pipeline logic.
   push:
     paths:
-      - "data/austender/raw/monthly/**"
       - "data/austender/raw/historical/**"
-      - "pipeline/combine_austender.py"
-      - "pipeline/fetch_austender_monthly.py"
+      - "data/austender/raw/monthly/**"
+      - "pipeline/**"
       - "defence/filter_defence.py"
       - "health/filter_health.py"
       - "health/config/health_agencies.txt"
       - "requirements.txt"
       - ".github/workflows/refresh-atlas-data.yml"
+
+permissions:
+  contents: write
 
 jobs:
   refresh:
@@ -22,6 +31,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -33,19 +44,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # TEMPORARY TEST:
-      # Fetch September 2026 from the AusTender API so we can compare
-      # the API result against the manual AusTender Excel export.
-      - name: Test AusTender API fetch for September 2026
+      # Scheduled runs fetch the previous month automatically.
+      # Push-triggered runs do not re-fetch unless the workflow was manually started.
+      - name: Fetch previous month from AusTender API
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
-          python pipeline/fetch_austender_monthly.py --year 2026 --month 9 --include-modified
+          python pipeline/fetch_austender_monthly.py
 
-      # For now this continues to build the production combined dataset
-      # from our existing historical + manually downloaded monthly files.
-      # The API September file is NOT yet incorporated into production.
-      - name: Combine AusTender exports
+      - name: Build canonical AusTender dataset
         run: |
           python pipeline/combine_austender.py
+
+      - name: Validate canonical AusTender dataset
+        run: |
+          python pipeline/validate_combined.py
 
       - name: Build Defence raw market
         run: |
@@ -55,18 +67,53 @@ jobs:
         run: |
           python health/filter_health.py
 
-      # Upload everything we need for the commissioning/validation stage.
-      # This includes the API September data so we can reconcile it
-      # against the manual September AusTender export.
-      - name: Upload ATLAS data build
+      # Keep the small monthly API snapshots in GitHub so future runs can rebuild
+      # the entire history without relying on an old workflow runner.
+      - name: Commit new API monthly snapshots
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: |
+          if git status --porcelain data/austender/raw/api_monthly/ | grep -q .; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add data/austender/raw/api_monthly/
+            git commit -m "Add automated AusTender monthly refresh [skip ci]"
+            git push
+          else
+            echo "No new API monthly files to commit."
+          fi
+
+      # The current full datasets are large binary files. Do NOT commit them to
+      # normal git history every month. Publish/replace them as GitHub Release
+      # assets instead; they remain stored in GitHub without adding ~80MB to every
+      # monthly repository commit.
+      - name: Publish current ATLAS datasets to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="atlas-data-latest"
+
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --title "ATLAS Current Data" \
+              --notes "Automatically refreshed current ATLAS datasets."
+          fi
+
+          gh release upload "$TAG" \
+            data/austender/combined/austender_combined.parquet \
+            defence/data/defence_contracts_raw.parquet \
+            health/data/health_contracts_raw.parquet \
+            audits/austender/combine_summary.json \
+            audits/austender/validation_summary.json \
+            audits/defence/defence_filter_summary.json \
+            audits/health/health_filter_summary.json \
+            --clobber
+
+      - name: Upload refresh diagnostics
         uses: actions/upload-artifact@v4
         with:
-          name: atlas-data-build
+          name: atlas-refresh-diagnostics
+          retention-days: 14
           path: |
-            data/austender/raw/api_monthly/
-            data/austender/combined/austender_combined.parquet
-            defence/data/defence_contracts_raw.parquet
-            health/data/health_contracts_raw.parquet
             audits/austender/
             audits/defence/
             audits/health/
