@@ -1,0 +1,56 @@
+name: Refresh ATLAS Data
+
+on:
+  workflow_dispatch:
+
+  push:
+    paths:
+      - "data/austender/raw/monthly/**"
+      - "data/austender/raw/historical/**"
+      - "pipeline/combine_austender.py"
+      - "defence/filter_defence.py"
+      - "health/filter_health.py"
+      - "health/config/health_agencies.txt"
+      - "requirements.txt"
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Combine AusTender exports
+        run: |
+          python pipeline/combine_austender.py
+
+      - name: Build Defence raw market
+        run: |
+          python defence/filter_defence.py
+
+      - name: Build Health raw market
+        run: |
+          python health/filter_health.py
+
+      - name: Upload ATLAS data build
+        uses: actions/upload-artifact@v4
+        with:
+          name: atlas-data-build
+          path: |
+            data/austender/combined/austender_combined.parquet
+            defence/data/defence_contracts_raw.parquet
+            health/data/health_contracts_raw.parquet
+            audits/austender/
+            audits/defence/
+            audits/health/
