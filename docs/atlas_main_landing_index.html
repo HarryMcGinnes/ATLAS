@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ATLAS | Addressable Market Intelligence</title>
+  <style>
+    :root{
+      --bg:#f5f5f6; --panel:#fff; --text:#111827; --muted:#5d6675;
+      --line:#dedfe3; --accent:#A100FF; --black:#050505;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text)}
+    .topbar{background:var(--black);color:#fff;padding:18px 22px}
+    .brand{font-size:34px;font-weight:800;letter-spacing:.04em;margin:0}
+    .tag{font-size:15px;margin-top:2px}
+    .wrap{max-width:1180px;margin:0 auto;padding:76px 28px}
+    h1{font-size:42px;margin:0 0 10px}
+    .lead{font-size:18px;color:var(--muted);margin:0 0 38px;line-height:1.55}
+    .cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px}
+    .card{
+      display:block;text-decoration:none;color:inherit;background:var(--panel);
+      border:1px solid var(--line);border-radius:16px;padding:30px;
+      min-height:230px;box-shadow:0 1px 2px rgba(0,0,0,.03);
+      transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease;
+    }
+    .card:hover{transform:translateY(-2px);box-shadow:0 8px 28px rgba(17,24,39,.08);border-color:#c7c9cf}
+    .eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--accent);font-weight:700}
+    .card h2{font-size:30px;margin:12px 0 12px}
+    .card p{font-size:16px;line-height:1.55;color:var(--muted);margin:0}
+    .go{margin-top:24px;font-weight:700}
+    footer{margin-top:54px;padding-top:24px;border-top:1px solid var(--line);font-size:13px;color:#697386}
+    @media(max-width:760px){.wrap{padding:46px 18px}.cards{grid-template-columns:1fr}h1{font-size:34px}}
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">ATLAS</div>
+    <div class="tag">Addressable Market Intelligence</div>
+  </header>
+
+  <main class="wrap">
+    <h1>Market Intelligence</h1>
+    <p class="lead">Choose a market to explore addressable spend, competitive positioning, procurement activity and growth trends.</p>
+
+    <section class="cards">
+      <a class="card" href="defence/">
+        <div class="eyebrow">Available now</div>
+        <h2>Defence</h2>
+        <p>Explore Australian Defence procurement, Accenture-addressable market size, supplier competition, Service Offering growth and contract activity.</p>
+        <div class="go">Open Defence intelligence →</div>
+      </a>
+
+      <a class="card" href="health/">
+        <div class="eyebrow">In development</div>
+        <h2>Health</h2>
+        <p>Explore Australian Government Health procurement and the emerging Health addressable-market intelligence suite as dashboards are added.</p>
+        <div class="go">Open Health intelligence →</div>
+      </a>
+    </section>
+
+    <footer>Data source: Australian Government AusTender</footer>
+  </main>
+</body>
+</html>
