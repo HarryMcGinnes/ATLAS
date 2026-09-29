@@ -1,0 +1,138 @@
+name: Build Defence Site
+
+on:
+  workflow_dispatch:
+
+  workflow_run:
+    workflows: ["Refresh ATLAS Data"]
+    types: [completed]
+
+  push:
+    paths:
+      - "defence/build_master.py"
+      - "defence/config/**"
+      - "defence/dashboards/**"
+      - "requirements.txt"
+      - ".github/workflows/build-defence-site.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build-defence-site:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download current Defence raw dataset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p defence/data
+          gh release download atlas-data-latest \
+            --pattern "defence_contracts_raw.parquet" \
+            --dir defence/data \
+            --clobber
+
+          test -f defence/data/defence_contracts_raw.parquet
+          ls -lh defence/data/defence_contracts_raw.parquet
+
+      - name: Build Defence classified master
+        run: |
+          python defence/build_master.py
+
+      - name: Prepare temporary dashboard output folders
+        run: |
+          rm -rf build/defence-site
+          mkdir -p build/defence-site/tam-overview
+          mkdir -p build/defence-site/competitive-intelligence
+          mkdir -p build/defence-site/contract-explorer
+          mkdir -p build/defence-site/service-offering-growth
+
+      - name: Build TAM Overview
+        run: |
+          python defence/dashboards/DefenceTAM.py \
+            --input defence/data/processed/master_defence_contracts.parquet \
+            --output-dir build/defence-site/tam-overview
+
+      - name: Build Competitive Intelligence
+        run: |
+          python defence/dashboards/CompetitiveIntelligence.py \
+            --input defence/data/processed/master_defence_contracts.parquet \
+            --output-dir build/defence-site/competitive-intelligence
+
+      - name: Build Contract Explorer
+        run: |
+          python defence/dashboards/ContractExplorer.py \
+            --input defence/data/processed/master_defence_contracts.parquet \
+            --output-dir build/defence-site/contract-explorer
+
+      - name: Build Service Offering Growth
+        run: |
+          python defence/dashboards/ServiceOfferingGrowth.py \
+            --input defence/data/processed/master_defence_contracts.parquet \
+            --output-dir build/defence-site/service-offering-growth
+
+      - name: Publish generated HTML into GitHub Pages folder
+        run: |
+          mkdir -p docs/defence/tam-overview
+          mkdir -p docs/defence/competitive-intelligence
+          mkdir -p docs/defence/contract-explorer
+          mkdir -p docs/defence/service-offering-growth
+
+          cp build/defence-site/tam-overview/AccentureDefenceTAMDashboard.html \
+            docs/defence/tam-overview/index.html
+
+          cp build/defence-site/competitive-intelligence/CompareDashboard.html \
+            docs/defence/competitive-intelligence/index.html
+
+          cp build/defence-site/contract-explorer/ProcurementExplorationDashboard.html \
+            docs/defence/contract-explorer/index.html
+
+          cp build/defence-site/service-offering-growth/ServiceGrowthDashboard.html \
+            docs/defence/service-offering-growth/index.html
+
+          test -s docs/defence/tam-overview/index.html
+          test -s docs/defence/competitive-intelligence/index.html
+          test -s docs/defence/contract-explorer/index.html
+          test -s docs/defence/service-offering-growth/index.html
+
+          ls -lh docs/defence/*/index.html
+
+      - name: Commit refreshed Defence website
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add docs/defence/
+
+          if git diff --cached --quiet; then
+            echo "No Defence website changes to commit."
+          else
+            git commit -m "Refresh Defence dashboards [skip ci]"
+            git push
+          fi
+
+      - name: Upload dashboard build diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: defence-dashboard-build
+          retention-days: 7
+          path: |
+            defence/data/processed/build_summary.json
+            build/defence-site/
