@@ -411,11 +411,98 @@ REQUIRED_SOURCE_COLUMNS = {
 }
 
 
+def prepare_source_compatibility(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """Adapt the canonical ATLAS raw Defence parquet to the historical master schema.
+
+    The automated AusTender export does not currently provide Category Type,
+    Agency Division or Agency Branch. We do not invent those values. Missing
+    organisation fields are added as blanks (which results in Unmapped domain
+    unless the procuring agency itself is authoritative), while Category Type is
+    added as ``Unknown`` so the classifier can continue to use Category,
+    Description and Supplier evidence.
+
+    If a correctly-spelled ``Agency Division`` column is ever supplied upstream,
+    it is copied into the historical source field ``Agency Divison`` used by the
+    existing classifier. The original column is retained unchanged.
+    """
+    out = df.copy()
+    notes: list[str] = []
+
+    if RAW_DIVISION not in out.columns:
+        if "Agency Division" in out.columns:
+            out[RAW_DIVISION] = out["Agency Division"].fillna("").astype(str)
+            notes.append(
+                "Derived 'Agency Divison' compatibility field from source 'Agency Division'."
+            )
+        else:
+            out[RAW_DIVISION] = ""
+            notes.append(
+                "Source has no Agency Division field; added blank compatibility column. "
+                "Division-level dashboard views will be unavailable for these rows."
+            )
+
+    if RAW_BRANCH not in out.columns:
+        out[RAW_BRANCH] = ""
+        notes.append(
+            "Source has no Agency Branch field; added blank compatibility column. "
+            "Branch-level dashboard views will be unavailable for these rows."
+        )
+
+    if CATEGORY_TYPE not in out.columns:
+        out[CATEGORY_TYPE] = "Unknown"
+        notes.append(
+            "Source has no Category Type field; added 'Unknown'. Goods/service gating "
+            "cannot be applied where the upstream source does not expose that field."
+        )
+    else:
+        out[CATEGORY_TYPE] = (
+            out[CATEGORY_TYPE].fillna("").astype(str).str.strip().replace("", "Unknown")
+        )
+
+    # These fields are optional in the new shared ATLAS source but are useful to
+    # existing audits/dashboard exports. Add neutral values rather than failing.
+    optional_defaults = {
+        CONTRACT_TYPE: "",
+        CATEGORY_CODE: "",
+        SUPPLIER_ABN: "",
+        START_DATE: pd.NaT,
+        END_DATE: pd.NaT,
+        SOURCE_SUPPLIER_DISPLAY: "",
+        SOURCE_DIV_CLEAN: "",
+        SOURCE_BRANCH_CLEAN: "",
+    }
+    for col, default in optional_defaults.items():
+        if col not in out.columns:
+            out[col] = default
+
+    # The canonical shared pipeline normally already provides Financial Year and
+    # Value Per Year. Rebuild them only if absent.
+    if FINANCIAL_YEAR not in out.columns:
+        publish = pd.to_datetime(out.get("Publish Date"), errors="coerce", utc=True)
+        fy_start = publish.dt.year.where(publish.dt.month >= 7, publish.dt.year - 1)
+        out[FINANCIAL_YEAR] = fy_start.map(
+            lambda y: f"{int(y)}-{int(y)+1}" if pd.notna(y) else ""
+        )
+        notes.append("Derived Financial Year from Publish Date.")
+
+    if VALUE_PER_YEAR not in out.columns:
+        value = pd.to_numeric(out[VALUE], errors="coerce").fillna(0.0)
+        start = pd.to_datetime(out[START_DATE], errors="coerce", utc=True)
+        end = pd.to_datetime(out[END_DATE], errors="coerce", utc=True)
+        days = (end - start).dt.days + 1
+        years = (days / 365.25).where(days > 0, 1.0).clip(lower=1.0)
+        out[VALUE_PER_YEAR] = value / years.fillna(1.0)
+        notes.append("Derived Value Per Year from Start Date and End Date.")
+
+    return out, notes
+
+
 def validate_source_headers(df: pd.DataFrame) -> None:
     missing = sorted(REQUIRED_SOURCE_COLUMNS - set(df.columns))
     if missing:
         raise RuntimeError(
-            "Fresh source parquet is missing expected base columns: " + ", ".join(missing)
+            "ATLAS source parquet is missing mandatory columns even after compatibility "
+            "normalisation: " + ", ".join(missing)
         )
     dupes = list(df.columns[df.columns.duplicated()])
     if dupes:
@@ -1928,8 +2015,14 @@ def main() -> None:
 
     print(f"1/8 Loading fresh source parquet: {input_path}")
     raw = pd.read_parquet(input_path)
+    source_columns_before_compatibility = list(raw.columns)
+    raw, compatibility_notes = prepare_source_compatibility(raw)
     validate_source_headers(raw)
-    print(f"Source headers preserved exactly: {len(raw.columns):,} columns")
+    print(f"Source columns loaded: {len(source_columns_before_compatibility):,}")
+    if compatibility_notes:
+        print("ATLAS source compatibility adjustments:")
+        for note in compatibility_notes:
+            print(f"  - {note}")
     raw[VALUE] = pd.to_numeric(raw[VALUE], errors="coerce").fillna(0)
 
     print("2/8 Applying strict Defence procurer filter")
@@ -1978,7 +2071,9 @@ def main() -> None:
         "accenture_addressable_value": float(addressable.loc[addressable["is_accenture"], VALUE].sum()),
         "service_offerings": addressable["service_offering"].value_counts().to_dict(),
         "domains": master["defence_domain"].value_counts().to_dict(),
-        "source_headers_preserved": list(raw.columns),
+        "source_headers_original": source_columns_before_compatibility,
+        "source_headers_after_compatibility": list(raw.columns),
+        "source_compatibility_notes": compatibility_notes,
     }
     (output_dir / "build_summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
 
