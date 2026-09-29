@@ -123,12 +123,11 @@ jobs:
           )
           PY
 
-      - name: Upload preflight outputs
+      - name: Upload preflight diagnostics
         uses: actions/upload-artifact@v4
         with:
           name: defence-master-preflight
           retention-days: 7
           path: |
-            defence/data/processed/master_defence_contracts.parquet
             defence/data/processed/build_summary.json
             defence/data/processed/audit/
