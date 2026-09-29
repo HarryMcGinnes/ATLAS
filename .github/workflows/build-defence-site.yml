@@ -12,6 +12,9 @@ on:
       - "defence/build_master.py"
       - "defence/config/**"
       - "defence/dashboards/**"
+      - "docs/index.html"
+      - "docs/defence/index.html"
+      - "docs/health/index.html"
       - "requirements.txt"
       - ".github/workflows/build-defence-site.yml"
 
@@ -48,9 +51,7 @@ jobs:
             --pattern "defence_contracts_raw.parquet" \
             --dir defence/data \
             --clobber
-
           test -f defence/data/defence_contracts_raw.parquet
-          ls -lh defence/data/defence_contracts_raw.parquet
 
       - name: Build Defence classified master
         run: |
@@ -97,34 +98,69 @@ jobs:
 
           cp build/defence-site/tam-overview/AccentureDefenceTAMDashboard.html \
             docs/defence/tam-overview/index.html
-
           cp build/defence-site/competitive-intelligence/CompareDashboard.html \
             docs/defence/competitive-intelligence/index.html
-
           cp build/defence-site/contract-explorer/ProcurementExplorationDashboard.html \
             docs/defence/contract-explorer/index.html
-
           cp build/defence-site/service-offering-growth/ServiceGrowthDashboard.html \
             docs/defence/service-offering-growth/index.html
 
+      - name: Add ATLAS navigation to dashboard pages
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          targets = [
+              Path("docs/defence/tam-overview/index.html"),
+              Path("docs/defence/competitive-intelligence/index.html"),
+              Path("docs/defence/contract-explorer/index.html"),
+              Path("docs/defence/service-offering-growth/index.html"),
+          ]
+
+          nav = """
+          <div id="atlas-nav" style="
+            position:sticky;top:0;z-index:2147483646;
+            display:flex;align-items:center;justify-content:space-between;
+            gap:16px;padding:11px 18px;background:#050505;color:white;
+            font-family:Arial,Helvetica,sans-serif;border-bottom:1px solid #222;">
+            <div style="display:flex;align-items:center;gap:18px;">
+              <a href="../../" style="color:white;text-decoration:none;font-weight:800;letter-spacing:.06em;">ATLAS</a>
+              <span style="color:#8f98a7;">/</span>
+              <a href="../" style="color:white;text-decoration:none;font-weight:600;">Defence</a>
+            </div>
+            <a href="../" style="color:#fff;text-decoration:none;font-size:13px;">← Back to Defence dashboards</a>
+          </div>
+          """
+
+          for path in targets:
+              text = path.read_text(encoding="utf-8")
+              if 'id="atlas-nav"' not in text:
+                  text = text.replace("<body>", "<body>" + nav, 1)
+              path.write_text(text, encoding="utf-8")
+              print(f"Navigation added: {path}")
+          PY
+
+      - name: Validate published site files
+        run: |
+          test -s docs/index.html
+          test -s docs/defence/index.html
+          test -s docs/health/index.html
           test -s docs/defence/tam-overview/index.html
           test -s docs/defence/competitive-intelligence/index.html
           test -s docs/defence/contract-explorer/index.html
           test -s docs/defence/service-offering-growth/index.html
 
-          ls -lh docs/defence/*/index.html
-
-      - name: Commit refreshed Defence website
+      - name: Commit refreshed ATLAS website
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add docs/defence/
+          git add docs/
 
           if git diff --cached --quiet; then
-            echo "No Defence website changes to commit."
+            echo "No website changes to commit."
           else
-            git commit -m "Refresh Defence dashboards [skip ci]"
+            git commit -m "Refresh ATLAS website [skip ci]"
             git push
           fi
 
