@@ -1,21 +1,20 @@
 name: Refresh ATLAS Data
 
 on:
-  # Manual backup / commissioning button.
   workflow_dispatch:
 
-  # 00:30 UTC on the 1st of every month.
-  # The fetch script automatically requests the previous calendar month.
   schedule:
     - cron: "30 0 1 * *"
 
-  # Rebuild when a human adds/corrects a website export or changes pipeline logic.
   push:
     paths:
       - "data/austender/raw/historical/**"
       - "data/austender/raw/monthly/**"
+      - "data/austender/raw/api_monthly/**"
       - "pipeline/**"
       - "defence/filter_defence.py"
+      - "defence/build_master.py"
+      - "defence/config/**"
       - "health/filter_health.py"
       - "health/config/health_agencies.txt"
       - "requirements.txt"
@@ -44,8 +43,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Scheduled runs fetch the previous month automatically.
-      # Push-triggered runs do not re-fetch unless the workflow was manually started.
       - name: Fetch previous month from AusTender API
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
@@ -63,12 +60,14 @@ jobs:
         run: |
           python defence/filter_defence.py
 
+      - name: Build Defence classified master
+        run: |
+          python defence/build_master.py
+
       - name: Build Health raw market
         run: |
           python health/filter_health.py
 
-      # Keep the small monthly API snapshots in GitHub so future runs can rebuild
-      # the entire history without relying on an old workflow runner.
       - name: Commit new API monthly snapshots
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
@@ -82,10 +81,6 @@ jobs:
             echo "No new API monthly files to commit."
           fi
 
-      # The current full datasets are large binary files. Do NOT commit them to
-      # normal git history every month. Publish/replace them as GitHub Release
-      # assets instead; they remain stored in GitHub without adding ~80MB to every
-      # monthly repository commit.
       - name: Publish current ATLAS datasets to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -101,12 +96,23 @@ jobs:
           gh release upload "$TAG" \
             data/austender/combined/austender_combined.parquet \
             defence/data/defence_contracts_raw.parquet \
+            defence/data/processed/master_defence_contracts.parquet \
             health/data/health_contracts_raw.parquet \
             audits/austender/combine_summary.json \
             audits/austender/validation_summary.json \
             audits/defence/defence_filter_summary.json \
             audits/health/health_filter_summary.json \
+            defence/data/processed/build_summary.json \
             --clobber
+
+      - name: Upload Defence master audits
+        uses: actions/upload-artifact@v4
+        with:
+          name: defence-master-audits
+          retention-days: 14
+          path: |
+            defence/data/processed/audit/
+            defence/data/processed/build_summary.json
 
       - name: Upload refresh diagnostics
         uses: actions/upload-artifact@v4
