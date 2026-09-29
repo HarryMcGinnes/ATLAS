@@ -662,11 +662,11 @@ def add_contract_date_and_extension_display_columns(
 
 def parse_as_at(value: str | None) -> pd.Timestamp:
     if value:
-        parsed = pd.to_datetime(value, errors="coerce")
+        parsed = pd.to_datetime(value, errors="coerce", utc=True)
         if pd.isna(parsed):
             raise SystemExit(f"Could not parse --as-at date: {value}. Use YYYY-MM-DD.")
         return pd.Timestamp(parsed).normalize()
-    return pd.Timestamp.today().normalize()
+    return pd.Timestamp.now(tz="UTC").normalize()
 
 
 def add_current_contract_value_columns(df: pd.DataFrame, base_value_col: str, as_at: pd.Timestamp) -> tuple[pd.DataFrame, dict[str, object]]:
@@ -693,8 +693,8 @@ def add_current_contract_value_columns(df: pd.DataFrame, base_value_col: str, as
             "Expected something like 'Contract End Date' or 'End Date'."
         )
 
-    start = pd.to_datetime(out[start_col], errors="coerce", dayfirst=True) if start_col else pd.NaT
-    end = pd.to_datetime(out[end_col], errors="coerce", dayfirst=True)
+    start = pd.to_datetime(out[start_col], errors="coerce", dayfirst=True, utc=True) if start_col else pd.NaT
+    end = pd.to_datetime(out[end_col], errors="coerce", dayfirst=True, utc=True)
 
     if start_col:
         active_start = start.isna() | (start <= as_at)
@@ -704,8 +704,8 @@ def add_current_contract_value_columns(df: pd.DataFrame, base_value_col: str, as
     active = active_start & active_end
     out = out.loc[active].copy()
 
-    start = pd.to_datetime(out[start_col], errors="coerce", dayfirst=True) if start_col else pd.Series(pd.NaT, index=out.index)
-    end = pd.to_datetime(out[end_col], errors="coerce", dayfirst=True)
+    start = pd.to_datetime(out[start_col], errors="coerce", dayfirst=True, utc=True) if start_col else pd.Series(pd.NaT, index=out.index, dtype="datetime64[ns, UTC]")
+    end = pd.to_datetime(out[end_col], errors="coerce", dayfirst=True, utc=True)
     base = pd.to_numeric(out[base_value_col], errors="coerce").fillna(0).clip(lower=0)
 
     # Full value of the currently-active contract.
@@ -2115,8 +2115,8 @@ function buildGlobalPeriodOptions() {{
   // Show the full coverage directly in the All FY option, e.g. 2015-2026.
   const firstFY = years.length ? String(years[0]) : '';
   const lastFY = years.length ? String(years[years.length - 1]) : '';
-  const firstStart = (firstFY.match(/(?:19|20)\d{{2}}/) || [''])[0];
-  const lastMatches = lastFY.match(/(?:19|20)\d{{2}}/g) || [];
+  const firstStart = (firstFY.match(/(?:19|20)\\d{{2}}/) || [''])[0];
+  const lastMatches = lastFY.match(/(?:19|20)\\d{{2}}/g) || [];
   const lastEnd = lastMatches.length ? lastMatches[lastMatches.length - 1] : '';
   const allYearsLabel = firstStart && lastEnd
     ? 'All FY (' + firstStart + '-' + lastEnd + ')'
