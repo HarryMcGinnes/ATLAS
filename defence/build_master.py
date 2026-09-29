@@ -1895,11 +1895,26 @@ def run_regression_checks() -> None:
 # MAIN
 # =============================================================================
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Fresh base-header-first Defence master build")
-    parser.add_argument("--input", default="app_data.parquet", help="Fresh source parquet")
-    parser.add_argument("--output-dir", default="master_output")
-    parser.add_argument("--domain-lookup", default="defence_domain_lookup.csv")
-    parser.add_argument("--supplier-mapping", default="supplier_mapping_master.xlsx")
+    parser = argparse.ArgumentParser(
+        description="Build the canonical ATLAS Defence master dataset"
+    )
+    parser.add_argument(
+        "--input",
+        default="defence/data/defence_contracts_raw.parquet",
+        help="Defence-filtered raw parquet produced by the ATLAS refresh pipeline.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="defence/data/processed",
+    )
+    parser.add_argument(
+        "--domain-lookup",
+        default="defence/config/defence_domain_lookup.csv",
+    )
+    parser.add_argument(
+        "--supplier-mapping",
+        default="defence/config/supplier_mapping.xlsx",
+    )
     return parser.parse_args()
 
 
