@@ -469,14 +469,15 @@ def main() -> None:
 
     with sync_playwright() as p:
 
-        browser = p.chromium.launch(
-            headless=args.headless,
-            slow_mo=(
-                250
-                if not args.headless
-                else 0
-            ),
-        )
+    browser = p.chromium.launch(
+        channel="msedge",
+        headless=args.headless,
+        slow_mo=(
+            250
+            if not args.headless
+            else 0
+        ),
+    )
 
         context = browser.new_context(
             accept_downloads=True,
