@@ -4,7 +4,8 @@ import argparse
 import calendar
 import csv
 import re
-from datetime import datetime, timezone
+import shutil
+from datetime import datetime
 from pathlib import Path
 
 from playwright.sync_api import (
@@ -13,20 +14,10 @@ from playwright.sync_api import (
 )
 
 
-REPORT_URL = (
-    "https://viz.govpgs.gov.au/t/public-production/views/"
-    "AusTender-TotalContractsandAmendmentsDownfundUpdate/"
-    "FinancialYearAnalysis"
-    "?:size=1238,586"
-    "&:embed=y"
-    "&:showVizHome=n"
-    "&:bootstrapWhenNotified=y"
-    "&:tabs=n"
-    "&:toolbar=n"
-    "&:device=desktop"
-    "&:apiID=host0"
+START_URL = (
+    "https://help.tenders.gov.au/getting-started-with-austender/"
+    "information-made-easy/contracts-and-contract-amendments/"
 )
-
 
 EXPECTED_HEADERS = {
     "01. Agency Name",
@@ -40,9 +31,16 @@ EXPECTED_HEADERS = {
 }
 
 
+# ============================================================
+# Arguments and dates
+# ============================================================
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fetch a monthly AusTender Financial Year Analysis CSV export."
+        description=(
+            "Download one month of AusTender Financial Year "
+            "Analysis data."
+        )
     )
 
     parser.add_argument("--year", type=int)
@@ -55,14 +53,20 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--diagnostics-dir",
-        default="audits/austender/fetch_diagnostics",
+        default="audits/austender/local_fetch",
+    )
+
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run Edge invisibly. Leave OFF while testing.",
     )
 
     return parser.parse_args()
 
 
 def previous_month() -> tuple[int, int]:
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now().date()
 
     if today.month == 1:
         return today.year - 1, 12
@@ -70,8 +74,14 @@ def previous_month() -> tuple[int, int]:
     return today.year, today.month - 1
 
 
-def month_range(year: int, month: int) -> tuple[str, str]:
-    last_day = calendar.monthrange(year, month)[1]
+def month_range(
+    year: int,
+    month: int,
+) -> tuple[str, str]:
+    last_day = calendar.monthrange(
+        year,
+        month,
+    )[1]
 
     return (
         f"1/{month}/{year}",
@@ -79,142 +89,224 @@ def month_range(year: int, month: int) -> tuple[str, str]:
     )
 
 
-def safe_body_text(target) -> str:
+# ============================================================
+# Generic browser helpers
+# ============================================================
+
+def safe_text(target) -> str:
     try:
-        return target.locator("body").inner_text(timeout=2000)
+        return target.locator(
+            "body"
+        ).inner_text(
+            timeout=2000
+        )
     except Exception:
         return ""
 
 
-def dump_targets(page) -> None:
-    print()
-    print(f"Page title: {page.title()!r}")
-    print(f"Page URL:   {page.url}")
-    print(f"Frames detected: {len(page.frames)}")
+def all_targets(page):
+    return [
+        page,
+        *page.frames,
+    ]
 
-    for i, frame in enumerate(page.frames):
-        print(f"  Frame {i}: {frame.url}")
 
+def click_first_visible(
+    locators,
+    description: str,
+) -> None:
+    for locator in locators:
+        try:
+            if (
+                locator.count() > 0
+                and locator.first.is_visible()
+            ):
+                locator.first.scroll_into_view_if_needed()
+
+                locator.first.click(
+                    timeout=10000,
+                )
+
+                return
+
+        except Exception:
+            continue
+
+    raise RuntimeError(
+        f"Could not find/click: {description}"
+    )
+
+
+def wait_for_new_page(
+    context,
+    existing_pages,
+    timeout_ms: int = 10000,
+):
+    elapsed = 0
+
+    while elapsed < timeout_ms:
+        current_pages = context.pages
+
+        for page in current_pages:
+            if page not in existing_pages:
+                return page
+
+        if current_pages:
+            current_pages[0].wait_for_timeout(
+                250
+            )
+
+        elapsed += 250
+
+    return None
+
+
+# ============================================================
+# Financial Year Analysis report
+# ============================================================
 
 def find_report_target(page):
-    """
-    The direct viz URL may render the report either in the main page
-    or inside a child frame. Return whichever target exposes the
-    Financial Year Analysis report controls.
-    """
-
-    for attempt in range(90):
-
-        if attempt % 10 == 0:
-            print(
-                f"Waiting for Financial Year Analysis report... "
-                f"{attempt}s"
-            )
-            dump_targets(page)
-
-        # Main page first
-        text = safe_body_text(page).lower()
-
-        if (
-            "published from" in text
-            and "published to" in text
-            and "export data" in text
+    for attempt in range(120):
+        for target in all_targets(
+            page
         ):
-            return page
-
-        # Then child frames
-        for frame in page.frames:
-
-            text = safe_body_text(frame).lower()
+            text = safe_text(
+                target
+            ).lower()
 
             if (
                 "published from" in text
                 and "published to" in text
-                and "export data" in text
             ):
-                return frame
+                return target
 
-        page.wait_for_timeout(1000)
+        if attempt % 10 == 0:
+            print(
+                "Waiting for Financial Year Analysis "
+                f"report... {attempt}s"
+            )
 
-    dump_targets(page)
+            print(
+                f"Page title: {page.title()!r}"
+            )
+
+            print(
+                f"Frames: {len(page.frames)}"
+            )
+
+            for i, frame in enumerate(
+                page.frames
+            ):
+                print(
+                    f"  Frame {i}: {frame.url}"
+                )
+
+        page.wait_for_timeout(
+            1000
+        )
 
     raise RuntimeError(
-        "Could not find Financial Year Analysis report controls."
+        "Financial Year Analysis report did not load."
     )
 
 
-def visible_inputs(target):
-    inputs = target.locator("input")
+def find_date_inputs(target):
+    labelled = []
 
-    found = []
-
-    for i in range(inputs.count()):
-
-        item = inputs.nth(i)
-
+    for label in [
+        "Published From",
+        "Published To",
+    ]:
         try:
-            if item.is_visible():
-                found.append(item)
+            locator = target.get_by_label(
+                re.compile(
+                    label,
+                    re.IGNORECASE,
+                )
+            )
+
+            if (
+                locator.count() > 0
+                and locator.first.is_visible()
+            ):
+                labelled.append(
+                    locator.first
+                )
 
         except Exception:
             pass
 
-    return found
-
-
-def find_date_inputs(target):
-    """
-    Identify Published From and Published To using their current date-like values.
-    """
+    if len(labelled) >= 2:
+        return (
+            labelled[0],
+            labelled[1],
+        )
 
     date_pattern = re.compile(
         r"^\d{1,2}/\d{1,2}/\d{4}$"
     )
 
-    date_inputs = []
+    matches = []
 
-    for item in visible_inputs(target):
+    inputs = target.locator(
+        "input"
+    )
+
+    for i in range(
+        inputs.count()
+    ):
+        item = inputs.nth(i)
 
         try:
+            if not item.is_visible():
+                continue
+
             value = (
                 item.input_value()
                 .strip()
             )
 
-            if date_pattern.match(value):
-                date_inputs.append(item)
+            if date_pattern.match(
+                value
+            ):
+                matches.append(
+                    item
+                )
 
         except Exception:
             continue
 
-    if len(date_inputs) >= 2:
+    if len(matches) >= 2:
         return (
-            date_inputs[0],
-            date_inputs[1],
+            matches[0],
+            matches[1],
         )
 
     raise RuntimeError(
-        "Could not identify Published From / Published To date inputs."
+        "Could not identify Published From / Published To."
     )
 
 
-def set_input(item, value: str) -> None:
-    item.click()
+def set_date_input(
+    locator,
+    value: str,
+) -> None:
+    locator.click()
 
-    item.press(
+    locator.press(
         "Control+A"
     )
 
-    item.fill(
+    locator.fill(
         value
     )
 
-    item.press(
+    locator.press(
         "Tab"
     )
 
 
-def wait_for_report_refresh(page) -> None:
+def wait_for_tableau_refresh(page) -> None:
     page.wait_for_timeout(
         5000
     )
@@ -222,198 +314,556 @@ def wait_for_report_refresh(page) -> None:
     try:
         page.wait_for_load_state(
             "networkidle",
-            timeout=30000,
+            timeout=20000,
         )
 
     except PlaywrightTimeoutError:
-        # Tableau may keep connections alive.
         page.wait_for_timeout(
             5000
         )
 
 
-def click_export_data(target) -> None:
+# ============================================================
+# Export Data
+# ============================================================
+
+def click_real_export_button(page) -> None:
+    print(
+        "Searching for real Export Data button..."
+    )
+
+    button = page.locator(
+        'button[data-action="exportdata"]'
+    )
+
+    print(
+        f"Export Data button matches: "
+        f"{button.count()}"
+    )
+
+    if button.count() == 0:
+        raise RuntimeError(
+            "Could not find "
+            'button[data-action="exportdata"].'
+        )
+
+    button = button.first
+
+    button.scroll_into_view_if_needed()
+
+    if not button.is_visible():
+        raise RuntimeError(
+            "Export Data button exists but is not visible."
+        )
+
+    print(
+        "Export Data button found."
+    )
+
+    button.click(
+        timeout=10000,
+    )
+
+    print(
+        "Export Data clicked."
+    )
+
+
+def find_yes_button(page):
     candidates = [
-        target.get_by_role(
+        page.get_by_role(
             "button",
             name=re.compile(
-                r"Export Data",
+                r"^Yes$",
                 re.IGNORECASE,
             ),
         ),
-        target.get_by_text(
-            "Export Data",
+        page.get_by_text(
+            re.compile(
+                r"^Yes$",
+                re.IGNORECASE,
+            ),
             exact=True,
         ),
     ]
 
     for candidate in candidates:
-
         try:
             if (
                 candidate.count() > 0
                 and candidate.first.is_visible()
             ):
-                candidate.first.click()
+                return candidate.first
+
+        except Exception:
+            continue
+
+    return None
+
+
+def open_view_data_window(
+    page,
+    context,
+):
+    original_pages = list(
+        context.pages
+    )
+
+    click_real_export_button(
+        page
+    )
+
+    page.wait_for_timeout(
+        1200
+    )
+
+    popup = wait_for_new_page(
+        context,
+        original_pages,
+        timeout_ms=3000,
+    )
+
+    if popup is not None:
+        print(
+            "View Data window opened directly."
+        )
+
+        popup.wait_for_load_state(
+            "domcontentloaded",
+            timeout=30000,
+        )
+
+        popup.wait_for_timeout(
+            1500
+        )
+
+        return popup
+
+    print(
+        "Checking for View Data blocked confirmation..."
+    )
+
+    yes_button = find_yes_button(
+        page
+    )
+
+    if yes_button is None:
+        raise RuntimeError(
+            "Export Data was clicked, but neither "
+            "a View Data window nor the expected "
+            "Yes confirmation appeared."
+        )
+
+    print(
+        "View Data confirmation found."
+    )
+
+    existing_pages = list(
+        context.pages
+    )
+
+    yes_button.click(
+        timeout=10000,
+    )
+
+    print(
+        "Clicked Yes."
+    )
+
+    popup = wait_for_new_page(
+        context,
+        existing_pages,
+        timeout_ms=15000,
+    )
+
+    if popup is None:
+        raise RuntimeError(
+            "Clicked Yes, but the View Data "
+            "window did not open."
+        )
+
+    print(
+        "View Data window opened."
+    )
+
+    popup.wait_for_load_state(
+        "domcontentloaded",
+        timeout=30000,
+    )
+
+    popup.wait_for_timeout(
+        1500
+    )
+
+    return popup
+
+
+# ============================================================
+# View Data window
+# ============================================================
+
+def find_view_data_target(
+    view_page,
+):
+    for attempt in range(60):
+        for target in all_targets(
+            view_page
+        ):
+            text = safe_text(
+                target
+            ).lower()
+
+            if (
+                "export" in text
+                or "download" in text
+                or "view data" in text
+            ):
+                return target
+
+        if attempt % 10 == 0:
+            print(
+                f"Waiting for View Data window... "
+                f"{attempt}s"
+            )
+
+            print(
+                f"View Data URL: "
+                f"{view_page.url}"
+            )
+
+        view_page.wait_for_timeout(
+            1000
+        )
+
+    raise RuntimeError(
+        "View Data window opened but its "
+        "interface could not be found."
+    )
+
+
+def select_export_tab(
+    target,
+) -> None:
+    print(
+        "Selecting Export tab..."
+    )
+
+    candidates = [
+        target.get_by_role(
+            "tab",
+            name=re.compile(
+                r"^Export$",
+                re.IGNORECASE,
+            ),
+        ),
+        target.get_by_role(
+            "button",
+            name=re.compile(
+                r"^Export$",
+                re.IGNORECASE,
+            ),
+        ),
+        target.get_by_text(
+            re.compile(
+                r"^Export$",
+                re.IGNORECASE,
+            ),
+            exact=True,
+        ),
+    ]
+
+    for candidate in candidates:
+        try:
+            if (
+                candidate.count() > 0
+                and candidate.first.is_visible()
+            ):
+                candidate.first.click(
+                    timeout=10000,
+                )
+
+                print(
+                    "Export tab selected."
+                )
+
                 return
 
         except Exception:
             continue
 
     raise RuntimeError(
-        "Could not find the Export Data control."
+        "Could not find/select the Export tab "
+        "in the View Data window."
     )
 
 
-def find_dialog_target(page):
+# ============================================================
+# Download handling
+# ============================================================
+
+def download_csv(
+    view_page,
+    target,
+    output_path: Path,
+    browser_downloads_dir: Path,
+) -> None:
     """
-    Tableau may render the View Data dialog in the main page
-    or one of its frames.
+    Tableau's hybrid View Data window does not reliably emit a
+    Playwright download event.
+
+    Edge is therefore launched with a dedicated downloads_path.
+    This function watches that exact folder, detects Tableau's
+    UUID-named export, waits until it is stable, then moves it to
+    ATLAS's canonical monthly CSV path.
     """
 
-    for _ in range(40):
-
-        text = safe_body_text(page)
-
-        if "View Data" in text:
-            return page
-
-        for frame in page.frames:
-
-            text = safe_body_text(frame)
-
-            if "View Data" in text:
-                return frame
-
-        page.wait_for_timeout(
-            500
-        )
-
-    return find_report_target(
-        page
+    browser_downloads_dir.mkdir(
+        parents=True,
+        exist_ok=True,
     )
 
+    print(
+        "Watching browser download folder:"
+    )
 
-def click_full_data_if_available(target) -> None:
-    """
-    Some Tableau versions expose a Full Data / Underlying tab.
-    If it exists, select it before downloading.
-    """
+    print(
+        browser_downloads_dir
+    )
 
-    for text in [
-        "Full Data",
-        "Underlying",
-    ]:
-
-        candidates = [
-            target.get_by_role(
-                "tab",
-                name=re.compile(
-                    text,
-                    re.IGNORECASE,
-                ),
-            ),
-            target.get_by_text(
-                re.compile(
-                    text,
-                    re.IGNORECASE,
-                )
-            ),
-        ]
-
-        for candidate in candidates:
-
+    # Remove leftovers from previous ATLAS test runs.
+    for old_file in (
+        browser_downloads_dir.iterdir()
+    ):
+        if old_file.is_file():
             try:
-                if (
-                    candidate.count() > 0
-                    and candidate.first.is_visible()
-                ):
-                    candidate.first.click()
-
-                    target.page.wait_for_timeout(
-                        1000
-                    )
-
-                    return
-
+                old_file.unlink()
             except Exception:
                 pass
 
+    before = {
+        path.resolve()
+        for path in browser_downloads_dir.iterdir()
+        if path.is_file()
+    }
 
-def download_csv(
-    page,
-    target,
-    output_path: Path,
-) -> None:
-    """
-    Try common Tableau CSV/download controls.
-    """
-
-    patterns = [
-        r"Download all rows as a text file",
-        r"Download all rows",
-        r"Download.*CSV",
-        r"CSV",
-        r"Download",
-    ]
-
-    for pattern in patterns:
-
-        candidates = [
-            target.get_by_role(
-                "button",
-                name=re.compile(
-                    pattern,
-                    re.IGNORECASE,
-                ),
-            ),
-            target.get_by_role(
-                "link",
-                name=re.compile(
-                    pattern,
-                    re.IGNORECASE,
-                ),
-            ),
-            target.get_by_text(
-                re.compile(
-                    pattern,
-                    re.IGNORECASE,
-                )
-            ),
-        ]
-
-        for candidate in candidates:
-
-            try:
-                if (
-                    candidate.count() == 0
-                    or not candidate.first.is_visible()
-                ):
-                    continue
-
-                with page.expect_download(
-                    timeout=60000
-                ) as download_info:
-
-                    candidate.first.click()
-
-                download = (
-                    download_info.value
-                )
-
-                download.save_as(
-                    output_path
-                )
-
-                return
-
-            except Exception:
-                continue
-
-    raise RuntimeError(
-        "Could not trigger the Tableau CSV download."
+    print(
+        "Searching for Download button..."
     )
 
+    candidates = [
+        target.get_by_role(
+            "button",
+            name=re.compile(
+                r"^Download$",
+                re.IGNORECASE,
+            ),
+        ),
+        target.get_by_role(
+            "link",
+            name=re.compile(
+                r"^Download$",
+                re.IGNORECASE,
+            ),
+        ),
+        target.get_by_text(
+            re.compile(
+                r"^Download$",
+                re.IGNORECASE,
+            ),
+            exact=True,
+        ),
+    ]
+
+    download_button = None
+
+    for candidate in candidates:
+        try:
+            if (
+                candidate.count() > 0
+                and candidate.first.is_visible()
+            ):
+                download_button = (
+                    candidate.first
+                )
+
+                break
+
+        except Exception:
+            continue
+
+    if download_button is None:
+        raise RuntimeError(
+            "Could not find Download control "
+            "in the View Data window."
+        )
+
+    print(
+        "Download control found."
+    )
+
+    print(
+        "Clicking Download ONCE..."
+    )
+
+    download_button.click(
+        timeout=10000,
+    )
+
+    print(
+        "Waiting for browser download file..."
+    )
+
+    downloaded_file = None
+
+    # Maximum 120 seconds.
+    for _ in range(240):
+        files = [
+            path
+            for path in browser_downloads_dir.iterdir()
+            if path.is_file()
+        ]
+
+        new_files = [
+            path
+            for path in files
+            if (
+                path.resolve() not in before
+                and not path.name.lower().endswith(
+                    ".crdownload"
+                )
+                and not path.name.lower().endswith(
+                    ".tmp"
+                )
+            )
+        ]
+
+        if new_files:
+            new_files.sort(
+                key=lambda path: (
+                    path.stat().st_mtime
+                ),
+                reverse=True,
+            )
+
+            candidate = (
+                new_files[0]
+            )
+
+            print(
+                "Detected browser download:"
+            )
+
+            print(
+                candidate.name
+            )
+
+            previous_size = -1
+            stable_checks = 0
+
+            # Wait for file size to stop changing.
+            for _ in range(120):
+                try:
+                    current_size = (
+                        candidate.stat().st_size
+                    )
+
+                except FileNotFoundError:
+                    break
+
+                if (
+                    current_size > 0
+                    and current_size
+                    == previous_size
+                ):
+                    stable_checks += 1
+
+                else:
+                    stable_checks = 0
+
+                previous_size = (
+                    current_size
+                )
+
+                if stable_checks >= 3:
+                    downloaded_file = (
+                        candidate
+                    )
+
+                    break
+
+                view_page.wait_for_timeout(
+                    500
+                )
+
+            if downloaded_file is not None:
+                break
+
+        view_page.wait_for_timeout(
+            500
+        )
+
+    if downloaded_file is None:
+        raise RuntimeError(
+            "Download was clicked, but no completed "
+            "file appeared in the configured browser "
+            "download folder within 120 seconds."
+        )
+
+    print(
+        "Downloaded Tableau file:"
+    )
+
+    print(
+        downloaded_file
+    )
+
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    if output_path.exists():
+        print(
+            "Removing existing ATLAS output:"
+        )
+
+        print(
+            output_path
+        )
+
+        output_path.unlink()
+
+    print(
+        "Moving file to:"
+    )
+
+    print(
+        output_path
+    )
+
+    shutil.move(
+        str(downloaded_file),
+        str(output_path),
+    )
+
+    if not output_path.exists():
+        raise RuntimeError(
+            f"Failed to create final file: "
+            f"{output_path}"
+        )
+
+    print(
+        "Download saved successfully:"
+    )
+
+    print(
+        output_path
+    )
+
+
+# ============================================================
+# CSV validation
+# ============================================================
 
 def validate_csv(
     path: Path,
@@ -428,7 +878,6 @@ def validate_csv(
         encoding="utf-8-sig",
         newline="",
     ) as file:
-
         reader = csv.reader(
             file
         )
@@ -447,6 +896,12 @@ def validate_csv(
             1 for _ in reader
         )
 
+    if len(headers) != 48:
+        raise RuntimeError(
+            f"Expected 48 columns, "
+            f"got {len(headers)}."
+        )
+
     missing = sorted(
         EXPECTED_HEADERS
         - set(headers)
@@ -460,22 +915,31 @@ def validate_csv(
             + ", ".join(missing)
         )
 
-    if len(headers) != 48:
+    if rows == 0:
         raise RuntimeError(
-            f"Expected 48 columns, "
-            f"got {len(headers)}."
+            "Downloaded CSV contains zero data rows."
         )
 
     return rows
 
 
+# ============================================================
+# Main
+# ============================================================
+
 def main() -> None:
     args = parse_args()
 
     if (
-        args.year is None
-        or args.month is None
+        (args.year is None)
+        != (args.month is None)
     ):
+        raise SystemExit(
+            "Supply both --year and --month, "
+            "or neither."
+        )
+
+    if args.year is None:
         year, month = (
             previous_month()
         )
@@ -484,7 +948,7 @@ def main() -> None:
         year = args.year
         month = args.month
 
-    if month < 1 or month > 12:
+    if not 1 <= month <= 12:
         raise SystemExit(
             "--month must be between 1 and 12."
         )
@@ -508,6 +972,13 @@ def main() -> None:
         args.diagnostics_dir
     )
 
+    browser_downloads_dir = (
+        Path(
+            "data/austender/browser_downloads"
+        )
+        .resolve()
+    )
+
     output_dir.mkdir(
         parents=True,
         exist_ok=True,
@@ -518,51 +989,61 @@ def main() -> None:
         exist_ok=True,
     )
 
+    browser_downloads_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
     output_path = (
         output_dir
         / f"financial_year_analysis_{period}.csv"
     )
 
     print(
-        f"Fetching Financial Year Analysis: "
-        f"{period}"
+        f"Target month: {period}"
     )
 
     print(
-        f"Published From: "
-        f"{start_date}"
+        f"Published From: {start_date}"
     )
 
     print(
-        f"Published To:   "
-        f"{end_date}"
+        f"Published To:   {end_date}"
+    )
+
+    print(
+        f"Output: {output_path}"
+    )
+
+    print(
+        "Browser download folder:"
+    )
+
+    print(
+        browser_downloads_dir
     )
 
     with sync_playwright() as p:
-
         browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-            ],
+            channel="msedge",
+            headless=args.headless,
+            downloads_path=str(
+                browser_downloads_dir
+            ),
+            slow_mo=(
+                250
+                if not args.headless
+                else 0
+            ),
         )
 
         context = browser.new_context(
             accept_downloads=True,
             viewport={
                 "width": 1600,
-                "height": 1200,
+                "height": 1100,
             },
             locale="en-AU",
-            user_agent=(
-                "Mozilla/5.0 "
-                "(Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 "
-                "(KHTML, like Gecko) "
-                "Chrome/153.0.0.0 "
-                "Safari/537.36"
-            ),
         )
 
         page = context.new_page()
@@ -571,19 +1052,47 @@ def main() -> None:
             30000
         )
 
+        view_page = None
+
         try:
+            print()
             print(
-                "Opening direct Financial Year Analysis report..."
+                "1/7 Opening Contracts and Amendments page..."
             )
 
             page.goto(
-                REPORT_URL,
+                START_URL,
                 wait_until="domcontentloaded",
                 timeout=90000,
             )
 
             page.wait_for_timeout(
-                5000
+                2500
+            )
+
+            print(
+                "2/7 Opening Financial Year Analysis..."
+            )
+
+            click_first_visible(
+                [
+                    page.get_by_role(
+                        "link",
+                        name=re.compile(
+                            r"Financial Year Analysis",
+                            re.IGNORECASE,
+                        ),
+                    ),
+                    page.get_by_text(
+                        "Financial Year Analysis",
+                        exact=True,
+                    ),
+                ],
+                "Financial Year Analysis",
+            )
+
+            page.wait_for_timeout(
+                3000
             )
 
             report = find_report_target(
@@ -591,69 +1100,96 @@ def main() -> None:
             )
 
             print(
-                "Financial Year Analysis report found."
-            )
-
-            published_from, published_to = (
-                find_date_inputs(
-                    report
-                )
+                "Financial Year Analysis loaded."
             )
 
             print(
-                "Setting report dates..."
+                "3/7 Setting date range..."
             )
 
-            set_input(
+            (
+                published_from,
+                published_to,
+            ) = find_date_inputs(
+                report
+            )
+
+            set_date_input(
                 published_from,
                 start_date,
             )
 
-            set_input(
+            set_date_input(
                 published_to,
                 end_date,
             )
 
-            wait_for_report_refresh(
+            wait_for_tableau_refresh(
                 page
             )
 
             page.screenshot(
                 path=(
                     diagnostics_dir
-                    / f"{period}_filtered.png"
+                    / f"{period}_dates_set.png"
                 ),
                 full_page=True,
             )
 
             print(
-                "Opening Export Data..."
+                "4/7 Opening Export Data..."
             )
 
-            click_export_data(
-                report
-            )
-
-            page.wait_for_timeout(
-                1500
-            )
-
-            dialog = find_dialog_target(
-                page
-            )
-
-            click_full_data_if_available(
-                dialog
+            view_page = open_view_data_window(
+                page,
+                context,
             )
 
             print(
-                "Downloading underlying CSV..."
+                "5/7 View Data window ready."
+            )
+
+            view_page.screenshot(
+                path=(
+                    diagnostics_dir
+                    / f"{period}_view_data.png"
+                ),
+                full_page=True,
+            )
+
+            print(
+                "6/7 Selecting Export..."
+            )
+
+            view_target = (
+                find_view_data_target(
+                    view_page
+                )
+            )
+
+            select_export_tab(
+                view_target
+            )
+
+            view_page.wait_for_timeout(
+                1000
+            )
+
+            print(
+                "7/7 Downloading CSV..."
+            )
+
+            view_target = (
+                find_view_data_target(
+                    view_page
+                )
             )
 
             download_csv(
-                page,
-                dialog,
+                view_page,
+                view_target,
                 output_path,
+                browser_downloads_dir,
             )
 
             rows = validate_csv(
@@ -662,12 +1198,19 @@ def main() -> None:
 
             print()
             print(
-                "AusTender FYA download complete."
+                "================================"
             )
 
             print(
-                f"Rows:    "
-                f"{rows:,}"
+                "SUCCESS"
+            )
+
+            print(
+                "================================"
+            )
+
+            print(
+                f"Downloaded rows: {rows:,}"
             )
 
             print(
@@ -675,40 +1218,54 @@ def main() -> None:
             )
 
             print(
-                f"Wrote:   "
-                f"{output_path}"
+                "Saved to:"
+            )
+
+            print(
+                output_path
             )
 
         except Exception:
-
             try:
-                dump_targets(
-                    page
-                )
-
                 page.screenshot(
                     path=(
                         diagnostics_dir
-                        / f"{period}_failure.png"
+                        / f"{period}_failure_main.png"
                     ),
                     full_page=True,
-                )
-
-                (
-                    diagnostics_dir
-                    / f"{period}_page.html"
-                ).write_text(
-                    page.content(),
-                    encoding="utf-8",
                 )
 
             except Exception:
                 pass
 
+            if view_page is not None:
+                try:
+                    view_page.screenshot(
+                        path=(
+                            diagnostics_dir
+                            / f"{period}_failure_view_data.png"
+                        ),
+                        full_page=True,
+                    )
+
+                except Exception:
+                    pass
+
             raise
 
         finally:
+            if not args.headless:
+                print()
+                print(
+                    "Browser will close in 8 seconds..."
+                )
+
+                page.wait_for_timeout(
+                    8000
+                )
+
             context.close()
+
             browser.close()
 
 
