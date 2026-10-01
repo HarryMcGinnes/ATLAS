@@ -161,22 +161,55 @@ def normalise_source(
 
     out = df.copy()
 
-    for column in [
+    # -------------------------------------------------------------
+    # Normalise all original FYA columns to consistent types.
+    #
+    # Baseline parquet may have inferred numeric types for fields
+    # such as "09. Extension Options", while CSV exports load them
+    # as strings. All descriptive/source fields are deliberately
+    # stored as text so monthly CSVs and the baseline concatenate
+    # consistently and can be written back to parquet safely.
+    # -------------------------------------------------------------
+
+    date_columns = {
         EXECUTION_DATE,
         START_DATE,
         END_DATE,
-    ]:
+    }
+
+    numeric_columns = {
+        VALUE,
+    }
+
+    for column in out.columns:
+        if column in date_columns or column in numeric_columns:
+            continue
+
+        out[column] = (
+            out[column]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+
+    # Dates
+    for column in date_columns:
         out[column] = pd.to_datetime(
             out[column],
             errors="coerce",
             dayfirst=True,
         )
 
-    out[VALUE] = parse_value(out[VALUE])
+    # Contract value
+    out[VALUE] = parse_value(
+        out[VALUE]
+    )
 
+    # Provenance
     out["atlas_source_kind"] = source_kind
     out["atlas_source_file"] = source_file
 
+    # CN reconciliation fields
     out["CN Root ID"] = out[CN_ID].map(
         canonical_cn_root
     )
@@ -185,6 +218,7 @@ def normalise_source(
         amendment_number
     )
 
+    # Compatibility aliases used elsewhere in ATLAS
     aliases = {
         AGENCY: "Agency",
         CN_ID: "CN ID",
@@ -205,7 +239,7 @@ def normalise_source(
     for source_column, alias_column in aliases.items():
         out[alias_column] = out[source_column]
 
-    # Keep compatibility with older Defence code
+    # Historical spelling retained for older Defence code.
     out["Agency Divison"] = out["Agency Division"]
 
     return out
