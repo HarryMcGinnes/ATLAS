@@ -12,10 +12,21 @@ from playwright.sync_api import (
     sync_playwright,
 )
 
+
 REPORT_URL = (
-    "https://help.tenders.gov.au/getting-started-with-austender/"
-    "information-made-easy/contracts-and-contract-amendments/"
+    "https://viz.govpgs.gov.au/t/public-production/views/"
+    "AusTender-TotalContractsandAmendmentsDownfundUpdate/"
+    "FinancialYearAnalysis"
+    "?:size=1238,586"
+    "&:embed=y"
+    "&:showVizHome=n"
+    "&:bootstrapWhenNotified=y"
+    "&:tabs=n"
+    "&:toolbar=n"
+    "&:device=desktop"
+    "&:apiID=host0"
 )
+
 
 EXPECTED_HEADERS = {
     "01. Agency Name",
@@ -29,8 +40,10 @@ EXPECTED_HEADERS = {
 }
 
 
-def parse_args():
-    parser = argparse.ArgumentParser()
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Fetch a monthly AusTender Financial Year Analysis CSV export."
+    )
 
     parser.add_argument("--year", type=int)
     parser.add_argument("--month", type=int)
@@ -48,7 +61,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def previous_month():
+def previous_month() -> tuple[int, int]:
     today = datetime.now(timezone.utc).date()
 
     if today.month == 1:
@@ -57,7 +70,7 @@ def previous_month():
     return today.year, today.month - 1
 
 
-def month_range(year, month):
+def month_range(year: int, month: int) -> tuple[str, str]:
     last_day = calendar.monthrange(year, month)[1]
 
     return (
@@ -66,88 +79,53 @@ def month_range(year, month):
     )
 
 
-def frame_text(frame):
+def safe_body_text(target) -> str:
     try:
-        return frame.locator("body").inner_text(timeout=2000)
+        return target.locator("body").inner_text(timeout=2000)
     except Exception:
         return ""
 
 
-def dump_frames(page):
+def dump_targets(page) -> None:
     print()
-    print(f"Page title: {page.title()}")
+    print(f"Page title: {page.title()!r}")
     print(f"Page URL:   {page.url}")
     print(f"Frames detected: {len(page.frames)}")
 
     for i, frame in enumerate(page.frames):
-        print(
-            f"Frame {i}: {frame.url}"
-        )
+        print(f"  Frame {i}: {frame.url}")
 
 
-def activate_financial_year_analysis(page):
-    print(
-        "Activating Financial Year Analysis tab..."
-    )
+def find_report_target(page):
+    """
+    The direct viz URL may render the report either in the main page
+    or inside a child frame. Return whichever target exposes the
+    Financial Year Analysis report controls.
+    """
 
-    candidates = [
-        page.get_by_role(
-            "link",
-            name=re.compile(
-                r"Financial Year Analysis",
-                re.IGNORECASE,
-            ),
-        ),
-        page.get_by_text(
-            "Financial Year Analysis",
-            exact=True,
-        ),
-    ]
-
-    for candidate in candidates:
-        try:
-            if (
-                candidate.count() > 0
-                and candidate.first.is_visible()
-            ):
-                candidate.first.click()
-
-                page.wait_for_timeout(
-                    4000
-                )
-
-                page.mouse.wheel(
-                    0,
-                    1200,
-                )
-
-                page.wait_for_timeout(
-                    3000
-                )
-
-                return
-        except Exception:
-            continue
-
-    raise RuntimeError(
-        "Could not activate Financial Year Analysis tab."
-    )
-
-
-def find_report_frame(page):
     for attempt in range(90):
 
         if attempt % 10 == 0:
             print(
-                f"Waiting for report frame... "
+                f"Waiting for Financial Year Analysis report... "
                 f"{attempt}s"
             )
+            dump_targets(page)
 
-            dump_frames(page)
+        # Main page first
+        text = safe_body_text(page).lower()
 
+        if (
+            "published from" in text
+            and "published to" in text
+            and "export data" in text
+        ):
+            return page
+
+        # Then child frames
         for frame in page.frames:
 
-            text = frame_text(frame).lower()
+            text = safe_body_text(frame).lower()
 
             if (
                 "published from" in text
@@ -156,20 +134,17 @@ def find_report_frame(page):
             ):
                 return frame
 
-        page.wait_for_timeout(
-            1000
-        )
+        page.wait_for_timeout(1000)
 
-    dump_frames(page)
+    dump_targets(page)
 
     raise RuntimeError(
-        "Could not find Financial Year Analysis report frame "
-        "after activating the tab."
+        "Could not find Financial Year Analysis report controls."
     )
 
 
-def visible_inputs(frame):
-    inputs = frame.locator("input")
+def visible_inputs(target):
+    inputs = target.locator("input")
 
     found = []
 
@@ -180,20 +155,25 @@ def visible_inputs(frame):
         try:
             if item.is_visible():
                 found.append(item)
+
         except Exception:
             pass
 
     return found
 
 
-def find_date_inputs(frame):
+def find_date_inputs(target):
+    """
+    Identify Published From and Published To using their current date-like values.
+    """
+
     date_pattern = re.compile(
         r"^\d{1,2}/\d{1,2}/\d{4}$"
     )
 
     date_inputs = []
 
-    for item in visible_inputs(frame):
+    for item in visible_inputs(target):
 
         try:
             value = (
@@ -201,12 +181,8 @@ def find_date_inputs(frame):
                 .strip()
             )
 
-            if date_pattern.match(
-                value
-            ):
-                date_inputs.append(
-                    item
-                )
+            if date_pattern.match(value):
+                date_inputs.append(item)
 
         except Exception:
             continue
@@ -218,14 +194,11 @@ def find_date_inputs(frame):
         )
 
     raise RuntimeError(
-        "Could not identify Published From / Published To inputs."
+        "Could not identify Published From / Published To date inputs."
     )
 
 
-def set_input(
-    item,
-    value,
-):
+def set_input(item, value: str) -> None:
     item.click()
 
     item.press(
@@ -241,7 +214,7 @@ def set_input(
     )
 
 
-def wait_for_report(page):
+def wait_for_report_refresh(page) -> None:
     page.wait_for_timeout(
         5000
     )
@@ -253,52 +226,61 @@ def wait_for_report(page):
         )
 
     except PlaywrightTimeoutError:
+        # Tableau may keep connections alive.
         page.wait_for_timeout(
             5000
         )
 
 
-def click_export_data(frame):
-    options = [
-        frame.get_by_role(
+def click_export_data(target) -> None:
+    candidates = [
+        target.get_by_role(
             "button",
             name=re.compile(
                 r"Export Data",
                 re.IGNORECASE,
             ),
         ),
-        frame.get_by_text(
+        target.get_by_text(
             "Export Data",
             exact=True,
         ),
     ]
 
-    for option in options:
+    for candidate in candidates:
 
         try:
             if (
-                option.count() > 0
-                and option.first.is_visible()
+                candidate.count() > 0
+                and candidate.first.is_visible()
             ):
-                option.first.click()
+                candidate.first.click()
                 return
 
         except Exception:
             continue
 
     raise RuntimeError(
-        "Could not find Export Data button."
+        "Could not find the Export Data control."
     )
 
 
-def find_dialog_frame(page):
+def find_dialog_target(page):
+    """
+    Tableau may render the View Data dialog in the main page
+    or one of its frames.
+    """
+
     for _ in range(40):
+
+        text = safe_body_text(page)
+
+        if "View Data" in text:
+            return page
 
         for frame in page.frames:
 
-            text = frame_text(
-                frame
-            )
+            text = safe_body_text(frame)
 
             if "View Data" in text:
                 return frame
@@ -307,28 +289,31 @@ def find_dialog_frame(page):
             500
         )
 
-    return find_report_frame(
+    return find_report_target(
         page
     )
 
 
-def click_full_data_if_available(frame):
-    patterns = [
+def click_full_data_if_available(target) -> None:
+    """
+    Some Tableau versions expose a Full Data / Underlying tab.
+    If it exists, select it before downloading.
+    """
+
+    for text in [
         "Full Data",
         "Underlying",
-    ]
-
-    for text in patterns:
+    ]:
 
         candidates = [
-            frame.get_by_role(
+            target.get_by_role(
                 "tab",
                 name=re.compile(
                     text,
                     re.IGNORECASE,
                 ),
             ),
-            frame.get_by_text(
+            target.get_by_text(
                 re.compile(
                     text,
                     re.IGNORECASE,
@@ -345,7 +330,7 @@ def click_full_data_if_available(frame):
                 ):
                     candidate.first.click()
 
-                    frame.page.wait_for_timeout(
+                    target.page.wait_for_timeout(
                         1000
                     )
 
@@ -357,9 +342,13 @@ def click_full_data_if_available(frame):
 
 def download_csv(
     page,
-    frame,
-    output_path,
-):
+    target,
+    output_path: Path,
+) -> None:
+    """
+    Try common Tableau CSV/download controls.
+    """
+
     patterns = [
         r"Download all rows as a text file",
         r"Download all rows",
@@ -371,21 +360,21 @@ def download_csv(
     for pattern in patterns:
 
         candidates = [
-            frame.get_by_role(
+            target.get_by_role(
                 "button",
                 name=re.compile(
                     pattern,
                     re.IGNORECASE,
                 ),
             ),
-            frame.get_by_role(
+            target.get_by_role(
                 "link",
                 name=re.compile(
                     pattern,
                     re.IGNORECASE,
                 ),
             ),
-            frame.get_by_text(
+            target.get_by_text(
                 re.compile(
                     pattern,
                     re.IGNORECASE,
@@ -426,7 +415,9 @@ def download_csv(
     )
 
 
-def validate_csv(path):
+def validate_csv(
+    path: Path,
+) -> int:
     if not path.exists():
         raise RuntimeError(
             f"Downloaded CSV not found: {path}"
@@ -442,9 +433,15 @@ def validate_csv(path):
             file
         )
 
-        headers = next(
-            reader
-        )
+        try:
+            headers = next(
+                reader
+            )
+
+        except StopIteration as exc:
+            raise RuntimeError(
+                "Downloaded CSV is empty."
+            ) from exc
 
         rows = sum(
             1 for _ in reader
@@ -472,7 +469,7 @@ def validate_csv(path):
     return rows
 
 
-def main():
+def main() -> None:
     args = parse_args()
 
     if (
@@ -486,6 +483,11 @@ def main():
     else:
         year = args.year
         month = args.month
+
+    if month < 1 or month > 12:
+        raise SystemExit(
+            "--month must be between 1 and 12."
+        )
 
     start_date, end_date = (
         month_range(
@@ -527,11 +529,13 @@ def main():
     )
 
     print(
-        f"Published From: {start_date}"
+        f"Published From: "
+        f"{start_date}"
     )
 
     print(
-        f"Published To:   {end_date}"
+        f"Published To:   "
+        f"{end_date}"
     )
 
     with sync_playwright() as p:
@@ -551,6 +555,14 @@ def main():
                 "height": 1200,
             },
             locale="en-AU",
+            user_agent=(
+                "Mozilla/5.0 "
+                "(Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 "
+                "(KHTML, like Gecko) "
+                "Chrome/153.0.0.0 "
+                "Safari/537.36"
+            ),
         )
 
         page = context.new_page()
@@ -560,9 +572,8 @@ def main():
         )
 
         try:
-
             print(
-                "Opening AusTender report..."
+                "Opening direct Financial Year Analysis report..."
             )
 
             page.goto(
@@ -572,14 +583,10 @@ def main():
             )
 
             page.wait_for_timeout(
-                3000
+                5000
             )
 
-            activate_financial_year_analysis(
-                page
-            )
-
-            report = find_report_frame(
+            report = find_report_target(
                 page
             )
 
@@ -607,7 +614,7 @@ def main():
                 end_date,
             )
 
-            wait_for_report(
+            wait_for_report_refresh(
                 page
             )
 
@@ -631,7 +638,7 @@ def main():
                 1500
             )
 
-            dialog = find_dialog_frame(
+            dialog = find_dialog_target(
                 page
             )
 
@@ -659,7 +666,8 @@ def main():
             )
 
             print(
-                f"Rows:    {rows:,}"
+                f"Rows:    "
+                f"{rows:,}"
             )
 
             print(
@@ -667,13 +675,14 @@ def main():
             )
 
             print(
-                f"Wrote:   {output_path}"
+                f"Wrote:   "
+                f"{output_path}"
             )
 
         except Exception:
 
             try:
-                dump_frames(
+                dump_targets(
                     page
                 )
 
