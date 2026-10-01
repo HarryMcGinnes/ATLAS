@@ -117,7 +117,6 @@ python `
     $PythonScript `
     --year $Year `
     --month $Month `
-    --headless
 
 if ($LASTEXITCODE -ne 0) {
     throw "AusTender fetch script failed."
