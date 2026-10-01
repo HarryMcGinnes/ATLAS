@@ -1,0 +1,407 @@
+name: Refresh ATLAS Data
+
+on:
+  workflow_dispatch:
+
+  push:
+    branches:
+      - main
+    paths:
+      - "data/austender/monthly/*.csv"
+      - "pipeline/combine_financial_year_analysis.py"
+      - "defence/filter_defence.py"
+      - "health/filter_health.py"
+      - "health/config/**"
+      - ".github/workflows/refresh-atlas-data.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  refresh-atlas-data:
+    name: Build ATLAS canonical datasets
+    runs-on: ubuntu-latest
+
+    env:
+      BASELINE_PATH: data/austender/baseline/austender_baseline.parquet
+      MONTHLY_DIR: data/austender/monthly
+
+      COMBINED_PATH: data/austender/combined/austender_combined.parquet
+
+      DEFENCE_RAW_PATH: defence/data/defence_contracts_raw.parquet
+      HEALTH_RAW_PATH: health/data/health_contracts_raw.parquet
+
+      AUDIT_ROOT: audits/austender
+
+    steps:
+      # ============================================================
+      # CHECKOUT
+      # ============================================================
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ============================================================
+      # PYTHON
+      # ============================================================
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pandas pyarrow
+
+      # ============================================================
+      # DIRECTORIES
+      # ============================================================
+
+      - name: Create pipeline directories
+        run: |
+          mkdir -p data/austender/baseline
+          mkdir -p data/austender/combined
+
+          mkdir -p defence/data
+          mkdir -p health/data
+
+          mkdir -p audits/austender/combined
+          mkdir -p audits/austender/defence
+          mkdir -p audits/austender/health
+
+      # ============================================================
+      # BASELINE
+      # ============================================================
+
+      - name: Download historical baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download atlas-data \
+            --pattern "austender_baseline.parquet" \
+            --dir data/austender/baseline \
+            --clobber
+
+      - name: Verify historical baseline
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+
+          path = Path("data/austender/baseline/austender_baseline.parquet")
+
+          if not path.exists():
+              raise SystemExit(
+                  f"Baseline parquet not found: {path}"
+              )
+
+          df = pd.read_parquet(path)
+
+          print("Historical baseline")
+          print("-------------------")
+          print(f"Rows:    {len(df):,}")
+          print(f"Columns: {len(df.columns):,}")
+          print(f"Path:    {path}")
+
+          if len(df) == 0:
+              raise SystemExit(
+                  "Historical baseline contains zero rows."
+              )
+
+          if "03. Contract Notice ID" not in df.columns:
+              raise SystemExit(
+                  "Historical baseline is missing "
+                  "'03. Contract Notice ID'."
+              )
+
+          print("Baseline validation: PASS")
+          PY
+
+      # ============================================================
+      # MONTHLY INPUTS
+      # ============================================================
+
+      - name: Inspect monthly FYA inputs
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+
+          monthly_dir = Path("data/austender/monthly")
+
+          files = sorted(
+              monthly_dir.glob("financial_year_analysis_*.csv")
+          )
+
+          print("Monthly Financial Year Analysis files")
+          print("-------------------------------------")
+
+          if not files:
+              raise SystemExit(
+                  "No canonical monthly FYA CSV files found."
+              )
+
+          for path in files:
+              df = pd.read_csv(
+                  path,
+                  dtype=str,
+                  low_memory=False,
+                  encoding="utf-8-sig",
+              )
+
+              print(
+                  f"{path.name}: "
+                  f"{len(df):,} rows, "
+                  f"{len(df.columns)} columns"
+              )
+
+              if len(df.columns) != 48:
+                  raise SystemExit(
+                      f"{path.name}: expected 48 columns, "
+                      f"got {len(df.columns)}."
+                  )
+
+              if "03. Contract Notice ID" not in df.columns:
+                  raise SystemExit(
+                      f"{path.name}: missing Contract Notice ID."
+                  )
+
+              if "35. Agency Division" not in df.columns:
+                  raise SystemExit(
+                      f"{path.name}: missing Agency Division."
+                  )
+
+              if "36. Agency Branch" not in df.columns:
+                  raise SystemExit(
+                      f"{path.name}: missing Agency Branch."
+                  )
+
+          print()
+          print("Monthly input validation: PASS")
+          PY
+
+      # ============================================================
+      # COMBINE
+      # ============================================================
+
+      - name: Build canonical AusTender dataset
+        run: |
+          python pipeline/combine_financial_year_analysis.py \
+            --baseline "$BASELINE_PATH" \
+            --monthly-dir "$MONTHLY_DIR" \
+            --output "$COMBINED_PATH" \
+            --audit-dir "$AUDIT_ROOT/combined"
+
+      # ============================================================
+      # VALIDATE COMBINED
+      # ============================================================
+
+      - name: Validate canonical AusTender dataset
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+
+          path = Path(
+              "data/austender/combined/austender_combined.parquet"
+          )
+
+          if not path.exists():
+              raise SystemExit(
+                  f"Combined parquet not created: {path}"
+              )
+
+          df = pd.read_parquet(path)
+
+          print()
+          print("ATLAS combined dataset")
+          print("----------------------")
+          print(f"Rows:    {len(df):,}")
+          print(f"Columns: {len(df.columns):,}")
+
+          if len(df) == 0:
+              raise SystemExit(
+                  "Combined dataset contains zero rows."
+              )
+
+          required = {
+              "01. Agency Name",
+              "02. Contract Type",
+              "03. Contract Notice ID",
+              "15. Category Type",
+              "29. Supplier Name",
+              "35. Agency Division",
+              "36. Agency Branch",
+              "48. Value",
+          }
+
+          missing = sorted(
+              required - set(df.columns)
+          )
+
+          if missing:
+              raise SystemExit(
+                  "Combined dataset missing required columns: "
+                  + ", ".join(missing)
+              )
+
+          cn = (
+              df["03. Contract Notice ID"]
+              .astype("string")
+              .str.strip()
+          )
+
+          blank_cn = (
+              cn.isna()
+              | cn.eq("")
+          ).sum()
+
+          print(
+              f"Blank Contract Notice IDs: "
+              f"{blank_cn:,}"
+          )
+
+          print()
+          print("Combined dataset validation: PASS")
+          PY
+
+      # ============================================================
+      # DEFENCE
+      # ============================================================
+
+      - name: Build Defence raw market
+        run: |
+          python defence/filter_defence.py \
+            --input "$COMBINED_PATH" \
+            --output "$DEFENCE_RAW_PATH" \
+            --audit-dir "$AUDIT_ROOT/defence"
+
+      - name: Validate Defence raw market
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+
+          path = Path(
+              "defence/data/defence_contracts_raw.parquet"
+          )
+
+          if not path.exists():
+              raise SystemExit(
+                  f"Defence parquet not created: {path}"
+              )
+
+          df = pd.read_parquet(path)
+
+          print()
+          print("Defence raw market")
+          print("------------------")
+          print(f"Rows: {len(df):,}")
+
+          if len(df) == 0:
+              raise SystemExit(
+                  "Defence filter produced zero rows."
+              )
+
+          print("Defence validation: PASS")
+          PY
+
+      # ============================================================
+      # HEALTH
+      # ============================================================
+
+      - name: Build Health raw market
+        run: |
+          python health/filter_health.py \
+            --input "$COMBINED_PATH" \
+            --output "$HEALTH_RAW_PATH" \
+            --audit-dir "$AUDIT_ROOT/health"
+
+      - name: Validate Health raw market
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+
+          path = Path(
+              "health/data/health_contracts_raw.parquet"
+          )
+
+          if not path.exists():
+              raise SystemExit(
+                  f"Health parquet not created: {path}"
+              )
+
+          df = pd.read_parquet(path)
+
+          print()
+          print("Health raw market")
+          print("-----------------")
+          print(f"Rows: {len(df):,}")
+
+          if len(df) == 0:
+              raise SystemExit(
+                  "Health filter produced zero rows."
+              )
+
+          print("Health validation: PASS")
+          PY
+
+      # ============================================================
+      # FINAL SUMMARY
+      # ============================================================
+
+      - name: ATLAS raw-data summary
+        run: |
+          python - <<'PY'
+          import pandas as pd
+
+          combined = pd.read_parquet(
+              "data/austender/combined/austender_combined.parquet"
+          )
+
+          defence = pd.read_parquet(
+              "defence/data/defence_contracts_raw.parquet"
+          )
+
+          health = pd.read_parquet(
+              "health/data/health_contracts_raw.parquet"
+          )
+
+          print()
+          print("====================================")
+          print("ATLAS RAW DATA REFRESH COMPLETE")
+          print("====================================")
+          print(
+              f"Combined: {len(combined):,} rows"
+          )
+          print(
+              f"Defence:  {len(defence):,} rows"
+          )
+          print(
+              f"Health:   {len(health):,} rows"
+          )
+          print("====================================")
+          PY
+
+      # ============================================================
+      # ARTIFACT
+      # ============================================================
+
+      - name: Upload refreshed ATLAS datasets
+        uses: actions/upload-artifact@v4
+        with:
+          name: atlas-raw-data-refresh
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            data/austender/combined/austender_combined.parquet
+            defence/data/defence_contracts_raw.parquet
+            health/data/health_contracts_raw.parquet
+            audits/austender/combined/**
+            audits/austender/defence/**
+            audits/austender/health/**
