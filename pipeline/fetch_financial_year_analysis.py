@@ -4,14 +4,13 @@ import argparse
 import calendar
 import csv
 import re
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 from playwright.sync_api import (
     TimeoutError as PlaywrightTimeoutError,
     sync_playwright,
 )
-
 
 REPORT_URL = (
     "https://help.tenders.gov.au/getting-started-with-austender/"
@@ -74,24 +73,98 @@ def frame_text(frame):
         return ""
 
 
+def dump_frames(page):
+    print()
+    print(f"Page title: {page.title()}")
+    print(f"Page URL:   {page.url}")
+    print(f"Frames detected: {len(page.frames)}")
+
+    for i, frame in enumerate(page.frames):
+        print(
+            f"Frame {i}: {frame.url}"
+        )
+
+
+def activate_financial_year_analysis(page):
+    print(
+        "Activating Financial Year Analysis tab..."
+    )
+
+    candidates = [
+        page.get_by_role(
+            "link",
+            name=re.compile(
+                r"Financial Year Analysis",
+                re.IGNORECASE,
+            ),
+        ),
+        page.get_by_text(
+            "Financial Year Analysis",
+            exact=True,
+        ),
+    ]
+
+    for candidate in candidates:
+        try:
+            if (
+                candidate.count() > 0
+                and candidate.first.is_visible()
+            ):
+                candidate.first.click()
+
+                page.wait_for_timeout(
+                    4000
+                )
+
+                page.mouse.wheel(
+                    0,
+                    1200,
+                )
+
+                page.wait_for_timeout(
+                    3000
+                )
+
+                return
+        except Exception:
+            continue
+
+    raise RuntimeError(
+        "Could not activate Financial Year Analysis tab."
+    )
+
+
 def find_report_frame(page):
-    for _ in range(60):
+    for attempt in range(90):
+
+        if attempt % 10 == 0:
+            print(
+                f"Waiting for report frame... "
+                f"{attempt}s"
+            )
+
+            dump_frames(page)
 
         for frame in page.frames:
 
-            text = frame_text(frame)
+            text = frame_text(frame).lower()
 
             if (
-                "Published From" in text
-                and "Published To" in text
-                and "Export Data" in text
+                "published from" in text
+                and "published to" in text
+                and "export data" in text
             ):
                 return frame
 
-        page.wait_for_timeout(1000)
+        page.wait_for_timeout(
+            1000
+        )
+
+    dump_frames(page)
 
     raise RuntimeError(
-        "Could not find Financial Year Analysis report frame."
+        "Could not find Financial Year Analysis report frame "
+        "after activating the tab."
     )
 
 
@@ -114,17 +187,6 @@ def visible_inputs(frame):
 
 
 def find_date_inputs(frame):
-    """
-    The Financial Year Analysis report currently displays:
-
-        Published From
-        Published To
-        Keyword Search
-
-    The first two populated date-like inputs are therefore our
-    report date controls.
-    """
-
     date_pattern = re.compile(
         r"^\d{1,2}/\d{1,2}/\d{4}$"
     )
@@ -134,36 +196,55 @@ def find_date_inputs(frame):
     for item in visible_inputs(frame):
 
         try:
-            value = item.input_value().strip()
+            value = (
+                item.input_value()
+                .strip()
+            )
 
-            if date_pattern.match(value):
-                date_inputs.append(item)
+            if date_pattern.match(
+                value
+            ):
+                date_inputs.append(
+                    item
+                )
 
         except Exception:
             continue
 
     if len(date_inputs) >= 2:
-        return date_inputs[0], date_inputs[1]
+        return (
+            date_inputs[0],
+            date_inputs[1],
+        )
 
     raise RuntimeError(
         "Could not identify Published From / Published To inputs."
     )
 
 
-def set_input(item, value):
-
+def set_input(
+    item,
+    value,
+):
     item.click()
 
-    item.press("Control+A")
+    item.press(
+        "Control+A"
+    )
 
-    item.fill(value)
+    item.fill(
+        value
+    )
 
-    item.press("Tab")
+    item.press(
+        "Tab"
+    )
 
 
 def wait_for_report(page):
-
-    page.wait_for_timeout(5000)
+    page.wait_for_timeout(
+        5000
+    )
 
     try:
         page.wait_for_load_state(
@@ -172,14 +253,12 @@ def wait_for_report(page):
         )
 
     except PlaywrightTimeoutError:
-
-        # Tableau keeps some connections alive, so networkidle
-        # is useful but not essential.
-        page.wait_for_timeout(5000)
+        page.wait_for_timeout(
+            5000
+        )
 
 
 def click_export_data(frame):
-
     options = [
         frame.get_by_role(
             "button",
@@ -197,13 +276,11 @@ def click_export_data(frame):
     for option in options:
 
         try:
-
             if (
                 option.count() > 0
                 and option.first.is_visible()
             ):
                 option.first.click()
-
                 return
 
         except Exception:
@@ -215,24 +292,27 @@ def click_export_data(frame):
 
 
 def find_dialog_frame(page):
-
     for _ in range(40):
 
         for frame in page.frames:
 
-            text = frame_text(frame)
+            text = frame_text(
+                frame
+            )
 
             if "View Data" in text:
                 return frame
 
-        page.wait_for_timeout(500)
+        page.wait_for_timeout(
+            500
+        )
 
-    # Tableau sometimes keeps the dialog inside the original frame.
-    return find_report_frame(page)
+    return find_report_frame(
+        page
+    )
 
 
 def click_full_data_if_available(frame):
-
     patterns = [
         "Full Data",
         "Underlying",
@@ -259,12 +339,10 @@ def click_full_data_if_available(frame):
         for candidate in candidates:
 
             try:
-
                 if (
                     candidate.count() > 0
                     and candidate.first.is_visible()
                 ):
-
                     candidate.first.click()
 
                     frame.page.wait_for_timeout(
@@ -282,12 +360,6 @@ def download_csv(
     frame,
     output_path,
 ):
-    """
-    Tableau wording can vary slightly between versions.
-
-    Try several common download controls.
-    """
-
     patterns = [
         r"Download all rows as a text file",
         r"Download all rows",
@@ -324,7 +396,6 @@ def download_csv(
         for candidate in candidates:
 
             try:
-
                 if (
                     candidate.count() == 0
                     or not candidate.first.is_visible()
@@ -337,7 +408,9 @@ def download_csv(
 
                     candidate.first.click()
 
-                download = download_info.value
+                download = (
+                    download_info.value
+                )
 
                 download.save_as(
                     output_path
@@ -354,7 +427,6 @@ def download_csv(
 
 
 def validate_csv(path):
-
     if not path.exists():
         raise RuntimeError(
             f"Downloaded CSV not found: {path}"
@@ -366,9 +438,13 @@ def validate_csv(path):
         newline="",
     ) as file:
 
-        reader = csv.reader(file)
+        reader = csv.reader(
+            file
+        )
 
-        headers = next(reader)
+        headers = next(
+            reader
+        )
 
         rows = sum(
             1 for _ in reader
@@ -380,7 +456,6 @@ def validate_csv(path):
     )
 
     if missing:
-
         raise RuntimeError(
             "Downloaded file is not the expected "
             "Financial Year Analysis export. "
@@ -389,32 +464,34 @@ def validate_csv(path):
         )
 
     if len(headers) != 48:
-
         raise RuntimeError(
-            f"Expected 48 columns, got "
-            f"{len(headers)}."
+            f"Expected 48 columns, "
+            f"got {len(headers)}."
         )
 
     return rows
 
 
 def main():
-
     args = parse_args()
 
     if (
         args.year is None
         or args.month is None
     ):
-        year, month = previous_month()
+        year, month = (
+            previous_month()
+        )
 
     else:
         year = args.year
         month = args.month
 
-    start_date, end_date = month_range(
-        year,
-        month,
+    start_date, end_date = (
+        month_range(
+            year,
+            month,
+        )
     )
 
     period = (
@@ -460,11 +537,20 @@ def main():
     with sync_playwright() as p:
 
         browser = p.chromium.launch(
-            headless=True
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+            ],
         )
 
         context = browser.new_context(
-            accept_downloads=True
+            accept_downloads=True,
+            viewport={
+                "width": 1600,
+                "height": 1200,
+            },
+            locale="en-AU",
         )
 
         page = context.new_page()
@@ -483,6 +569,14 @@ def main():
                 REPORT_URL,
                 wait_until="domcontentloaded",
                 timeout=90000,
+            )
+
+            page.wait_for_timeout(
+                3000
+            )
+
+            activate_financial_year_analysis(
+                page
             )
 
             report = find_report_frame(
@@ -579,6 +673,9 @@ def main():
         except Exception:
 
             try:
+                dump_frames(
+                    page
+                )
 
                 page.screenshot(
                     path=(
@@ -588,15 +685,21 @@ def main():
                     full_page=True,
                 )
 
+                (
+                    diagnostics_dir
+                    / f"{period}_page.html"
+                ).write_text(
+                    page.content(),
+                    encoding="utf-8",
+                )
+
             except Exception:
                 pass
 
             raise
 
         finally:
-
             context.close()
-
             browser.close()
 
 
