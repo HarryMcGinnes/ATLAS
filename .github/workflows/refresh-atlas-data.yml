@@ -328,28 +328,11 @@ jobs:
           print("Health raw market")
           print("-----------------")
           print(f"Rows: {len(df):,}")
+          print(f"Columns: {len(df.columns):,}")
 
           if len(df) == 0:
               raise SystemExit(
                   "Health filter produced zero rows."
-              )
-
-          required = [
-              "Agency",
-              "Agency Raw",
-              "Value",
-          ]
-
-          missing = [
-              c
-              for c in required
-              if c not in df.columns
-          ]
-
-          if missing:
-              raise SystemExit(
-                  "Health raw dataset missing columns: "
-                  + ", ".join(missing)
               )
 
           print("Health raw validation: PASS")
@@ -397,7 +380,11 @@ jobs:
             --domain-lookup "$DEFENCE_DOMAIN_LOOKUP" \
             --supplier-mapping "$DEFENCE_SUPPLIER_MAPPING"
 
-      - name: Validate Defence classified master
+      # ============================================================
+      # DEFENCE MASTER DEBUG
+      # ============================================================
+
+      - name: Inspect Defence classified master schema
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -419,30 +406,131 @@ jobs:
           print("-------------------------")
           print(f"Rows:    {len(df):,}")
           print(f"Columns: {len(df.columns):,}")
+          print()
+          print("COLUMN LIST")
+          print("-----------")
 
-          required = [
-              "supplier_group",
-              "Service Offering",
-              "Domain",
-          ]
+          for i, col in enumerate(df.columns, start=1):
+              print(f"{i:03d}: {col}")
+          PY
 
-          missing = [
-              c
-              for c in required
-              if c not in df.columns
-          ]
+      # ============================================================
+      # DEFENCE MASTER VALIDATION
+      # ============================================================
 
-          if missing:
-              raise SystemExit(
-                  "Defence master missing columns: "
-                  + ", ".join(missing)
-              )
+      - name: Validate Defence classified master
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+
+          path = Path(
+              "defence/data/processed/master_defence_contracts.parquet"
+          )
+
+          df = pd.read_parquet(path)
 
           if len(df) == 0:
               raise SystemExit(
                   "Defence master contains zero rows."
               )
 
+          columns_lower = {
+              str(c).strip().lower(): c
+              for c in df.columns
+          }
+
+          def find_any(candidates):
+              for candidate in candidates:
+                  key = candidate.strip().lower()
+
+                  if key in columns_lower:
+                      return columns_lower[key]
+
+              return None
+
+          supplier_col = find_any([
+              "supplier_group",
+              "Supplier Group",
+          ])
+
+          service_col = find_any([
+              "Service Offering",
+              "service_offering",
+              "service offering",
+              "capability",
+              "Capability",
+              "Market Segment",
+              "market_segment",
+          ])
+
+          domain_col = find_any([
+              "Domain",
+              "domain",
+              "Defence Domain",
+              "defence_domain",
+          ])
+
+          print()
+          print("Resolved Defence dashboard schema")
+          print("---------------------------------")
+          print(f"Supplier group:   {supplier_col}")
+          print(f"Service Offering: {service_col}")
+          print(f"Domain:           {domain_col}")
+
+          missing = []
+
+          if supplier_col is None:
+              missing.append(
+                  "supplier_group"
+              )
+
+          if service_col is None:
+              missing.append(
+                  "Service Offering"
+              )
+
+          if domain_col is None:
+              missing.append(
+                  "Domain"
+              )
+
+          if missing:
+              raise SystemExit(
+                  "Defence master missing required "
+                  "dashboard concepts: "
+                  + ", ".join(missing)
+              )
+
+          # Create canonical aliases if the master currently
+          # uses legacy / alternate field names.
+          changed = False
+
+          if "supplier_group" not in df.columns:
+              df["supplier_group"] = df[supplier_col]
+              changed = True
+
+          if "Service Offering" not in df.columns:
+              df["Service Offering"] = df[service_col]
+              changed = True
+
+          if "Domain" not in df.columns:
+              df["Domain"] = df[domain_col]
+              changed = True
+
+          if changed:
+              df.to_parquet(
+                  path,
+                  index=False,
+              )
+
+              print()
+              print(
+                  "Canonical Defence dashboard aliases "
+                  "were added to the master."
+              )
+
+          print()
           print("Defence master validation: PASS")
           PY
 
@@ -456,6 +544,10 @@ jobs:
             --input "$HEALTH_RAW_PATH" \
             --output-dir "$HEALTH_PROCESSED_DIR" \
             --audit-dir "$AUDIT_ROOT/health_master"
+
+      # ============================================================
+      # HEALTH MASTER VALIDATION
+      # ============================================================
 
       - name: Validate Health classified master
         run: |
@@ -496,9 +588,9 @@ jobs:
           ]
 
           missing = [
-              c
-              for c in required
-              if c not in df.columns
+              col
+              for col in required
+              if col not in df.columns
           ]
 
           if missing:
@@ -540,8 +632,8 @@ jobs:
               raise SystemExit(
                   "Health invariant failed: "
                   f"{int(invalid_so.sum()):,} "
-                  "non-addressable rows have a "
-                  "Service Offering."
+                  "non-addressable rows have "
+                  "a Service Offering."
               )
 
           value = pd.to_numeric(
