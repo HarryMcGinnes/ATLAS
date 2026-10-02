@@ -1,0 +1,389 @@
+name: Build ATLAS Site
+
+on:
+  workflow_run:
+    workflows:
+      - "Refresh ATLAS Data"
+    types:
+      - completed
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+
+  build-atlas-site:
+    name: Build Defence and Health dashboards
+
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    runs-on: ubuntu-latest
+
+    env:
+      DEFENCE_MASTER: defence/data/processed/master_defence_contracts.parquet
+      HEALTH_MASTER: health/data/processed/master_health_contracts.parquet
+
+      DOCS_DIR: docs
+      DEFENCE_SITE_DIR: docs/defence
+      HEALTH_SITE_DIR: docs/health
+
+    steps:
+
+      # ============================================================
+      # CHECKOUT
+      # ============================================================
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ============================================================
+      # PYTHON
+      # ============================================================
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pandas pyarrow plotly openpyxl
+
+      # ============================================================
+      # DOWNLOAD DATA ARTIFACT
+      # ============================================================
+
+      - name: Download data artifact from triggering refresh
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: atlas-data-refresh
+          path: .
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Download latest successful data artifact
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUN_ID=$(gh run list \
+            --workflow "refresh-atlas-data.yml" \
+            --branch main \
+            --status success \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId')
+
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "No successful Refresh ATLAS Data workflow found."
+            exit 1
+          fi
+
+          echo "Using Refresh ATLAS Data run: $RUN_ID"
+
+          gh run download "$RUN_ID" \
+            --name atlas-data-refresh \
+            --dir .
+
+      # ============================================================
+      # VERIFY DATA
+      # ============================================================
+
+      - name: Verify dashboard masters
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+
+          masters = {
+              "Defence": Path(
+                  "defence/data/processed/master_defence_contracts.parquet"
+              ),
+              "Health": Path(
+                  "health/data/processed/master_health_contracts.parquet"
+              ),
+          }
+
+          print()
+          print("ATLAS DASHBOARD MASTER CHECK")
+          print("============================")
+
+          for name, path in masters.items():
+
+              if not path.exists():
+                  raise SystemExit(
+                      f"{name} master not found: {path}"
+                  )
+
+              df = pd.read_parquet(path)
+
+              if df.empty:
+                  raise SystemExit(
+                      f"{name} master contains zero rows."
+                  )
+
+              print(
+                  f"{name}: "
+                  f"{len(df):,} rows / "
+                  f"{len(df.columns):,} columns"
+              )
+
+          print("============================")
+          PY
+
+      # ============================================================
+      # PREPARE SITE
+      # ============================================================
+
+      - name: Prepare ATLAS site directories
+        run: |
+          mkdir -p "$DEFENCE_SITE_DIR"
+          mkdir -p "$HEALTH_SITE_DIR"
+
+      # ============================================================
+      # DEFENCE DASHBOARDS
+      # ============================================================
+
+      - name: Build Defence TAM Overview
+        run: |
+          python defence/dashboards/DefenceTAM.py \
+            --input "$DEFENCE_MASTER" \
+            --output-dir "$DEFENCE_SITE_DIR" \
+            --value-mode total
+
+      - name: Build Defence Competitive Intelligence
+        run: |
+          python defence/dashboards/CompetitiveIntelligence.py \
+            --input "$DEFENCE_MASTER" \
+            --output-dir "$DEFENCE_SITE_DIR"
+
+      - name: Build Defence Contract Explorer
+        run: |
+          python defence/dashboards/ContractExplorer.py \
+            --input "$DEFENCE_MASTER" \
+            --output-dir "$DEFENCE_SITE_DIR" \
+            --value-mode total
+
+      - name: Build Defence Service Offering Growth
+        run: |
+          python defence/dashboards/ServiceOfferingGrowth.py \
+            --input "$DEFENCE_MASTER" \
+            --output-dir "$DEFENCE_SITE_DIR" \
+            --value-mode total
+
+      # ============================================================
+      # HEALTH DASHBOARDS
+      # ============================================================
+
+      - name: Build Health TAM Overview
+        run: |
+          python health/dashboards/HealthTAMOverview.py \
+            --input "$HEALTH_MASTER" \
+            --output-dir "$HEALTH_SITE_DIR" \
+            --value-mode total
+
+      - name: Build Health Competitive Intelligence
+        run: |
+          python health/dashboards/HealthCompareDashboard.py \
+            --input "$HEALTH_MASTER" \
+            --output-dir "$HEALTH_SITE_DIR" \
+            --value-mode total
+
+      - name: Build Health Exploratory Analysis
+        run: |
+          python health/dashboards/HealthTAMExploratoryAnalysis.py \
+            --input "$HEALTH_MASTER" \
+            --output-dir "$HEALTH_SITE_DIR" \
+            --value-mode total
+
+      # ============================================================
+      # VALIDATE DEFENCE OUTPUTS
+      # ============================================================
+
+      - name: Validate Defence dashboards
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          folder = Path("docs/defence")
+
+          files = sorted(
+              folder.glob("*.html")
+          )
+
+          print()
+          print("DEFENCE DASHBOARDS")
+          print("==================")
+
+          for path in files:
+              print(
+                  f"{path.name}: "
+                  f"{path.stat().st_size / 1024:,.1f} KB"
+              )
+
+          if len(files) < 4:
+              raise SystemExit(
+                  "Expected at least 4 Defence dashboard HTML files."
+              )
+
+          print("==================")
+          PY
+
+      # ============================================================
+      # VALIDATE HEALTH OUTPUTS
+      # ============================================================
+
+      - name: Validate Health dashboards
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          folder = Path("docs/health")
+
+          expected = [
+              "AccentureHealthTAMOverview.html",
+              "HealthCompareDashboard.html",
+              "HealthTAMExploratoryAnalysis.html",
+          ]
+
+          print()
+          print("HEALTH DASHBOARDS")
+          print("=================")
+
+          for filename in expected:
+
+              path = folder / filename
+
+              if not path.exists():
+                  raise SystemExit(
+                      f"Missing Health dashboard: {path}"
+                  )
+
+              size_kb = (
+                  path.stat().st_size
+                  / 1024
+              )
+
+              print(
+                  f"{filename}: "
+                  f"{size_kb:,.1f} KB"
+              )
+
+              if size_kb < 5:
+                  raise SystemExit(
+                      f"Health dashboard appears too small: {filename}"
+                  )
+
+          print("=================")
+          print("Health dashboard validation: PASS")
+          PY
+
+      # ============================================================
+      # VALIDATE SITE
+      # ============================================================
+
+      - name: Validate complete ATLAS site
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          docs = Path("docs")
+
+          if not docs.exists():
+              raise SystemExit(
+                  "docs directory does not exist."
+              )
+
+          index = docs / "index.html"
+
+          if not index.exists():
+              raise SystemExit(
+                  "ATLAS landing page missing: docs/index.html"
+              )
+
+          defence = list(
+              (docs / "defence").glob("*.html")
+          )
+
+          health = list(
+              (docs / "health").glob("*.html")
+          )
+
+          print()
+          print("====================================")
+          print("ATLAS SITE BUILD COMPLETE")
+          print("====================================")
+          print(
+              f"Defence HTML files: "
+              f"{len(defence)}"
+          )
+          print(
+              f"Health HTML files:  "
+              f"{len(health)}"
+          )
+          print(
+              f"Landing page:        "
+              f"{index}"
+          )
+          print("====================================")
+          PY
+
+      # ============================================================
+      # DEBUG SITE TREE
+      # ============================================================
+
+      - name: Show generated site tree
+        run: |
+          echo
+          echo "docs/"
+          find docs -maxdepth 2 -type f | sort
+
+      # ============================================================
+      # GITHUB PAGES
+      # ============================================================
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload ATLAS Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+  # ==============================================================
+  # DEPLOY ONCE
+  # ==============================================================
+
+  deploy-atlas-site:
+    name: Deploy ATLAS
+
+    needs:
+      - build-atlas-site
+
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+
+      - name: Deploy ATLAS to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
