@@ -10,6 +10,8 @@ on:
       - "data/austender/monthly/*.csv"
       - "pipeline/combine_financial_year_analysis.py"
       - "defence/filter_defence.py"
+      - "defence/build_master.py"
+      - "defence/config/**"
       - "health/filter_health.py"
       - "health/config/**"
       - ".github/workflows/refresh-atlas-data.yml"
@@ -19,7 +21,7 @@ permissions:
 
 jobs:
   refresh-atlas-data:
-    name: Build ATLAS canonical datasets
+    name: Build ATLAS datasets
     runs-on: ubuntu-latest
 
     env:
@@ -31,9 +33,16 @@ jobs:
       DEFENCE_RAW_PATH: defence/data/defence_contracts_raw.parquet
       HEALTH_RAW_PATH: health/data/health_contracts_raw.parquet
 
+      DEFENCE_PROCESSED_DIR: defence/data/processed
+      DEFENCE_MASTER_PATH: defence/data/processed/master_defence_contracts.parquet
+
+      DEFENCE_DOMAIN_LOOKUP: defence/config/defence_domain_lookup.csv
+      DEFENCE_SUPPLIER_MAPPING: defence/config/supplier_mapping.xlsx
+
       AUDIT_ROOT: audits/austender
 
     steps:
+
       # ============================================================
       # CHECKOUT
       # ============================================================
@@ -55,7 +64,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pandas pyarrow
+          pip install pandas pyarrow openpyxl
 
       # ============================================================
       # DIRECTORIES
@@ -67,6 +76,8 @@ jobs:
           mkdir -p data/austender/combined
 
           mkdir -p defence/data
+          mkdir -p defence/data/processed
+
           mkdir -p health/data
 
           mkdir -p audits/austender/combined
@@ -74,7 +85,7 @@ jobs:
           mkdir -p audits/austender/health
 
       # ============================================================
-      # BASELINE
+      # HISTORICAL BASELINE
       # ============================================================
 
       - name: Download historical baseline
@@ -92,7 +103,9 @@ jobs:
           from pathlib import Path
           import pandas as pd
 
-          path = Path("data/austender/baseline/austender_baseline.parquet")
+          path = Path(
+              "data/austender/baseline/austender_baseline.parquet"
+          )
 
           if not path.exists():
               raise SystemExit(
@@ -131,21 +144,41 @@ jobs:
           from pathlib import Path
           import pandas as pd
 
-          monthly_dir = Path("data/austender/monthly")
-
-          files = sorted(
-              monthly_dir.glob("financial_year_analysis_*.csv")
+          monthly_dir = Path(
+              "data/austender/monthly"
           )
 
-          print("Monthly Financial Year Analysis files")
-          print("-------------------------------------")
+          files = sorted(
+              monthly_dir.glob(
+                  "financial_year_analysis_*.csv"
+              )
+          )
+
+          print(
+              "Monthly Financial Year Analysis files"
+          )
+          print(
+              "-------------------------------------"
+          )
 
           if not files:
               raise SystemExit(
                   "No canonical monthly FYA CSV files found."
               )
 
+          required = {
+              "01. Agency Name",
+              "02. Contract Type",
+              "03. Contract Notice ID",
+              "15. Category Type",
+              "29. Supplier Name",
+              "35. Agency Division",
+              "36. Agency Branch",
+              "48. Value",
+          }
+
           for path in files:
+
               df = pd.read_csv(
                   path,
                   dtype=str,
@@ -165,23 +198,20 @@ jobs:
                       f"got {len(df.columns)}."
                   )
 
-              if "03. Contract Notice ID" not in df.columns:
-                  raise SystemExit(
-                      f"{path.name}: missing Contract Notice ID."
-                  )
+              missing = sorted(
+                  required - set(df.columns)
+              )
 
-              if "35. Agency Division" not in df.columns:
+              if missing:
                   raise SystemExit(
-                      f"{path.name}: missing Agency Division."
-                  )
-
-              if "36. Agency Branch" not in df.columns:
-                  raise SystemExit(
-                      f"{path.name}: missing Agency Branch."
+                      f"{path.name}: missing columns: "
+                      + ", ".join(missing)
                   )
 
           print()
-          print("Monthly input validation: PASS")
+          print(
+              "Monthly input validation: PASS"
+          )
           PY
 
       # ============================================================
@@ -223,11 +253,6 @@ jobs:
           print(f"Rows:    {len(df):,}")
           print(f"Columns: {len(df.columns):,}")
 
-          if len(df) == 0:
-              raise SystemExit(
-                  "Combined dataset contains zero rows."
-              )
-
           required = {
               "01. Agency Name",
               "02. Contract Type",
@@ -245,32 +270,22 @@ jobs:
 
           if missing:
               raise SystemExit(
-                  "Combined dataset missing required columns: "
+                  "Combined dataset missing columns: "
                   + ", ".join(missing)
               )
 
-          cn = (
-              df["03. Contract Notice ID"]
-              .astype("string")
-              .str.strip()
-          )
-
-          blank_cn = (
-              cn.isna()
-              | cn.eq("")
-          ).sum()
+          if len(df) == 0:
+              raise SystemExit(
+                  "Combined dataset contains zero rows."
+              )
 
           print(
-              f"Blank Contract Notice IDs: "
-              f"{blank_cn:,}"
+              "Combined dataset validation: PASS"
           )
-
-          print()
-          print("Combined dataset validation: PASS")
           PY
 
       # ============================================================
-      # DEFENCE
+      # DEFENCE RAW
       # ============================================================
 
       - name: Build Defence raw market
@@ -307,11 +322,13 @@ jobs:
                   "Defence filter produced zero rows."
               )
 
-          print("Defence validation: PASS")
+          print(
+              "Defence raw validation: PASS"
+          )
           PY
 
       # ============================================================
-      # HEALTH
+      # HEALTH RAW
       # ============================================================
 
       - name: Build Health raw market
@@ -348,14 +365,132 @@ jobs:
                   "Health filter produced zero rows."
               )
 
-          print("Health validation: PASS")
+          print(
+              "Health raw validation: PASS"
+          )
+          PY
+
+      # ============================================================
+      # DEFENCE CONFIG
+      # ============================================================
+
+      - name: Validate Defence master config
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          required = [
+              Path(
+                  "defence/config/defence_domain_lookup.csv"
+              ),
+              Path(
+                  "defence/config/supplier_mapping.xlsx"
+              ),
+          ]
+
+          for path in required:
+
+              if not path.exists():
+                  raise SystemExit(
+                      f"Missing Defence config file: {path}"
+                  )
+
+              print(
+                  f"Found: {path}"
+              )
+
+          print(
+              "Defence master config validation: PASS"
+          )
+          PY
+
+      # ============================================================
+      # DEFENCE MASTER
+      # ============================================================
+
+      - name: Build Defence classified master
+        run: |
+          python defence/build_master.py \
+            --input "$DEFENCE_RAW_PATH" \
+            --output-dir "$DEFENCE_PROCESSED_DIR" \
+            --domain-lookup "$DEFENCE_DOMAIN_LOOKUP" \
+            --supplier-mapping "$DEFENCE_SUPPLIER_MAPPING"
+
+      # ============================================================
+      # VALIDATE DEFENCE MASTER
+      # ============================================================
+
+      - name: Validate Defence classified master
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+
+          path = Path(
+              "defence/data/processed/master_defence_contracts.parquet"
+          )
+
+          if not path.exists():
+              raise SystemExit(
+                  f"Defence master not created: {path}"
+              )
+
+          df = pd.read_parquet(path)
+
+          print()
+          print("Defence classified master")
+          print("-------------------------")
+          print(f"Rows:    {len(df):,}")
+          print(f"Columns: {len(df.columns):,}")
+
+          if len(df) == 0:
+              raise SystemExit(
+                  "Defence master contains zero rows."
+              )
+
+          important = [
+              "supplier_group",
+              "Service Offering",
+              "Domain",
+          ]
+
+          print()
+          print(
+              "Key enrichment columns:"
+          )
+
+          for column in important:
+
+              if column in df.columns:
+
+                  populated = int(
+                      df[column]
+                      .notna()
+                      .sum()
+                  )
+
+                  print(
+                      f"  {column}: "
+                      f"{populated:,} populated"
+                  )
+
+              else:
+
+                  print(
+                      f"  {column}: NOT PRESENT"
+                  )
+
+          print()
+          print(
+              "Defence master validation: PASS"
+          )
           PY
 
       # ============================================================
       # FINAL SUMMARY
       # ============================================================
 
-      - name: ATLAS raw-data summary
+      - name: ATLAS data summary
         run: |
           python - <<'PY'
           import pandas as pd
@@ -372,20 +507,39 @@ jobs:
               "health/data/health_contracts_raw.parquet"
           )
 
+          defence_master = pd.read_parquet(
+              "defence/data/processed/master_defence_contracts.parquet"
+          )
+
           print()
-          print("====================================")
-          print("ATLAS RAW DATA REFRESH COMPLETE")
-          print("====================================")
           print(
-              f"Combined: {len(combined):,} rows"
+              "===================================="
           )
           print(
-              f"Defence:  {len(defence):,} rows"
+              "ATLAS DATA REFRESH COMPLETE"
           )
           print(
-              f"Health:   {len(health):,} rows"
+              "===================================="
           )
-          print("====================================")
+          print(
+              f"Combined:       "
+              f"{len(combined):,} rows"
+          )
+          print(
+              f"Defence raw:    "
+              f"{len(defence):,} rows"
+          )
+          print(
+              f"Health raw:     "
+              f"{len(health):,} rows"
+          )
+          print(
+              f"Defence master: "
+              f"{len(defence_master):,} rows"
+          )
+          print(
+              "===================================="
+          )
           PY
 
       # ============================================================
@@ -395,12 +549,13 @@ jobs:
       - name: Upload refreshed ATLAS datasets
         uses: actions/upload-artifact@v4
         with:
-          name: atlas-raw-data-refresh
+          name: atlas-data-refresh
           retention-days: 7
           if-no-files-found: error
           path: |
             data/austender/combined/austender_combined.parquet
             defence/data/defence_contracts_raw.parquet
+            defence/data/processed/**
             health/data/health_contracts_raw.parquet
             audits/austender/combined/**
             audits/austender/defence/**
