@@ -1,0 +1,460 @@
+﻿Agency Divison,Agency Branch,Domain
+ADFHQ,Force Design Division,Joint
+ADFHQ,Force Integration Division,Joint
+ADFHQ,Afghanistan Inquiry Response Task Force,Joint
+ADFHQ,OSCDF Command Support Branch ADFHQ,Joint
+ADHQ,Force Integration Division,Joint
+ADHQ,Force Design Division,Joint
+ADHQ,Afghanistan Inquiry Response Task Force,Joint
+AIR FORCE,Air Force Executive Sub-Group,Air
+AIR FORCE,Air Force Air Command,Air
+AIR FORCE,AIRF - Air Force Air Command,Air
+AIR FORCE,Air Headquarters,Air
+Air Force Capability Division,Air Capability Enablers,Air
+"AIR FORCE EXECUTIVE 
+SUB-GROUP",Air Force Air Command,Air
+AIR FORCE EXECUTIVE SUB-GROUP,Air Force Executive Sub-Group,Air
+AIRF,Air Force Air Command,Air
+AIRF,Air Force Executive Sub-Group,Air
+AIRF,AIRF - Air Force Air Command,Air
+AIRF,,Air
+AIRF,AIRF - Air Force Executive Sub-Group,Air
+AIRFORCE,,Air
+ARMY,,Land
+ARMY,Army Forces Command,Land
+ARMY,Army 1st Division,Land
+ARMY,Army Headquarters,Land
+ARMY,Army Special Operations,Land
+ARMY,ARMY - Army Forces Command,Land
+ARMY,ARMY - Army Headquarters,Land
+ARMY,ARMY - Army 1st Division,Land
+ARMY,OCA/DCA,Land
+"ARMY 
+HEADQUARTERS",Army Special Operations,Land
+"ARMY 
+HEADQUARTERS",Army Forces Command,Land
+ARMY HEADQUARTERS,Army Special Operations,Land
+ARMY HEADQUARTERS,Army 1st Division,Land
+ARMY HEADQUARTERS,Army Headquarters,Land
+ARMY HEADQUARTERS,Army Forces Command,Land
+ARMY HEADQUARTERS,,Land
+ASA,Australian Submarine Agency,Maritime
+ASA,ASA - Australian Submarine Agency,Maritime
+ASD,Australian Signals Directorate,Cyber
+ASD,Intelligence & Security,Cyber
+ASD,Australian Signal Directorate,Cyber
+ASD,ASD- ACS,Cyber
+ASSC,Defence Security & Vetting Service,Capability Enabler
+ASSEC,ASSC - Legal Division,Capability Enabler
+ASSEC,ASSC - Data Division,Capability Enabler
+ASSEC,Office Of Chief Executive,Capability Enabler
+ASSEC,ASSEC - Enterprise Transformation and Governance,Capability Enabler
+ASSEC,ASSEC - Ministerial & Exec Coord & Communications,Capability Enabler
+ASSEC,ASSEC - Integrity Division,Capability Enabler
+ASSEC,OIGADF Military Justice,Capability Enabler
+ASSEC,Gov Group - Integrity Division,Capability Enabler
+ASSEC,Office of DepSec Governance,Capability Enabler
+ASSEC,Gov Group - Ministerial & Exec Coord & Communications,Capability Enabler
+ASSOCIATE SECRETARY,Office Of Chief Executive,Capability Enabler
+ASSOCIATE SECRETARY,,Capability Enabler
+ASSOCIATE SECRETARY,Enterprise Transformation and Governance,Capability Enabler
+ASSOCIATE SECRETARY,Defence Security & Vetting Service,Capability Enabler
+ASSOCIATE SECRETARY,OIGADF Military Justice,Capability Enabler
+ASSOCIATE SECRETARY,DSRG Ministerial & Exec Coord & Communications,Capability Enabler
+ASSOCIATE SECRETARY,Audit and Fraud Control,Capability Enabler
+ASSOCIATE SECRETARY,Defence Honours and Awards Appeals Tribunal,Capability Enabler
+ASSOCIATE SECRETARY,Contestibility Division,Capability Enabler
+ASSOCIATE SECRETARY,Ministerial & Exec Coord & Communications,Capability Enabler
+ASSOCIATE SECRETARY,DSRG Ministerial & Exec Coord;Communications,Capability Enabler
+ASSOCIATE SECRETARY,DSRG Ministerial; Exec Coord & Communications,Capability Enabler
+AUDIT AND FRAUD CONTROL DIVISI,Audit and Fraud Control,Capability Enabler
+AUSTRALIAN CAPITAL TERRITORY,DEFENCE CORPORATE SUPPORT CENTRE - ACT/SNSW,Capability Enabler
+AUSTRALIAN CAPITAL TERRITORY,VCDF Australian Civil-Military Centre,Capability Enabler
+AUSTRALIAN DEFENCE HEAD QUARTE,Force Design Division,Joint
+CASG,662,Joint
+CASG,JSD - ISR & Electronic Warfare Branch,Cyber
+CASG,CASG,Joint
+CASG,GM Submarines,Maritime
+CASG,ASD-ACS,Cyber
+CASG,JSD - Space Services Branch,Space
+CASG,ASD-ATR,Cyber
+CASG,CASG - CFO Corporate Support,Capability Enabler
+CASG,RASSD - Army Aviation SPO,Land
+CASG,Aerospace Systems Division - Aerospace Surveillance and Response,Air
+CASG,CASG-Ships Division,Maritime
+CASG,MSD - Maritime Systems Division,Maritime
+CASG,LSD - Csvspo,Land
+CASG,JSD - Land C4 Systems Branch,Land
+CASG,LSD - EXPLOSIVE MATERIEL BRANCH,Land
+CASG,JSD - Joint C4 Systems Branch,Joint
+CASG,LSD - SMSPO,Land
+CASG,JSD - COMMUNICATIONS BRANCH,Joint
+CASG,ADSS - Air & Space Surveillance & Contr,Joint
+CASG,JSD - Critical Systems Branch,Joint
+CASG,Army Aviation SPO,Land
+CASG,JSD-COMMAND AND SUPPORT SYSTEMS BRANCH,Joint
+CASG,JASD - Army Aviation Systems,Land
+CASG,"LSD ""“ Explosive Materiel Branch",Land
+CASG,ADSS - Space Systems,Space
+CASG,LSD - Project Overlander,Land
+CASG,LSD - CSSPO,Land
+CASG,HSD - Army Aviation SPO,Land
+CASG,LSD - Diggerworks,Land
+CASG,ADSSD - AIR & SPACE SURVEILLANCE & CONTROL BRANCH,Joint
+CASG,Aerospace Systems Division - Airlift and Tanker Systems,Air
+CASG,Air Defence and Space Systems Division,Capability Enabler
+CASG,LSD - CGVSPO,Land
+CASG,Maritime Systems Division,Maritime
+CASG,JSD - EXPLOSIVE MATERIEL BRANCH,Joint
+CASG,JSD-ELECTRONIC WARFARE BRANCH,Cyber
+CASG,ESD-ELECTRONIC WARFARE BRANCH,Cyber
+CASG,ASD-AMM,Joint
+CASG,LSD - LEA,Land
+CASG,JSD – Explosive Materiel Branch,Joint
+CASG,LSD - Clothing SPO,Land
+CASG,LSD - Armoured Fighting Vehicle Sustainment,Land
+CASG,ASD-AMTS,Air
+CASG,LSD - Armaments SPO,Land
+CASG,LSD - Health SPO,Joint
+CASG,LSD - MCSPO,Land
+CASG,Aerospace Systems Division - Aerospace Combat Systems,Air
+CASG,ASD-ASR,Air
+CASG,LSD - Other,Land
+CASG,ASD-ATS,Air
+CASG,Australian Industry Capability,Capability Enabler
+CASG,Australian Signals Directorate,Cyber
+CASG,JSD - Joint Domain Centre,Joint
+CASG,LSD - Munitions,Land
+CASG,CASG - Armoured Fighting Vehicle Branch,Land
+CASG,CASG - ASD-ASR,Air
+CASG,JSD - EWIS BRANCH,Cyber
+CASG,CASG - ASD-ATS,Air
+CASG,JSD-GUIDED WEAPONS BRANCH,Joint
+CASG,JOINT SYSTEMS DIVISION - OTHER,Joint
+CASG,CASG - Commercial Group,Capability Enabler
+CASG,CASG - General Manager Programs,Capability Enabler
+CASG,CASG - RASSD - AIR & SPACE SURVEILLANCE & CONTROL BRANCH,Joint
+CASG,"CASG 
+- CFO Corporate Support",Capability Enabler
+CASG,CASG Corporate,Capability Enabler
+CASG,CASG Group Business Manager,Capability Enabler
+CASG,LSD - CAFS,Land
+CASG,LSD - GenSvcs SPO,Land
+CASG,LSD - SSCSPO,Land
+CASG,HSD - CHUSPO,Land
+CASG,JSD-COMMUNICATION SYSTEMS BRANCH,Joint
+CASG,LSD - EngSPO,Land
+CASG,JSD - Joint Domain Centre and Other,Joint
+CASG,Commercial Group,Capability Enabler
+CASG,LSD -?SSCSPO,Land
+CASG,LSD - CRVSPO,Land
+CASG,CASG - Ships Division,Maritime
+CASG,LSD - Protected Mobility SPO,Land
+CASG,JOINT SYSTEMS DIVISION - EXECUTIVE,Capability Enabler
+CASG,Joint Strike Fighter Branch,Air
+CASG,JSD - EXECUTIVE,Joint
+CASG,"GM 
+Submarines",Maritime
+CASG,HSD - Other       ,Land
+CASG,CASG - MSD - Maritime Systems Division,Maritime
+CASG,CASG - JSD - JOINT C4 SYSTEMS BRANCH,Joint
+CASG,HSD - OtherÂ Â Â Â Â Â Â,Land
+CASG,ELECTRONIC SYSTEMS DIVISION - EXECUTIVE,Capability Enabler
+CASG,CASG - GM Submarines,Maritime
+CASG,CASG - LSD - Explosive Materiel Branch,Land
+CASG,CASG - LSD - Other,Land
+CASG,CASG - JSD - SPACE SERVICES BRANCH,Space
+CASG,LSD,Land
+CASG,LSD-SSCSPO,Land
+CASG,ELECTRONIC SYSTEMS DIVISION - OTHER,Joint
+CASG,LSD - General Support SPO,Land
+CASG,LSD-Munitions,Land
+CASG,EOD - Executive,Capability Enabler
+CASG,EOD - GWB,Joint
+CASG,ESD-COMMAND AND SUPPORT SYSTEMS BRANCH,Joint
+CASG,ESD-COMMUNICATION SYSTEM,Joint
+CASG,ESD-SURVEILLANCE AND CONTROL BRANCH,Joint
+CASG,HSD Head Office,Land
+CASG,General Manager Programs,Capability Enabler
+CASG,HSD Other,Land
+CASG,Guided Weapons Branch,Joint
+CASG,GWEO,Joint
+CASG,JSD - Air & Space Surveillance & Control Branch,Joint
+CASG,JSD - Other,Joint
+CASG,HSD - Navy Aviation SPO,Maritime
+CASG,JSD-SURVEILLANCE AND CONTROL BRANCH,Joint
+CASG,RAMSPO,Joint
+CASG,RASSD - Air & Space Surveillance & Control Branch,Space
+CASG,"Strategy, Planning and Independent Assurance",Capability Enabler
+CASG,HUG-D - AIR9000PH8,Air
+CASG,,Joint
+CASG,JASD - Navy Aviation Training and Commons,Maritime
+CASG,NAVY AVIATION SPO,Maritime
+CASG,New Air Combat Capability,Air
+CASG,RASSD - Navy Aviation SPO,Maritime
+CASG - LSD,LSD - Armaments SPO,Land
+CDG,CDG,Joint
+CFO,CFOG,Capability Enabler
+CFO,CFOG - Financial Co-Ordination Branch,Capability Enabler
+CFO,CFOG Accounts Payable,Capability Enabler
+CFO,,Capability Enabler
+CFOG,CFOG - Accounts Payable,Capability Enabler
+CFOG,CFOG - Financial Co-Ordination Branch,Capability Enabler
+Chief Operating Officer Group,Defence Procurement and Contracting Branch,Capability Enabler
+CIOG,CIOG ICTOD,Joint
+CIOG,,Capability Enabler
+CIOG,CIOG - ICTDD,Capability Enabler
+CIOG,CIOG CTO,Capability Enabler
+CIOG,CIOG ICTDD,Capability Enabler
+CIOG,CIOG ICTRD,Capability Enabler
+CIOG,CIOG - ICTOD,Joint
+CIOG,CIOG - ERP,Capability Enabler
+CIOG,CIOG - ICTRD,Capability Enabler
+CIOG,CIOG - CTO,Capability Enabler
+CIOG CTO,CIOG - ICTOD,Joint
+CIOG CTO,CIOG - CTO,Capability Enabler
+CIOG CTO,CIOG - ICTDD,Capability Enabler
+CIOG CTO,CIOG - ICTRD,Capability Enabler
+CIOG CTO,CIOG ICTDD,Capability Enabler
+CIOG ICTSDR,CIOG - ICTRD,Capability Enabler
+Commercial Division,Non Materiel Procurement Branch,Capability Enabler
+DDG,DDG - ICTDD,Capability Enabler
+DDG,DDG - ICTRD,Capability Enabler
+DDG,DDG - ERP,Capability Enabler
+DDG,DDG - Strategy and Architecture (CTO),Capability Enabler
+DDG,DDG - CTO,Capability Enabler
+DEFENCE FINANCE GROUP,Defence Finance Group,Capability Enabler
+DEFENCE INTELLIGENCE GROUP,Maritime Geospatial Branch,Maritime
+DFG,Defence Finance Group,Capability Enabler
+DIG,Australian GEOINT Organisation (AGO),Joint
+DIG,DIG - Intelligence Capability Division,Joint
+DIG,DIG - Australian GEOINT Organisation (AGO),Joint
+DIG,DIG-Defence Intelligence Group,Joint
+DIG,DIG - Defence Intelligence Group,Joint
+DIG,DIG-Intelligence Capability Division,Joint
+DIG,DIG - Maritime Geospatial Branch,Maritime
+DIG,Maritime Geospatial Branch,Maritime
+Directorate Property Leasing,Infrastructure Division,Capability Enabler
+DMO,ASD-AMTS,Air
+DMO,DMO Maritime Systems Division,Maritime
+DMO,LSD - LEA,Land
+DMO,Army Aviation SPO,Land
+DMO,ESD-COMMUNICATION SYSTEM,Joint
+DMO,,Capability Enabler
+DPG,Defence People Group,Capability Enabler
+DPG,DPG - Australian Defence College,Joint
+DPG,DPG - Defence People Group,Capability Enabler
+DPG,DPG - Military Personnel,Capability Enabler
+DPG,"DPG - People Services, People Policy and Culture",Capability Enabler
+DPG,DPG HPP/DBAM,Capability Enabler
+DPG,DPG - Joint Health Command,Joint
+DPG,DPG - Joint Support Services Division,Joint
+DPG,,Capability Enabler
+"DPG 
+HPP/DBAM",Defence People Group,Capability Enabler
+DPG HPP/DBAM,Defence People Group,Capability Enabler
+DPG HPP/DBAM,DPG HPP/DBAM,Capability Enabler
+DSO,GEBS,Joint
+DSRG,Defence People Group,Capability Enabler
+DSRG,DSRG ADF Housing,Capability Enabler
+DSRG,DSRG Defence People Solutions,Capability Enabler
+DSRG,DSRG Defence Support Operations Division,Capability Enabler
+DSRG,DSRG Infrastructure Division,Capability Enabler
+DSRG,DSRG MAJOR CAPITAL FACILITIES,Capability Enabler
+DSRG,DSRG Ministerial & Exec Coord & Communications,Capability Enabler
+DSRG,DSRG Office of Chief Executive,Capability Enabler
+DSRG,DSRG Strategic Projects,Capability Enabler
+DSRG,DS-SNSW,Capability Enabler
+DSRG,EIG - Defence Support Operations Division,Capability Enabler
+DSRG,,Capability Enabler
+DSRG INFRASTRUCTURE DIVISION,DSRG Defence Support Operations Division,Capability Enabler
+DSRG INFRASTRUCTURE DIVISION,DSRG MAJOR CAPITAL FACILITIES,Capability Enabler
+DST,DST Group,Capability Enabler
+DSTG,DST Group,Capability Enabler
+DSTG,DSTG,Capability Enabler
+DSTG,,Capability Enabler
+DSTO,"DST 
+Group",Capability Enabler
+DSTO,DST Group,Capability Enabler
+DSTO,DSTO,Capability Enabler
+E&I,ESTATE AND INFRASTRUCTURE GROUP,Capability Enabler
+E&I,,Capability Enabler
+E&IG,ACT Office Accommodation,Capability Enabler
+E&IG,Directorate Property Leasing,Capability Enabler
+E&IG,EIG - Infrastructure Division,Capability Enabler
+E&IG,EIG - Service Delivery Division,Capability Enabler
+E&IG,EIG - Strategic Projects,Capability Enabler
+E&IG,Property Leasing,Capability Enabler
+E&IG,Infrastructure Division,Capability Enabler
+E&IG,,Capability Enabler
+EIG,EIG - Service Delivery Division,Capability Enabler
+EIG,SEG - Infrastructure Division,Capability Enabler
+ENTERPRISE PERFORMANCE,Enterprise Performance,Capability Enabler
+ENTERPRISE PERFORMANCE,Enterprise Transformation and Governance,Capability Enabler
+ENTERPRISE PERFORMANCE,Office Of Chief Executive,Capability Enabler
+Estate & Infrastructure Group,,Capability Enabler
+"ESTATE AND 
+INFRASTRUCTURE GROU",EIG - Service Delivery Division,Capability Enabler
+"ESTATE AND INFRASTRUCTURE 
+GROU",EIG - Infrastructure Division,Capability Enabler
+"ESTATE AND INFRASTRUCTURE 
+GROU",EIG - Service Delivery Division,Capability Enabler
+ESTATE AND INFRASTRUCTURE GROU,EIG - Infrastructure Division,Capability Enabler
+ESTATE AND INFRASTRUCTURE GROU,EIG - Service Delivery Division,Capability Enabler
+ESTATE AND INFRASTRUCTURE GROU,EIG - Strategic Projects,Capability Enabler
+GRD,Enterprise Performance,Capability Enabler
+GRD,GRD - Office Of Chief Executive,Capability Enabler
+GRD,Office Of Chief Executive,Capability Enabler
+GWEO,GWEO,Joint
+GWEO,,Joint
+Hobart,Hobart,Maritime
+HQJOC,JOC - Headquarters Joint Operations Command,Joint
+I and S,,Capability Enabler
+I&S,Australian Signals Directorate,Cyber
+I&S,Intelligence & Security,Joint
+INFRASTRUCTURE,ACT Office Accommodation,Capability Enabler
+INFRASTRUCTURE,AOA,Capability Enabler
+INFRASTRUCTURE,Directorate Property Leasing,Capability Enabler
+INFRASTRUCTURE,Property Leasing,Capability Enabler
+INFRASTRUCTURE,Property Management,Capability Enabler
+INFRASTRUCTURE,Property Services,Capability Enabler
+Infrastructure Division,ACT Office Accommodation,Capability Enabler
+Infrastructure Division,AOA,Capability Enabler
+Infrastructure Division,Directorate Property Leasing,Capability Enabler
+INTELLIGENCE & SECURITY,Intelligence & Security,Joint
+JCG,JCG,Joint
+JCG,JCG - Australian Defence College,Joint
+JCG,JCG - Cyber Warfare Division,Cyber
+JCG,JCG - ICT Operations,Joint
+JCG,JCG - ICTOD,Joint
+JCG,JCG - Information Warfare Division,Joint
+JCG,JCG - SIGINT and Cyber Command,Cyber
+JCG,JCG - Space Command,Space
+JCG,JCG Information Warfare Division,Joint
+JCG,JPEU Procurement,Joint
+JCG,JCG - Joint Logistics Command,Joint
+JCG,JCG - JOINT SUPPORT SERVICES DIVISION,Joint
+JCG,1JMU - 1st Joint Movements Unit,Joint
+JCG,JCG - Joint Health Command,Joint
+JCG,Joint Support Services Division,Joint
+JCG,,Joint
+JOC,HQJOC.PROCUREMENTENQUIRIES@DEFENCE.GOV.AU,Joint
+JOC,JOC - HQNORCOM Finance,Joint
+JOC,JOC Headquarters Northern Command,Joint
+JOC,JOC - Headquarters Joint Operations Command,Joint
+JOC,JOC Headquarters Joint Operations Command,Joint
+JOC,Headquarters Joint Operations Command,Joint
+JOC,JOC Headquarters 1st Joint Movements Group,Joint
+JOC HEADQUARTERS JOINT OPERATI,JOC - HQNORCOM Finance,Joint
+JOC HEADQUARTERS JOINT OPERATI,JOC - 1st Joint Movements Group,Joint
+JOC HEADQUARTERS JOINT OPERATI,JOC - Headquarters Joint Operations Command,Joint
+JOC HEADQUARTERS JOINT OPERATI,JOC Headquarters 1st Joint Movements Group,Joint
+JOINT CAPABILITY GROUP,JCG - Australian Defence College,Joint
+JOINT CAPABILITY GROUP,JCG Information Warfare Division,Joint
+JOINT CAPABILITY GROUP,JPEU Procurement,Joint
+JOINT CAPABILITY GROUP,JCG - Joint Logistics Command,Joint
+JOINT CAPABILITY GROUP,JCG - Joint Health Command,Joint
+JOINT CAPABILITY GROUP,1JMU - 1st Joint Movements Unit,Joint
+JOINT CAPABILITY GROUP,JCG - JOINT SUPPORT SERVICES DIVISION,Joint
+Joint Systems Division,Communication Branch,Joint
+MINISTERIAL AND EXECUTIVE COOR,DSRG Ministerial & Exec Coord & Communications,Capability Enabler
+NAVY,NAVY - Navy Fleet Command,Maritime
+NAVY,NAVY - Navy Strategic Command,Maritime
+NAVY,Navy Capability Division,Maritime
+NAVY,Navy DCN Division,Maritime
+NAVY,Navy Engineering Division,Maritime
+NAVY,Navy Fleet Command,Maritime
+NAVY,Navy Hydrographic Office,Maritime
+NAVY,Navy Strategic Command,Maritime
+NAVY,Navy Training Force,Maritime
+NAVY,,Maritime
+NAVY STRATEGIC COMMAND,"Navy 
+Strategic Command",Maritime
+NAVY STRATEGIC COMMAND,Navy Australian Hydrographic Service,Maritime
+NAVY STRATEGIC COMMAND,Navy Fleet Command,Maritime
+NAVY STRATEGIC COMMAND,Navy Strategic Command,Maritime
+NPS,Nuclear Powered Submarine Program,Maritime
+NSSG,NSSG,Maritime
+NSSG,NSSG - Major Surface Combatants and Combat Systems Division,Maritime
+NSSG,NSSG - Naval Construction Branch,Maritime
+NSSG,NSSG - Maritime Sustainment Division,Maritime
+NSSG,NSSG - Patrol Boats and Specialist Ships Division,Maritime
+NSSG,NSSG - Submarines Division,Maritime
+NSSG,Naval Shipbuilding & Sustainment,Maritime
+NSSG,MSD - Maritime Systems Division,Maritime
+NSSG,Ships Division,Maritime
+NSSG,GM Submarines,Maritime
+NSSG,,Maritime
+OSCDF,OSCDF Command Support Branch ADFHQ,Joint
+OSCDF,,Joint
+OSCDF MILITARY JUSTICE,OSCDF Command Support Branch ADFHQ,Joint
+OSCF,OSCDF Audit and Fraud Control,Joint
+OSCF,OSCDF Command Support Branch ADFHQ,Joint
+OSCF,OSCDF International Policy,Joint
+OSCF,OSCDF Military Justice,Joint
+OSCF,OSCDF SEC and CDF,Joint
+OSCF,OSCDF Strategic Policy,Joint
+OSCF,OSCF - Command Support Branch ADFHQ,Joint
+SEG,Defence Security & Vetting Service,Capability Enabler
+SEG,SEG - Defence Security Division,Capability Enabler
+SEG,SEG - Infrastructure Division,Capability Enabler
+SEG,SEG - Service Delivery Division,Capability Enabler
+SEG,SEG - Strategic Projects,Capability Enabler
+SEG,Service Delivery Division,Capability Enabler
+SP&I,SP&I - Strategic Policy And Intelligence Group,Capability Enabler
+SP&I,"SP&I - Strategy, Intelligence & Science",Capability Enabler
+SP&I,"SP&I - Strategy, Intelligence & Science - SIS Bran",Capability Enabler
+SP&I,"SP&I - Strategy, Intelligence & Science - SIS Branch",Capability Enabler
+SP&I,SP&I Strategic Policy And Intelligence Group,Capability Enabler
+SP&I,Contestability Division,Capability Enabler
+SP&I,International Policy,Capability Enabler
+SP&I,NOA Division,Capability Enabler
+SP&I,"SPI - Strategy, Intelligence & Science - SIS Bran",Capability Enabler
+SP&I,SP and I - International Policy,Capability Enabler
+SP&I,SP&I - International Policy,Capability Enabler
+SP&I,SP&I - Strategic Policy,Capability Enabler
+SP&I,SP&I - Strategic Policy And Industry Group,Capability Enabler
+SP&I,SPI - International Policy,Capability Enabler
+SP&I,SPI - Strategic Policy And Industry Group,Capability Enabler
+SP&I,Strategic Policy,Capability Enabler
+SP&I,Strategic Policy And Industry Group,Capability Enabler
+SPI,"SPI - Strategy, Intelligence & Science - SIS Bran",Capability Enabler
+SPI,SPI Strategic Policy and Intelligence Group,Capability Enabler
+SPI,SPI - International Policy,Capability Enabler
+SPI,SPI - Strategic Policy,Capability Enabler
+SPI,SPI - Strategic Policy And Industry Group,Capability Enabler
+SPI,Strategic Policy And Industry Group,Capability Enabler
+STRATEGIC POLICY,"SP&I - Strategy, Intelligence & Science - SIS Bran",Capability Enabler
+STRATEGIC POLICY,"SP&I 
+Strategic Policy And Intelligence Group",Capability Enabler
+STRATEGIC POLICY,"SP&I Strategic Policy And 
+Intelligence Group",Capability Enabler
+STRATEGIC POLICY,SP&I Strategic Policy And Intelligence Group,Capability Enabler
+STRATEGIC POLICY,Contestability Division,Capability Enabler
+STRATEGIC POLICY,NOA Division,Capability Enabler
+STRATEGIC POLICY,SP&I - International Policy,Capability Enabler
+STRATEGIC POLICY,SP&I - Strategic Policy,Capability Enabler
+STRATEGIC POLICY,SP&I - Strategic Policy And Industry Group,Capability Enabler
+VCDF,VCDF Australian Civil-Military Centre,Joint
+VCDF,VCDF Australian Defence College,Joint
+VCDF,VCDF Cadet Reserve and Employer Support Division,Joint
+VCDF,VCDF Military Strategic Commitments Division,Joint
+VCDF,VCDF VCDF Executive,Joint
+VCDF,VCDF Joint Logistics Command,Joint
+VCDF,VCDF Joint Capability Coordination Division,Joint
+VCDF,VCDF Joint Health Command,Joint
+VCDF,,Joint
+VCDF EXECUTIVE,VCDF,Joint
+VCDF JOINT HEALTH COMMAND,VCDF Australian Civil-Military Centre,Joint
+VCDF JOINT HEALTH COMMAND,VCDF Australian Defence College,Joint
+VCDF JOINT HEALTH COMMAND,VCDF Executive,Joint
+VCDF JOINT HEALTH COMMAND,VCDF Military Strategic Commitments Division,Joint
+VCDF JOINT HEALTH COMMAND,VCDF Reserve And Youth Division,Joint
+VCDF JOINT HEALTH COMMAND,VCDF Joint Capability Coordination Division,Joint
+VCDF Reserve and Youth Division,,Joint
+,DSTG,Capability Enabler
+,CASG,Capability Enabler
+,E&IG,Capability Enabler
+,AIR FORCE AIR COMMAND,Air
+,ARMY Headquarters,Land
+,CFOG,Capability Enabler
