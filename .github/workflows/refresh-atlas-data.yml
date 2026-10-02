@@ -1,45 +1,45 @@
-name: Refresh ATLAS Data
+name: Build Defence Site
 
 on:
-  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - "Refresh ATLAS Data"
+    types:
+      - completed
 
-  push:
-    branches:
-      - main
-    paths:
-      - "data/austender/monthly/*.csv"
-      - "pipeline/combine_financial_year_analysis.py"
-      - "defence/filter_defence.py"
-      - "defence/build_master.py"
-      - "defence/config/**"
-      - "health/filter_health.py"
-      - "health/config/**"
-      - ".github/workflows/refresh-atlas-data.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
 
 jobs:
-  refresh-atlas-data:
-    name: Build ATLAS datasets
+
+  # ============================================================
+  # BUILD DEFENCE DASHBOARDS
+  # ============================================================
+
+  build-defence-site:
+    name: Build Defence dashboards
+
+    # Automatic runs only proceed when the upstream data refresh passed.
+    # Manual workflow_dispatch runs are also allowed.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+
     runs-on: ubuntu-latest
 
     env:
-      BASELINE_PATH: data/austender/baseline/austender_baseline.parquet
-      MONTHLY_DIR: data/austender/monthly
-
-      COMBINED_PATH: data/austender/combined/austender_combined.parquet
-
-      DEFENCE_RAW_PATH: defence/data/defence_contracts_raw.parquet
-      HEALTH_RAW_PATH: health/data/health_contracts_raw.parquet
-
-      DEFENCE_PROCESSED_DIR: defence/data/processed
-      DEFENCE_MASTER_PATH: defence/data/processed/master_defence_contracts.parquet
-
-      DEFENCE_DOMAIN_LOOKUP: defence/config/defence_domain_lookup.csv
-      DEFENCE_SUPPLIER_MAPPING: defence/config/supplier_mapping.xlsx
-
-      AUDIT_ROOT: audits/austender
+      MASTER_PATH: defence/data/processed/master_defence_contracts.parquet
+      SITE_DIR: docs
+      DEFENCE_SITE_DIR: docs/defence
 
     steps:
 
@@ -64,363 +64,53 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pandas pyarrow openpyxl
+          pip install pandas pyarrow plotly openpyxl
 
       # ============================================================
-      # DIRECTORIES
+      # DOWNLOAD DEFENCE MASTER
       # ============================================================
 
-      - name: Create pipeline directories
-        run: |
-          mkdir -p data/austender/baseline
-          mkdir -p data/austender/combined
+      - name: Download refreshed ATLAS data artifact
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: atlas-data-refresh
+          path: .
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
 
-          mkdir -p defence/data
-          mkdir -p defence/data/processed
-
-          mkdir -p health/data
-
-          mkdir -p audits/austender/combined
-          mkdir -p audits/austender/defence
-          mkdir -p audits/austender/health
-
-      # ============================================================
-      # HISTORICAL BASELINE
-      # ============================================================
-
-      - name: Download historical baseline
+      # For a manual run, download the artifact from the most recent
+      # successful Refresh ATLAS Data workflow.
+      - name: Download latest successful ATLAS data artifact
+        if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download atlas-data \
-            --pattern "austender_baseline.parquet" \
-            --dir data/austender/baseline \
-            --clobber
+          RUN_ID=$(gh run list \
+            --workflow "refresh-atlas-data.yml" \
+            --branch main \
+            --status success \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId')
 
-      - name: Verify historical baseline
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import pandas as pd
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "No successful Refresh ATLAS Data workflow found."
+            exit 1
+          fi
 
-          path = Path(
-              "data/austender/baseline/austender_baseline.parquet"
-          )
+          echo "Using data refresh run: $RUN_ID"
 
-          if not path.exists():
-              raise SystemExit(
-                  f"Baseline parquet not found: {path}"
-              )
-
-          df = pd.read_parquet(path)
-
-          print("Historical baseline")
-          print("-------------------")
-          print(f"Rows:    {len(df):,}")
-          print(f"Columns: {len(df.columns):,}")
-          print(f"Path:    {path}")
-
-          if len(df) == 0:
-              raise SystemExit(
-                  "Historical baseline contains zero rows."
-              )
-
-          if "03. Contract Notice ID" not in df.columns:
-              raise SystemExit(
-                  "Historical baseline is missing "
-                  "'03. Contract Notice ID'."
-              )
-
-          print("Baseline validation: PASS")
-          PY
+          gh run download "$RUN_ID" \
+            --name atlas-data-refresh \
+            --dir .
 
       # ============================================================
-      # MONTHLY INPUTS
+      # VERIFY MASTER
       # ============================================================
 
-      - name: Inspect monthly FYA inputs
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import pandas as pd
-
-          monthly_dir = Path(
-              "data/austender/monthly"
-          )
-
-          files = sorted(
-              monthly_dir.glob(
-                  "financial_year_analysis_*.csv"
-              )
-          )
-
-          print(
-              "Monthly Financial Year Analysis files"
-          )
-          print(
-              "-------------------------------------"
-          )
-
-          if not files:
-              raise SystemExit(
-                  "No canonical monthly FYA CSV files found."
-              )
-
-          required = {
-              "01. Agency Name",
-              "02. Contract Type",
-              "03. Contract Notice ID",
-              "15. Category Type",
-              "29. Supplier Name",
-              "35. Agency Division",
-              "36. Agency Branch",
-              "48. Value",
-          }
-
-          for path in files:
-
-              df = pd.read_csv(
-                  path,
-                  dtype=str,
-                  low_memory=False,
-                  encoding="utf-8-sig",
-              )
-
-              print(
-                  f"{path.name}: "
-                  f"{len(df):,} rows, "
-                  f"{len(df.columns)} columns"
-              )
-
-              if len(df.columns) != 48:
-                  raise SystemExit(
-                      f"{path.name}: expected 48 columns, "
-                      f"got {len(df.columns)}."
-                  )
-
-              missing = sorted(
-                  required - set(df.columns)
-              )
-
-              if missing:
-                  raise SystemExit(
-                      f"{path.name}: missing columns: "
-                      + ", ".join(missing)
-                  )
-
-          print()
-          print(
-              "Monthly input validation: PASS"
-          )
-          PY
-
-      # ============================================================
-      # COMBINE
-      # ============================================================
-
-      - name: Build canonical AusTender dataset
-        run: |
-          python pipeline/combine_financial_year_analysis.py \
-            --baseline "$BASELINE_PATH" \
-            --monthly-dir "$MONTHLY_DIR" \
-            --output "$COMBINED_PATH" \
-            --audit-dir "$AUDIT_ROOT/combined"
-
-      # ============================================================
-      # VALIDATE COMBINED
-      # ============================================================
-
-      - name: Validate canonical AusTender dataset
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import pandas as pd
-
-          path = Path(
-              "data/austender/combined/austender_combined.parquet"
-          )
-
-          if not path.exists():
-              raise SystemExit(
-                  f"Combined parquet not created: {path}"
-              )
-
-          df = pd.read_parquet(path)
-
-          print()
-          print("ATLAS combined dataset")
-          print("----------------------")
-          print(f"Rows:    {len(df):,}")
-          print(f"Columns: {len(df.columns):,}")
-
-          required = {
-              "01. Agency Name",
-              "02. Contract Type",
-              "03. Contract Notice ID",
-              "15. Category Type",
-              "29. Supplier Name",
-              "35. Agency Division",
-              "36. Agency Branch",
-              "48. Value",
-          }
-
-          missing = sorted(
-              required - set(df.columns)
-          )
-
-          if missing:
-              raise SystemExit(
-                  "Combined dataset missing columns: "
-                  + ", ".join(missing)
-              )
-
-          if len(df) == 0:
-              raise SystemExit(
-                  "Combined dataset contains zero rows."
-              )
-
-          print(
-              "Combined dataset validation: PASS"
-          )
-          PY
-
-      # ============================================================
-      # DEFENCE RAW
-      # ============================================================
-
-      - name: Build Defence raw market
-        run: |
-          python defence/filter_defence.py \
-            --input "$COMBINED_PATH" \
-            --output "$DEFENCE_RAW_PATH" \
-            --audit-dir "$AUDIT_ROOT/defence"
-
-      - name: Validate Defence raw market
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import pandas as pd
-
-          path = Path(
-              "defence/data/defence_contracts_raw.parquet"
-          )
-
-          if not path.exists():
-              raise SystemExit(
-                  f"Defence parquet not created: {path}"
-              )
-
-          df = pd.read_parquet(path)
-
-          print()
-          print("Defence raw market")
-          print("------------------")
-          print(f"Rows: {len(df):,}")
-
-          if len(df) == 0:
-              raise SystemExit(
-                  "Defence filter produced zero rows."
-              )
-
-          print(
-              "Defence raw validation: PASS"
-          )
-          PY
-
-      # ============================================================
-      # HEALTH RAW
-      # ============================================================
-
-      - name: Build Health raw market
-        run: |
-          python health/filter_health.py \
-            --input "$COMBINED_PATH" \
-            --output "$HEALTH_RAW_PATH" \
-            --audit-dir "$AUDIT_ROOT/health"
-
-      - name: Validate Health raw market
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import pandas as pd
-
-          path = Path(
-              "health/data/health_contracts_raw.parquet"
-          )
-
-          if not path.exists():
-              raise SystemExit(
-                  f"Health parquet not created: {path}"
-              )
-
-          df = pd.read_parquet(path)
-
-          print()
-          print("Health raw market")
-          print("-----------------")
-          print(f"Rows: {len(df):,}")
-
-          if len(df) == 0:
-              raise SystemExit(
-                  "Health filter produced zero rows."
-              )
-
-          print(
-              "Health raw validation: PASS"
-          )
-          PY
-
-      # ============================================================
-      # DEFENCE CONFIG
-      # ============================================================
-
-      - name: Validate Defence master config
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          required = [
-              Path(
-                  "defence/config/defence_domain_lookup.csv"
-              ),
-              Path(
-                  "defence/config/supplier_mapping.xlsx"
-              ),
-          ]
-
-          for path in required:
-
-              if not path.exists():
-                  raise SystemExit(
-                      f"Missing Defence config file: {path}"
-                  )
-
-              print(
-                  f"Found: {path}"
-              )
-
-          print(
-              "Defence master config validation: PASS"
-          )
-          PY
-
-      # ============================================================
-      # DEFENCE MASTER
-      # ============================================================
-
-      - name: Build Defence classified master
-        run: |
-          python defence/build_master.py \
-            --input "$DEFENCE_RAW_PATH" \
-            --output-dir "$DEFENCE_PROCESSED_DIR" \
-            --domain-lookup "$DEFENCE_DOMAIN_LOOKUP" \
-            --supplier-mapping "$DEFENCE_SUPPLIER_MAPPING"
-
-      # ============================================================
-      # VALIDATE DEFENCE MASTER
-      # ============================================================
-
-      - name: Validate Defence classified master
+      - name: Verify Defence master
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -431,15 +121,20 @@ jobs:
           )
 
           if not path.exists():
+              print("Files found under defence/data:")
+              for item in Path("defence/data").rglob("*"):
+                  if item.is_file():
+                      print(" -", item)
+
               raise SystemExit(
-                  f"Defence master not created: {path}"
+                  f"Defence master not found: {path}"
               )
 
           df = pd.read_parquet(path)
 
           print()
-          print("Defence classified master")
-          print("-------------------------")
+          print("Defence dashboard master")
+          print("------------------------")
           print(f"Rows:    {len(df):,}")
           print(f"Columns: {len(df.columns):,}")
 
@@ -448,115 +143,221 @@ jobs:
                   "Defence master contains zero rows."
               )
 
-          important = [
+          required = [
               "supplier_group",
               "Service Offering",
               "Domain",
           ]
 
-          print()
-          print(
-              "Key enrichment columns:"
-          )
+          missing = [
+              col
+              for col in required
+              if col not in df.columns
+          ]
 
-          for column in important:
-
-              if column in df.columns:
-
-                  populated = int(
-                      df[column]
-                      .notna()
-                      .sum()
-                  )
-
-                  print(
-                      f"  {column}: "
-                      f"{populated:,} populated"
-                  )
-
-              else:
-
-                  print(
-                      f"  {column}: NOT PRESENT"
-                  )
+          if missing:
+              raise SystemExit(
+                  "Defence master missing dashboard columns: "
+                  + ", ".join(missing)
+              )
 
           print()
-          print(
-              "Defence master validation: PASS"
-          )
+          print("Defence master validation: PASS")
           PY
 
       # ============================================================
-      # FINAL SUMMARY
+      # PREPARE SITE
       # ============================================================
 
-      - name: ATLAS data summary
+      - name: Prepare Defence site directory
+        run: |
+          mkdir -p "$DEFENCE_SITE_DIR"
+
+          echo "Existing docs structure:"
+          find docs -maxdepth 2 -type f | sort || true
+
+      # ============================================================
+      # TAM OVERVIEW
+      # ============================================================
+
+      - name: Build TAM Overview
+        run: |
+          python defence/dashboards/DefenceTAM.py \
+            --input "$MASTER_PATH" \
+            --output-dir "$DEFENCE_SITE_DIR" \
+            --value-mode total
+
+      # ============================================================
+      # COMPETITIVE INTELLIGENCE
+      # ============================================================
+
+      - name: Build Competitive Intelligence
+        run: |
+          python defence/dashboards/CompetitiveIntelligence.py \
+            --input "$MASTER_PATH" \
+            --output-dir "$DEFENCE_SITE_DIR"
+
+      # ============================================================
+      # CONTRACT EXPLORER
+      # ============================================================
+
+      - name: Build Contract Explorer
+        run: |
+          python defence/dashboards/ContractExplorer.py \
+            --input "$MASTER_PATH" \
+            --output-dir "$DEFENCE_SITE_DIR" \
+            --value-mode total
+
+      # ============================================================
+      # SERVICE OFFERING GROWTH
+      # ============================================================
+
+      - name: Build Service Offering Growth
+        run: |
+          python defence/dashboards/ServiceOfferingGrowth.py \
+            --input "$MASTER_PATH" \
+            --output-dir "$DEFENCE_SITE_DIR" \
+            --value-mode total
+
+      # ============================================================
+      # VERIFY DASHBOARD OUTPUTS
+      # ============================================================
+
+      - name: Inspect generated Defence dashboards
+        run: |
+          echo
+          echo "===================================="
+          echo "GENERATED DEFENCE SITE FILES"
+          echo "===================================="
+
+          find "$DEFENCE_SITE_DIR" \
+            -maxdepth 1 \
+            -type f \
+            -printf "%f\n" \
+            | sort
+
+          echo
+          echo "HTML files:"
+
+          HTML_COUNT=$(find "$DEFENCE_SITE_DIR" \
+            -maxdepth 1 \
+            -type f \
+            -name "*.html" \
+            | wc -l)
+
+          echo "$HTML_COUNT"
+
+          if [ "$HTML_COUNT" -lt 4 ]; then
+            echo "Expected at least four Defence dashboard HTML files."
+            exit 1
+          fi
+
+      # ============================================================
+      # SITE VALIDATION
+      # ============================================================
+
+      - name: Validate ATLAS site
         run: |
           python - <<'PY'
-          import pandas as pd
+          from pathlib import Path
 
-          combined = pd.read_parquet(
-              "data/austender/combined/austender_combined.parquet"
-          )
+          docs = Path("docs")
+          defence = docs / "defence"
 
-          defence = pd.read_parquet(
-              "defence/data/defence_contracts_raw.parquet"
-          )
+          if not docs.exists():
+              raise SystemExit(
+                  "docs/ directory does not exist."
+              )
 
-          health = pd.read_parquet(
-              "health/data/health_contracts_raw.parquet"
-          )
+          if not (docs / "index.html").exists():
+              raise SystemExit(
+                  "Main ATLAS landing page is missing: "
+                  "docs/index.html"
+              )
 
-          defence_master = pd.read_parquet(
-              "defence/data/processed/master_defence_contracts.parquet"
+          if not defence.exists():
+              raise SystemExit(
+                  "Defence site directory is missing."
+              )
+
+          html_files = sorted(
+              defence.glob("*.html")
           )
 
           print()
-          print(
-              "===================================="
-          )
-          print(
-              "ATLAS DATA REFRESH COMPLETE"
-          )
-          print(
-              "===================================="
-          )
-          print(
-              f"Combined:       "
-              f"{len(combined):,} rows"
-          )
-          print(
-              f"Defence raw:    "
-              f"{len(defence):,} rows"
-          )
-          print(
-              f"Health raw:     "
-              f"{len(health):,} rows"
-          )
-          print(
-              f"Defence master: "
-              f"{len(defence_master):,} rows"
-          )
-          print(
-              "===================================="
-          )
+          print("Defence HTML outputs")
+          print("--------------------")
+
+          for path in html_files:
+              print(
+                  f"{path.name}: "
+                  f"{path.stat().st_size / 1024:,.1f} KB"
+              )
+
+          if len(html_files) < 4:
+              raise SystemExit(
+                  "Fewer than four Defence HTML files were generated."
+              )
+
+          print()
+          print("ATLAS site validation: PASS")
           PY
 
       # ============================================================
-      # ARTIFACT
+      # BUILD SUMMARY
       # ============================================================
 
-      - name: Upload refreshed ATLAS datasets
-        uses: actions/upload-artifact@v4
+      - name: Defence site build summary
+        run: |
+          echo
+          echo "===================================="
+          echo "DEFENCE SITE BUILD COMPLETE"
+          echo "===================================="
+          echo
+          echo "Master:"
+          echo "$MASTER_PATH"
+          echo
+          echo "Dashboard source scripts:"
+          echo " - DefenceTAM.py"
+          echo " - CompetitiveIntelligence.py"
+          echo " - ContractExplorer.py"
+          echo " - ServiceOfferingGrowth.py"
+          echo
+          echo "Published site source:"
+          echo "$SITE_DIR"
+          echo
+          echo "===================================="
+
+      # ============================================================
+      # PAGES ARTIFACT
+      # ============================================================
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          name: atlas-data-refresh
-          retention-days: 7
-          if-no-files-found: error
-          path: |
-            data/austender/combined/austender_combined.parquet
-            defence/data/defence_contracts_raw.parquet
-            defence/data/processed/**
-            health/data/health_contracts_raw.parquet
-            audits/austender/combined/**
-            audits/austender/defence/**
-            audits/austender/health/**
+          path: docs
+
+
+  # ============================================================
+  # DEPLOY
+  # ============================================================
+
+  deploy-defence-site:
+    name: Deploy ATLAS site
+    needs:
+      - build-defence-site
+
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
