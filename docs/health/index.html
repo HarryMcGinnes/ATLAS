@@ -3,29 +3,234 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+
   <title>ATLAS | Health Market Intelligence</title>
+
   <style>
-    :root{--bg:#f5f5f6;--panel:#fff;--text:#111827;--muted:#5d6675;--line:#dedfe3;--black:#050505}
-    *{box-sizing:border-box}
-    body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text)}
-    .topbar{background:var(--black);color:#fff;padding:18px 22px}.brand{font-size:34px;font-weight:800;letter-spacing:.04em}.tag{font-size:15px;margin-top:2px}
-    .wrap{max-width:1040px;margin:0 auto;padding:64px 28px}
-    .back{display:inline-block;margin-bottom:26px;color:#475467;text-decoration:none;font-size:14px}
-    h1{font-size:40px;margin:0 0 8px}.lead{color:var(--muted);font-size:17px;line-height:1.5}
-    .panel{margin-top:32px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:30px}
-    .panel h2{margin:0 0 10px}.panel p{margin:0;color:var(--muted);line-height:1.55}
+    :root {
+      --purple: #A100FF;
+      --ink: #101828;
+      --muted: #667085;
+      --line: #E4E7EC;
+      --background: #F7F8FA;
+      --card: #FFFFFF;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: var(--background);
+      color: var(--ink);
+    }
+
+    .header {
+      background: #000000;
+      color: #FFFFFF;
+      padding: 22px 24px 20px;
+    }
+
+    .brand {
+      font-size: 36px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      margin: 0;
+    }
+
+    .brand-subtitle {
+      margin-top: 3px;
+      font-size: 15px;
+    }
+
+    .wrap {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 64px 28px;
+    }
+
+    .back {
+      display: inline-block;
+      margin-bottom: 26px;
+      color: #475467;
+      text-decoration: none;
+      font-size: 14px;
+    }
+
+    .back:hover {
+      color: var(--purple);
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-size: 38px;
+      line-height: 1.15;
+    }
+
+    .intro {
+      margin: 0 0 34px;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.5;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+
+    .dashboard-card {
+      display: block;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-left: 5px solid var(--purple);
+      border-radius: 14px;
+      padding: 22px 24px;
+      text-decoration: none;
+      color: inherit;
+      transition:
+        transform 0.15s ease,
+        box-shadow 0.15s ease,
+        border-color 0.15s ease;
+    }
+
+    .dashboard-card:hover {
+      transform: translateY(-2px);
+      border-color: #C8A2FF;
+      box-shadow: 0 8px 24px rgba(16, 24, 40, 0.08);
+    }
+
+    .dashboard-card h2 {
+      margin: 0 0 8px;
+      font-size: 21px;
+    }
+
+    .dashboard-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .open {
+      display: inline-block;
+      margin-top: 15px;
+      color: #6B00B6;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .note {
+      margin-top: 28px;
+      padding: 16px 18px;
+      background: #FFFFFF;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    @media (max-width: 700px) {
+      .wrap {
+        padding: 38px 18px;
+      }
+
+      h1 {
+        font-size: 31px;
+      }
+    }
   </style>
 </head>
+
 <body>
-  <header class="topbar"><div class="brand">ATLAS</div><div class="tag">Addressable Market Intelligence</div></header>
+
+  <header class="header">
+    <div class="brand">ATLAS</div>
+    <div class="brand-subtitle">
+      Addressable Market Intelligence
+    </div>
+  </header>
+
   <main class="wrap">
-    <a class="back" href="../">← All markets</a>
+
+    <a class="back" href="../index.html">
+      ← All markets
+    </a>
+
     <h1>Health Market Intelligence</h1>
-    <p class="lead">Australian Government Health procurement intelligence.</p>
-    <section class="panel">
-      <h2>Dashboards coming next</h2>
-      <p>The Health data pipeline is available. Dashboard pages will appear here as the Health classification and visualisation layer is completed.</p>
+
+    <p class="intro">
+      Australian Government Health procurement intelligence.
+      Explore the addressable market, supplier positioning and
+      underlying contract activity.
+    </p>
+
+    <section class="grid">
+
+      <a
+        class="dashboard-card"
+        href="AccentureHealthTAMOverview.html"
+      >
+        <h2>Health TAM Overview</h2>
+
+        <p>
+          Executive view of total Health procurement,
+          Accenture-addressable TAM, Accenture wins,
+          Service Offering demand and supplier share.
+        </p>
+
+        <span class="open">
+          Open dashboard →
+        </span>
+      </a>
+
+      <a
+        class="dashboard-card"
+        href="HealthCompareDashboard.html"
+      >
+        <h2>Competitive Intelligence</h2>
+
+        <p>
+          Compare suppliers across the addressable Health
+          market, including TAM share, Service Offering
+          strength, agency presence and current contracts.
+        </p>
+
+        <span class="open">
+          Open dashboard →
+        </span>
+      </a>
+
+      <a
+        class="dashboard-card"
+        href="HealthTAMExploratoryAnalysis.html"
+      >
+        <h2>Contract Explorer</h2>
+
+        <p>
+          Explore addressable Health procurement by agency,
+          supplier, Service Offering, financial year and
+          individual contract.
+        </p>
+
+        <span class="open">
+          Open dashboard →
+        </span>
+      </a>
+
     </section>
+
+    <div class="note">
+      Dashboard data is generated from the canonical ATLAS
+      Health master dataset and refreshed through the ATLAS
+      data pipeline.
+    </div>
+
   </main>
+
 </body>
 </html>
