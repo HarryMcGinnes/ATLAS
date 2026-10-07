@@ -9,7 +9,7 @@ import pandas as pd
 
 
 # =============================================================================
-# FINANCIAL YEAR ANALYSIS SOURCE COLUMNS
+# FYA SOURCE COLUMNS
 # =============================================================================
 
 AGENCY = "01. Agency Name"
@@ -31,243 +31,143 @@ VALUE = "48. Value"
 
 
 # =============================================================================
-# SHARED SUPPLIER IDENTITY
-# =============================================================================
+# REVIEWED SHARED SUPPLIER FAMILIES
 #
-# Supplier identity is a whole-of-ATLAS concept.
-#
-# Rules:
-#   1. Preserve the original Supplier Name and Supplier ABN.
-#   2. Normalise ABN and name into separate audit fields.
-#   3. Where an ABN exists, use the ABN as the strongest identity signal.
-#   4. Reviewed supplier-family rules provide the canonical display label.
-#   5. If an ABN has no reviewed family, select one stable representative
-#      source name for that ABN rather than splitting the supplier.
-#   6. If no ABN exists, use reviewed name rules.
-#   7. If nothing is recognised, KEEP the source supplier name unchanged.
-#      Never drop an unknown supplier.
-#   8. Conflicting reviewed supplier families on the same ABN are treated as
-#      a hard pipeline error rather than silently merged.
-#
-# Defence and Health should consume supplier_group from this dataset rather
-# than inventing separate supplier identities downstream.
+# IMPORTANT:
+# - supplier grouping is LABEL-ONLY
+# - never remove / duplicate / revalue rows
+# - raw Supplier Name and Supplier ABN are never overwritten
+# - ABN is retained for audit but is NOT used to blindly propagate families
 # =============================================================================
 
-SUPPLIER_FAMILIES: list[tuple[str, list[str]]] = [
-    (
-        "Accenture",
-        [
-            r"\bACCENTURE\b",
-        ],
-    ),
-    (
-        "Deloitte",
-        [
-            r"\bDELOITTE\b",
-        ],
-    ),
-    (
-        "EY",
-        [
-            r"\bERNST\s+(?:AND\s+)?YOUNG\b",
-            r"^EY(?:\s|$)",
-        ],
-    ),
-    (
-        "KPMG",
-        [
-            r"\bKPMG\b",
-        ],
-    ),
-    (
-        "PwC",
-        [
-            r"\bPRICEWATERHOUSECOOPERS\b",
-            r"\bPRICEWATERHOUSE\s+COOPERS\b",
-            r"^PWC(?:\s|$)",
-        ],
-    ),
-    (
-        "IBM",
-        [
-            r"\bIBM\b",
-            r"\bINTERNATIONAL\s+BUSINESS\s+MACHINES\b",
-        ],
-    ),
-    (
-        "Fujitsu",
-        [
-            r"\bFUJITSU\b",
-        ],
-    ),
-    (
-        "DXC Technology",
-        [
-            r"\bDXC\b",
-            r"\bCSC AUSTRALIA\b",
-        ],
-    ),
-    (
-        "BAE Systems",
-        [
-            r"\bBAE\s+SYSTEMS\b",
-        ],
-    ),
-    (
-        "Boeing",
-        [
-            r"\bBOEING\b",
-        ],
-    ),
-    (
-        "Lockheed Martin",
-        [
-            r"\bLOCKHEED\s+MARTIN\b",
-        ],
-    ),
-    (
-        "Leidos",
-        [
-            r"\bLEIDOS\b",
-        ],
-    ),
-    (
-        "Thales",
-        [
-            r"\bTHALES\b",
-        ],
-    ),
-    (
-        "Raytheon",
-        [
-            r"\bRAYTHEON\b",
-        ],
-    ),
-    (
-        "Aurecon",
-        [
-            r"\bAURECON\b",
-            r"\bAUGILITY\b",
-        ],
-    ),
-    (
-        "Downer",
-        [
-            r"\bDOWNER\b",
-        ],
-    ),
-    (
-        "Jacobs",
-        [
-            r"\bJACOBS\b",
-        ],
-    ),
-    (
-        "KBR",
-        [
-            r"\bKBR\b",
-            r"\bKELLOGG\s+BROWN\s+AND\s+ROOT\b",
-        ],
-    ),
-    (
-        "QinetiQ",
-        [
-            r"\bQINETIQ\b",
-        ],
-    ),
-    (
-        "Navantia",
-        [
-            r"\bNAVANTIA\b",
-        ],
-    ),
-    (
-        "Nova Systems",
-        [
-            r"\bNOVA\s+SYSTEMS\b",
-        ],
-    ),
-    (
-        "Synergy Group",
-        [
-            r"\bSYNERGY\s+GROUP\b",
-        ],
-    ),
-    (
-        "Telstra",
-        [
-            r"\bTELSTRA\b",
-        ],
-    ),
-    (
-        "Optus",
-        [
-            r"\bOPTUS\b",
-        ],
-    ),
-    (
-        "Data#3",
-        [
-            r"\bDATA\s*#?\s*3\b",
-        ],
-    ),
-    (
-        "Microsoft",
-        [
-            r"\bMICROSOFT\b",
-        ],
-    ),
-    (
-        "Amazon Web Services",
-        [
-            r"\bAMAZON\s+WEB\s+SERVICES\b",
-            r"^AWS(?:\s|$)",
-        ],
-    ),
-    (
-        "Oracle",
-        [
-            r"\bORACLE\b",
-        ],
-    ),
-    (
-        "SAP",
-        [
-            r"^SAP(?:\s|$)",
-            r"\bSAP\s+AUSTRALIA\b",
-        ],
-    ),
-    (
-        "Capgemini",
-        [
-            r"\bCAPGEMINI\b",
-        ],
-    ),
-    (
-        "Datacom",
-        [
-            r"\bDATACOM\b",
-        ],
-    ),
-    (
-        "Salesforce",
-        [
-            r"\bSALESFORCE\b",
-            r"\bSFDC\b",
-        ],
-    ),
-    (
-        "ServiceNow",
-        [
-            r"\bSERVICENOW\b",
-        ],
-    ),
-    (
-        "SME Gateway",
-        [
-            r"\bSME\s+GATEWAY\b",
-        ],
-    ),
+CANONICAL_SUPPLIER_FAMILIES: list[tuple[str, list[str]]] = [
+    ("Accenture", [
+        r"\bACCENTURE\b",
+    ]),
+    ("Deloitte", [
+        r"\bDELOITTE\b",
+        r"\bDELOITTE TOUCHE TOHMATSU\b",
+    ]),
+    ("EY", [
+        r"\bERNST\s*(?:AND|&)\s*YOUNG\b",
+        r"^EY(?:\s|$)",
+    ]),
+    ("KPMG", [
+        r"\bKPMG\b",
+    ]),
+    ("PwC", [
+        r"\bPRICEWATERHOUSECOOPERS\b",
+        r"\bPRICEWATERHOUSE\s+COOPERS\b",
+        r"\bPWC\b",
+    ]),
+    ("Lockheed Martin", [
+        r"\bLOCKHEED\s+MARTIN\b",
+    ]),
+    ("Leidos", [
+        r"\bLEIDOS\b",
+    ]),
+    ("Fujitsu", [
+        r"\bFUJITSU\b",
+    ]),
+    ("Thales", [
+        r"\bTHALES\b",
+    ]),
+    ("IBM", [
+        r"\bIBM\b",
+        r"\bINTERNATIONAL\s+BUSINESS\s+MACHINES\b",
+    ]),
+    ("BAE Systems", [
+        r"\bBAE\s+SYSTEMS\b",
+    ]),
+    ("Boeing", [
+        r"\bBOEING\b",
+    ]),
+    ("Northrop Grumman", [
+        r"\bNORTHROP\s+GRUMMAN\b",
+    ]),
+    ("Raytheon", [
+        r"\bRAYTHEON\b",
+    ]),
+    ("Rheinmetall", [
+        r"\bRHEINMETALL\b",
+    ]),
+    ("Saab", [
+        r"\bSAAB\b",
+    ]),
+    ("Airbus", [
+        r"\bAIRBUS\b",
+        r"\bEADS\b",
+    ]),
+    ("DXC Technology", [
+        r"\bDXC\b",
+    ]),
+    ("Microsoft", [
+        r"\bMICROSOFT\b",
+    ]),
+    ("Amazon Web Services", [
+        r"\bAMAZON\s+WEB\s+SERVICES\b",
+        r"^AWS(?:\s|$)",
+    ]),
+    ("Oracle", [
+        r"\bORACLE\b",
+    ]),
+    ("SAP", [
+        r"^SAP(?:\s|$)",
+        r"\bSAP AUSTRALIA\b",
+    ]),
+    ("Data#3", [
+        r"\bDATA\s*#?\s*3\b",
+    ]),
+    ("Telstra", [
+        r"\bTELSTRA\b",
+    ]),
+    ("Optus", [
+        r"\bOPTUS\b",
+    ]),
+    ("Salesforce", [
+        r"\bSALESFORCE\b",
+    ]),
+    ("ServiceNow", [
+        r"\bSERVICENOW\b",
+    ]),
+    ("Capgemini", [
+        r"\bCAPGEMINI\b",
+    ]),
+    ("Datacom", [
+        r"\bDATACOM\b",
+    ]),
+    ("Aurecon", [
+        r"\bAURECON\b",
+        r"\bAUGILITY\b",
+    ]),
+    ("Jacobs", [
+        r"\bJACOBS\b",
+    ]),
+    ("Downer", [
+        r"\bDOWNER\b",
+    ]),
+    ("Ventia", [
+        r"\bVENTIA\b",
+    ]),
+    ("Nova Systems", [
+        r"\bNOVA\s+SYSTEMS\b",
+    ]),
+    ("QinetiQ", [
+        r"\bQINETIQ\b",
+    ]),
+    ("KBR", [
+        r"\bKBR\b",
+        r"\bKELLOGG\s+BROWN\s+AND\s+ROOT\b",
+    ]),
+    ("Navantia", [
+        r"\bNAVANTIA\b",
+    ]),
+    ("Synergy Group", [
+        r"\bSYNERGY\s+GROUP\b",
+    ]),
+    ("SME Gateway", [
+        r"\bSME\s+GATEWAY\b",
+    ]),
 ]
 
 
@@ -278,8 +178,8 @@ SUPPLIER_FAMILIES: list[tuple[str, list[str]]] = [
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Combine the ATLAS Financial Year Analysis historical baseline "
-            "with monthly Financial Year Analysis CSV exports."
+            "Combine ATLAS historical Financial Year Analysis baseline "
+            "with monthly FYA extracts into the shared Silver dataset."
         )
     )
 
@@ -300,26 +200,132 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--audit-dir",
-        default="audits/austender",
+        default="audits/austender/combined",
     )
 
     return parser.parse_args()
 
 
 # =============================================================================
-# SOURCE VALIDATION
+# GENERIC HELPERS
 # =============================================================================
 
-def column_number(column_name: object) -> int | None:
-    match = re.match(
-        r"^\s*(\d{2})\.\s*",
-        str(column_name),
+def clean_text(value: object) -> str:
+    if value is None or pd.isna(value):
+        return ""
+
+    return re.sub(
+        r"\s+",
+        " ",
+        str(value)
+        .replace("\u00a0", " ")
+        .strip(),
     )
 
-    return int(
-        match.group(1)
-    ) if match else None
 
+def column_number(value: object) -> int | None:
+    match = re.match(
+        r"^\s*(\d{2})\.\s*",
+        str(value),
+    )
+
+    return int(match.group(1)) if match else None
+
+
+def parse_value(series: pd.Series) -> pd.Series:
+    cleaned = (
+        series.astype(str)
+        .str.replace(",", "", regex=False)
+        .str.replace("$", "", regex=False)
+        .str.strip()
+    )
+
+    return pd.to_numeric(
+        cleaned,
+        errors="coerce",
+    ).fillna(0.0)
+
+
+def canonical_cn_root(value: object) -> str:
+    text = clean_text(value).upper()
+
+    if not text:
+        return ""
+
+    return re.sub(
+        r"-A\d+$",
+        "",
+        text,
+    )
+
+
+def amendment_number(value: object) -> int:
+    text = clean_text(value).upper()
+
+    match = re.search(
+        r"-A(\d+)$",
+        text,
+    )
+
+    return int(match.group(1)) if match else 0
+
+
+def normalise_supplier(value: object) -> str:
+    text = clean_text(value).upper()
+
+    text = text.replace(
+        "&",
+        " AND ",
+    )
+
+    text = re.sub(
+        r"[^A-Z0-9#]+",
+        " ",
+        text,
+    )
+
+    return re.sub(
+        r"\s+",
+        " ",
+        text,
+    ).strip()
+
+
+def normalise_abn(value: object) -> str:
+    digits = re.sub(
+        r"\D",
+        "",
+        clean_text(value),
+    )
+
+    return digits if len(digits) == 11 else ""
+
+
+def match_supplier_family(
+    value: object,
+) -> str:
+    text = normalise_supplier(
+        value
+    )
+
+    if not text:
+        return ""
+
+    for canonical, patterns in CANONICAL_SUPPLIER_FAMILIES:
+        for pattern in patterns:
+            if re.search(
+                pattern,
+                text,
+                flags=re.IGNORECASE,
+            ):
+                return canonical
+
+    return ""
+
+
+# =============================================================================
+# FYA SCHEMA VALIDATION
+# =============================================================================
 
 def validate_financial_year_analysis_schema(
     df: pd.DataFrame,
@@ -332,23 +338,18 @@ def validate_financial_year_analysis_schema(
         if column_number(column) is not None
     }
 
-    expected_numbers = set(
-        range(1, 49)
-    )
-
     missing_numbers = sorted(
-        expected_numbers
+        set(range(1, 49))
         - numbered_columns
     )
 
     if missing_numbers:
         raise RuntimeError(
-            f"{source_name} is not the expected "
-            f"48-column Financial Year Analysis export. "
+            f"{source_name} is not the expected FYA dataset. "
             f"Missing numbered columns: {missing_numbers}"
         )
 
-    required_columns = {
+    required = {
         AGENCY,
         CONTRACT_TYPE,
         CN_ID,
@@ -367,209 +368,19 @@ def validate_financial_year_analysis_schema(
         VALUE,
     }
 
-    missing_required = sorted(
-        required_columns
-        - set(df.columns)
+    missing = sorted(
+        required - set(df.columns)
     )
 
-    if missing_required:
+    if missing:
         raise RuntimeError(
-            f"{source_name} is missing required "
-            f"Financial Year Analysis columns: "
-            f"{', '.join(missing_required)}"
+            f"{source_name} missing required FYA columns: "
+            + ", ".join(missing)
         )
 
 
 # =============================================================================
-# CONTRACT ID HELPERS
-# =============================================================================
-
-def canonical_cn_root(
-    value: object,
-) -> str:
-
-    if value is None or pd.isna(value):
-        return ""
-
-    text = str(
-        value
-    ).strip().upper()
-
-    if not text:
-        return ""
-
-    return re.sub(
-        r"-A\d+$",
-        "",
-        text,
-    )
-
-
-def amendment_number(
-    value: object,
-) -> int:
-
-    if value is None or pd.isna(value):
-        return 0
-
-    text = str(
-        value
-    ).strip().upper()
-
-    match = re.search(
-        r"-A(\d+)$",
-        text,
-    )
-
-    return int(
-        match.group(1)
-    ) if match else 0
-
-
-# =============================================================================
-# BASIC VALUE / TEXT HELPERS
-# =============================================================================
-
-def parse_value(
-    series: pd.Series,
-) -> pd.Series:
-
-    cleaned = (
-        series
-        .astype(str)
-        .str.replace(
-            ",",
-            "",
-            regex=False,
-        )
-        .str.replace(
-            "$",
-            "",
-            regex=False,
-        )
-        .str.strip()
-    )
-
-    return pd.to_numeric(
-        cleaned,
-        errors="coerce",
-    ).fillna(0.0)
-
-
-def clean_source_text(
-    value: object,
-) -> str:
-
-    if value is None or pd.isna(value):
-        return ""
-
-    return re.sub(
-        r"\s+",
-        " ",
-        str(value)
-        .replace("\u00a0", " ")
-        .strip(),
-    )
-
-
-# =============================================================================
-# SUPPLIER NORMALISATION HELPERS
-# =============================================================================
-
-def normalise_supplier_name(
-    value: object,
-) -> str:
-
-    raw = clean_source_text(
-        value
-    ).upper()
-
-    raw = raw.replace(
-        "&",
-        " AND ",
-    )
-
-    raw = re.sub(
-        r"[^A-Z0-9#]+",
-        " ",
-        raw,
-    )
-
-    return re.sub(
-        r"\s+",
-        " ",
-        raw,
-    ).strip()
-
-
-def normalise_supplier_abn(
-    value: object,
-) -> str:
-
-    if value is None or pd.isna(value):
-        return ""
-
-    digits = re.sub(
-        r"\D",
-        "",
-        str(value),
-    )
-
-    digits = digits.lstrip("0")
-
-    # Australian ABNs are normally 11 digits.
-    # We keep non-empty source digits for audit purposes,
-    # but only 11-digit values are treated as strong ABN IDs.
-    return digits
-
-
-def valid_abn(
-    value: object,
-) -> bool:
-
-    text = normalise_supplier_abn(
-        value
-    )
-
-    return bool(
-        re.fullmatch(
-            r"\d{11}",
-            text,
-        )
-    )
-
-
-def reviewed_supplier_family(
-    value: object,
-) -> str | None:
-
-    normalised = normalise_supplier_name(
-        value
-    )
-
-    if not normalised:
-        return None
-
-    for (
-        canonical,
-        patterns,
-    ) in SUPPLIER_FAMILIES:
-
-        if any(
-            re.search(
-                pattern,
-                normalised,
-                flags=re.IGNORECASE,
-            )
-            for pattern in patterns
-        ):
-            return canonical
-
-    return None
-
-
-# =============================================================================
-# SOURCE NORMALISATION
+# NORMALISE EACH RAW SOURCE WITHOUT DROPPING COLUMNS
 # =============================================================================
 
 def normalise_source(
@@ -591,27 +402,18 @@ def normalise_source(
         END_DATE,
     }
 
-    numeric_columns = {
-        VALUE,
-    }
-
     for column in out.columns:
-
-        if (
-            column in date_columns
-            or column in numeric_columns
-        ):
+        if column in date_columns or column == VALUE:
             continue
 
         out[column] = (
             out[column]
             .fillna("")
             .astype(str)
-            .map(clean_source_text)
+            .map(clean_text)
         )
 
     for column in date_columns:
-
         out[column] = pd.to_datetime(
             out[column],
             errors="coerce",
@@ -622,44 +424,38 @@ def normalise_source(
         out[VALUE]
     )
 
-    # -------------------------------------------------------------
-    # Provenance
-    # -------------------------------------------------------------
+    # -------------------------------------------------------------------------
+    # Source provenance
+    # -------------------------------------------------------------------------
 
-    out[
-        "atlas_source_kind"
-    ] = source_kind
+    out["atlas_source_kind"] = source_kind
+    out["atlas_source_file"] = source_file
 
-    out[
-        "atlas_source_file"
-    ] = source_file
+    # -------------------------------------------------------------------------
+    # Contract version fields.
+    #
+    # IMPORTANT:
+    # These are INFORMATIONAL ONLY.
+    # We do NOT collapse all amendments into one root row.
+    # -------------------------------------------------------------------------
 
-    # -------------------------------------------------------------
-    # CN reconciliation fields
-    # -------------------------------------------------------------
-
-    out[
-        "CN Root ID"
-    ] = out[
-        CN_ID
-    ].map(
+    out["CN Root ID"] = out[CN_ID].map(
         canonical_cn_root
     )
 
-    out[
-        "CN Amendment Number"
-    ] = out[
-        CN_ID
-    ].map(
+    out["CN Amendment Number"] = out[CN_ID].map(
         amendment_number
     )
 
-    # -------------------------------------------------------------
-    # Compatibility aliases used elsewhere in ATLAS
-    # -------------------------------------------------------------
+    # -------------------------------------------------------------------------
+    # Friendly aliases.
+    #
+    # Original 01.-48. source columns remain untouched.
+    # -------------------------------------------------------------------------
 
     aliases = {
         AGENCY: "Agency",
+        CONTRACT_TYPE: "Contract Type",
         CN_ID: "CN ID",
         SUPPLIER_NAME: "Supplier Name",
         SUPPLIER_ABN: "Supplier ABN",
@@ -675,141 +471,111 @@ def normalise_source(
         VALUE: "Value",
     }
 
-    for (
-        source_column,
-        alias_column,
-    ) in aliases.items():
+    for source, alias in aliases.items():
+        out[alias] = out[source]
 
-        out[
-            alias_column
-        ] = out[
-            source_column
-        ]
-
-    # Historical spelling retained for old Defence code.
-    out[
-        "Agency Divison"
-    ] = out[
+    # Keep legacy typo only as a compatibility alias.
+    out["Agency Divison"] = out[
         "Agency Division"
     ]
 
     return out
 
 
-# =============================================================================
-# READ INPUTS
-# =============================================================================
-
-def read_baseline(
-    path: Path,
-) -> pd.DataFrame:
-
+def read_baseline(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(
-            f"Historical baseline parquet "
-            f"not found: {path}"
+            f"Historical baseline not found: {path}"
         )
 
-    df = pd.read_parquet(
-        path
-    )
-
     return normalise_source(
-        df,
-        source_kind="baseline",
-        source_file=path.name,
+        pd.read_parquet(path),
+        "baseline",
+        path.name,
     )
 
 
-def read_monthly_csv(
-    path: Path,
-) -> pd.DataFrame:
-
-    df = pd.read_csv(
-        path,
-        dtype=str,
-        low_memory=False,
-        encoding="utf-8-sig",
-    )
-
+def read_monthly(path: Path) -> pd.DataFrame:
     return normalise_source(
-        df,
-        source_kind="monthly",
-        source_file=path.name,
+        pd.read_csv(
+            path,
+            dtype=str,
+            low_memory=False,
+            encoding="utf-8-sig",
+        ),
+        "monthly",
+        path.name,
     )
 
 
 # =============================================================================
-# CN / AMENDMENT RECONCILIATION
+# EXACT CONTRACT-VERSION DEDUPLICATION
 # =============================================================================
 
-def reconcile_current_contracts(
+def deduplicate_exact_cn_versions(
     df: pd.DataFrame,
     audit_dir: Path,
 ) -> pd.DataFrame:
     """
-    Keep one current row per CN family.
+    Preserve amendment history.
 
-    Winner order:
-      1. Latest Execution Date
-      2. Highest amendment suffix
-      3. Monthly source beats baseline on a tie
-      4. Latest ingest order as final tie-breaker
+    Examples retained as separate records:
+        CN123
+        CN123-A1
+        CN123-A2
+
+    We only reconcile duplicate occurrences of THE SAME exact CN ID,
+    which commonly happens when a monthly extract overlaps the baseline.
+
+    Winner priority for an exact CN ID:
+      1. latest Execution Date
+      2. monthly beats baseline on a tie
+      3. latest ingest position
     """
 
     out = df.copy()
 
-    out[
-        "_ingest_order"
-    ] = range(
+    out["_ingest_order"] = range(
         len(out)
     )
 
-    out[
-        "_source_priority"
-    ] = (
-        out[
-            "atlas_source_kind"
-        ]
-        .map(
-            {
-                "baseline": 10,
-                "monthly": 20,
-            }
-        )
+    out["_source_priority"] = (
+        out["atlas_source_kind"]
+        .map({
+            "baseline": 10,
+            "monthly": 20,
+        })
         .fillna(0)
         .astype(int)
     )
 
-    has_cn = (
-        out[
-            "CN Root ID"
-        ]
+    exact_id = (
+        out[CN_ID]
         .fillna("")
         .astype(str)
         .str.strip()
-        .ne("")
+        .str.upper()
     )
 
-    duplicate_cn = (
-        has_cn
+    out["_exact_cn_id"] = exact_id
+
+    has_id = exact_id.ne("")
+
+    duplicate_mask = (
+        has_id
         & out.duplicated(
-            "CN Root ID",
+            "_exact_cn_id",
             keep=False,
         )
     )
 
-    if duplicate_cn.any():
-
+    if duplicate_mask.any():
         (
-            out.loc[
-                duplicate_cn
-            ]
+            out.loc[duplicate_mask]
             .sort_values(
                 [
-                    "CN Root ID",
+                    "_exact_cn_id",
                     EXECUTION_DATE,
-                    "CN Amendment Number",
                     "_source_priority",
                     "_ingest_order",
                 ],
@@ -817,25 +583,21 @@ def reconcile_current_contracts(
             )
             .to_csv(
                 audit_dir
-                / "cn_all_versions.csv",
+                / "exact_cn_duplicate_versions.csv",
                 index=False,
             )
         )
 
     keyed = (
-        out.loc[
-            has_cn
-        ]
+        out.loc[has_id]
         .sort_values(
             [
-                "CN Root ID",
+                "_exact_cn_id",
                 EXECUTION_DATE,
-                "CN Amendment Number",
                 "_source_priority",
                 "_ingest_order",
             ],
             ascending=[
-                True,
                 True,
                 True,
                 True,
@@ -845,38 +607,31 @@ def reconcile_current_contracts(
         )
     )
 
-    winners = (
-        keyed
-        .drop_duplicates(
-            "CN Root ID",
-            keep="last",
-        )
+    winners = keyed.drop_duplicates(
+        "_exact_cn_id",
+        keep="last",
     )
 
     winner_indexes = set(
         winners.index
     )
 
-    if duplicate_cn.any():
-
-        superseded = (
-            out.loc[
-                duplicate_cn
-                & ~out.index.isin(
-                    winner_indexes
-                )
-            ]
-            .copy()
-        )
+    if duplicate_mask.any():
+        superseded = out.loc[
+            duplicate_mask
+            & ~out.index.isin(
+                winner_indexes
+            )
+        ].copy()
 
         superseded.to_csv(
             audit_dir
-            / "cn_superseded_versions.csv",
+            / "exact_cn_duplicate_rows_removed.csv",
             index=False,
         )
 
     unkeyed = out.loc[
-        ~has_cn
+        ~has_id
     ]
 
     current = pd.concat(
@@ -892,84 +647,108 @@ def reconcile_current_contracts(
         columns=[
             "_ingest_order",
             "_source_priority",
+            "_exact_cn_id",
         ],
         errors="ignore",
         inplace=True,
     )
 
-    remaining_duplicates = (
-        current.loc[
-            current[
-                "CN Root ID"
-            ]
-            .fillna("")
-            .astype(str)
-            .str.strip()
-            .ne(""),
-            "CN Root ID",
-        ]
-        .duplicated()
-        .sum()
-    )
-
-    if remaining_duplicates:
-
-        raise RuntimeError(
-            "Reconciliation failed: "
-            f"{remaining_duplicates:,} "
-            "duplicate CN roots remain."
-        )
-
     return current
 
 
 # =============================================================================
-# SHARED SUPPLIER IDENTITY
+# CONTRACT VERSION METADATA
 # =============================================================================
 
-def add_shared_supplier_identity(
+def add_contract_version_metadata(
     df: pd.DataFrame,
-    audit_dir: Path,
 ) -> pd.DataFrame:
 
     out = df.copy()
 
-    if "Supplier Name" not in out.columns:
-        raise RuntimeError(
-            "Combined dataset does not contain Supplier Name."
+    roots = (
+        out["CN Root ID"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+
+    valid = roots.ne("")
+
+    out["cn_version_count"] = 1
+    out["is_latest_cn_version"] = True
+
+    if valid.any():
+
+        counts = (
+            out.loc[valid]
+            .groupby("CN Root ID")
+            ["CN ID"]
+            .transform("size")
         )
 
-    if "Supplier ABN" not in out.columns:
-        raise RuntimeError(
-            "Combined dataset does not contain Supplier ABN."
+        out.loc[
+            valid,
+            "cn_version_count",
+        ] = counts.astype(int)
+
+        max_amendment = (
+            out.loc[valid]
+            .groupby("CN Root ID")
+            ["CN Amendment Number"]
+            .transform("max")
         )
 
-    # -------------------------------------------------------------
-    # Preserve source values explicitly
-    # -------------------------------------------------------------
+        out.loc[
+            valid,
+            "is_latest_cn_version",
+        ] = (
+            out.loc[
+                valid,
+                "CN Amendment Number",
+            ]
+            .eq(max_amendment)
+        )
 
-    out[
-        "Supplier Name Raw"
-    ] = out[
+    return out
+
+
+# =============================================================================
+# SHARED SUPPLIER NORMALISATION
+# =============================================================================
+
+def add_supplier_identity(
+    df: pd.DataFrame,
+    audit_dir: Path,
+) -> pd.DataFrame:
+
+    before_rows = len(df)
+    before_value = float(
+        pd.to_numeric(
+            df["Value"],
+            errors="coerce",
+        )
+        .fillna(0)
+        .sum()
+    )
+
+    out = df.copy()
+
+    # Raw fields explicitly retained.
+    out["Supplier Name Raw"] = out[
         "Supplier Name"
     ]
 
-    out[
-        "Supplier ABN Raw"
-    ] = out[
+    out["Supplier ABN Raw"] = out[
         "Supplier ABN"
     ]
-
-    # -------------------------------------------------------------
-    # Normalised evidence fields
-    # -------------------------------------------------------------
 
     out[
         "supplier_name_normalized"
     ] = out[
         "Supplier Name"
     ].map(
-        normalise_supplier_name
+        normalise_supplier
     )
 
     out[
@@ -977,446 +756,157 @@ def add_shared_supplier_identity(
     ] = out[
         "Supplier ABN"
     ].map(
-        normalise_supplier_abn
+        normalise_abn
     )
 
-    out[
-        "_supplier_reviewed_name_group"
-    ] = out[
+    families = out[
         "Supplier Name"
     ].map(
-        reviewed_supplier_family
+        match_supplier_family
     )
 
-    # -------------------------------------------------------------
-    # Find ABN → reviewed group relationships
-    # -------------------------------------------------------------
-
-    valid_abn_mask = (
-        out[
-            "supplier_abn_normalized"
-        ]
-        .astype(str)
-        .str.fullmatch(
-            r"\d{11}",
-            na=False,
-        )
-    )
-
-    abn_reviewed = (
-        out.loc[
-            valid_abn_mask
-            & out[
-                "_supplier_reviewed_name_group"
-            ].notna(),
-            [
-                "supplier_abn_normalized",
-                "_supplier_reviewed_name_group",
-            ],
-        ]
-        .drop_duplicates()
-    )
-
-    conflict_counts = (
-        abn_reviewed
-        .groupby(
-            "supplier_abn_normalized"
-        )[
-            "_supplier_reviewed_name_group"
-        ]
-        .nunique()
-    )
-
-    conflicting_abns = set(
-        conflict_counts[
-            conflict_counts > 1
-        ].index
-    )
-
-    if conflicting_abns:
-
-        conflict_rows = (
-            out.loc[
-                out[
-                    "supplier_abn_normalized"
-                ].isin(
-                    conflicting_abns
-                ),
-                [
-                    "Supplier Name",
-                    "Supplier ABN",
-                    "supplier_name_normalized",
-                    "supplier_abn_normalized",
-                    "_supplier_reviewed_name_group",
-                    "CN ID",
-                    "Value",
-                ],
-            ]
-            .sort_values(
-                [
-                    "supplier_abn_normalized",
-                    "Supplier Name",
-                ]
-            )
-        )
-
-        conflict_rows.to_csv(
-            audit_dir
-            / "supplier_abn_conflicts.csv",
-            index=False,
-        )
-
-        raise RuntimeError(
-            "Shared supplier identity found "
-            f"{len(conflicting_abns):,} ABN(s) "
-            "mapped to more than one reviewed "
-            "canonical supplier. Review "
-            "supplier_abn_conflicts.csv."
-        )
-
-    abn_to_reviewed_group = (
-        abn_reviewed
-        .drop_duplicates(
-            "supplier_abn_normalized"
-        )
-        .set_index(
-            "supplier_abn_normalized"
-        )[
-            "_supplier_reviewed_name_group"
-        ]
-        .to_dict()
-    )
-
-    # -------------------------------------------------------------
-    # For unknown ABNs, determine one stable source-name label.
-    #
-    # Ranking:
-    #   1. number of rows
-    #   2. total contract value
-    #   3. alphabetical raw name
-    # -------------------------------------------------------------
-
-    abn_name_population = (
-        out.loc[
-            valid_abn_mask
-        ]
-        .groupby(
-            [
-                "supplier_abn_normalized",
-                "Supplier Name",
-            ],
-            dropna=False,
-        )
-        .agg(
-            rows=(
-                "Supplier Name",
-                "size",
-            ),
-            total_value=(
-                "Value",
-                "sum",
-            ),
-        )
-        .reset_index()
-    )
-
-    abn_name_population[
-        "_supplier_name_sort"
-    ] = (
-        abn_name_population[
-            "Supplier Name"
-        ]
+    raw_name = (
+        out["Supplier Name"]
         .fillna("")
         .astype(str)
-        .str.upper()
+        .str.strip()
     )
 
-    abn_representatives = (
-        abn_name_population
-        .sort_values(
-            [
-                "supplier_abn_normalized",
-                "rows",
-                "total_value",
-                "_supplier_name_sort",
-            ],
-            ascending=[
-                True,
-                False,
-                False,
-                True,
-            ],
+    out["supplier_group"] = (
+        families.where(
+            families.ne(""),
+            raw_name,
         )
-        .drop_duplicates(
-            "supplier_abn_normalized",
-            keep="first",
+        .replace(
+            "",
+            "Unknown Supplier",
         )
     )
-
-    abn_to_representative_name = (
-        abn_representatives
-        .set_index(
-            "supplier_abn_normalized"
-        )[
-            "Supplier Name"
-        ]
-        .to_dict()
-    )
-
-    # -------------------------------------------------------------
-    # Assign canonical supplier identity
-    # -------------------------------------------------------------
-
-    supplier_groups: list[str] = []
-    mapping_methods: list[str] = []
-    supplier_ids: list[str] = []
-    mapping_statuses: list[str] = []
-
-    for row in out.itertuples(
-        index=False
-    ):
-
-        raw_name = clean_source_text(
-            getattr(
-                row,
-                "Supplier_Name",
-                "",
-            )
-            if hasattr(
-                row,
-                "Supplier_Name"
-            )
-            else ""
-        )
-
-        # itertuples sanitises names containing spaces, so use
-        # dataframe values by position below instead.
-        supplier_groups.append("")
-        mapping_methods.append("")
-        supplier_ids.append("")
-        mapping_statuses.append("")
-
-    # Replace placeholder lists using direct series iteration.
-    supplier_groups = []
-    mapping_methods = []
-    supplier_ids = []
-    mapping_statuses = []
-
-    for (
-        raw_name,
-        normalized_name,
-        normalized_abn,
-        reviewed_name_group,
-    ) in zip(
-        out[
-            "Supplier Name"
-        ],
-        out[
-            "supplier_name_normalized"
-        ],
-        out[
-            "supplier_abn_normalized"
-        ],
-        out[
-            "_supplier_reviewed_name_group"
-        ],
-    ):
-
-        raw_name_clean = (
-            clean_source_text(
-                raw_name
-            )
-            or "Unknown Supplier"
-        )
-
-        reviewed_group = (
-            str(
-                reviewed_name_group
-            ).strip()
-            if pd.notna(
-                reviewed_name_group
-            )
-            else ""
-        )
-
-        abn = str(
-            normalized_abn
-            or ""
-        ).strip()
-
-        has_valid_abn = bool(
-            re.fullmatch(
-                r"\d{11}",
-                abn,
-            )
-        )
-
-        if has_valid_abn:
-
-            reviewed_from_abn = (
-                abn_to_reviewed_group.get(
-                    abn
-                )
-            )
-
-            if reviewed_from_abn:
-
-                supplier_group = (
-                    reviewed_from_abn
-                )
-
-                mapping_method = (
-                    "ABN + reviewed supplier family"
-                )
-
-                mapping_status = "mapped"
-
-            else:
-
-                supplier_group = (
-                    clean_source_text(
-                        abn_to_representative_name.get(
-                            abn,
-                            raw_name_clean,
-                        )
-                    )
-                    or raw_name_clean
-                )
-
-                mapping_method = (
-                    "ABN representative source name"
-                )
-
-                mapping_status = "abn_grouped"
-
-            supplier_id = (
-                f"ABN:{abn}"
-            )
-
-        elif reviewed_group:
-
-            supplier_group = (
-                reviewed_group
-            )
-
-            mapping_method = (
-                "Reviewed supplier name family"
-            )
-
-            mapping_status = "mapped"
-
-            supplier_id = (
-                "NAME:"
-                + normalise_supplier_name(
-                    reviewed_group
-                )
-            )
-
-        else:
-
-            supplier_group = (
-                raw_name_clean
-            )
-
-            mapping_method = (
-                "Raw supplier name preserved"
-            )
-
-            mapping_status = "review"
-
-            supplier_id = (
-                "NAME:"
-                + (
-                    normalized_name
-                    or "UNKNOWN"
-                )
-            )
-
-        supplier_groups.append(
-            supplier_group
-        )
-
-        mapping_methods.append(
-            mapping_method
-        )
-
-        supplier_ids.append(
-            supplier_id
-        )
-
-        mapping_statuses.append(
-            mapping_status
-        )
-
-    out[
-        "supplier_group"
-    ] = supplier_groups
 
     out[
         "supplier_mapping_method"
-    ] = mapping_methods
+    ] = "RAW_SUPPLIER_NAME"
+
+    family_mask = families.ne("")
+
+    out.loc[
+        family_mask,
+        "supplier_mapping_method",
+    ] = "REVIEWED_FAMILY_ALIAS"
 
     out[
         "supplier_mapping_status"
-    ] = mapping_statuses
+    ] = "review"
 
-    out[
-        "supplier_id"
-    ] = supplier_ids
+    out.loc[
+        family_mask,
+        "supplier_mapping_status",
+    ] = "mapped"
 
-    out[
-        "is_accenture"
-    ] = out[
+    # Stable ID for auditing.
+    valid_abn = out[
+        "supplier_abn_normalized"
+    ].ne("")
+
+    out["supplier_id"] = (
+        "NAME:"
+        + out[
+            "supplier_name_normalized"
+        ]
+        .replace(
+            "",
+            "UNKNOWN",
+        )
+    )
+
+    out.loc[
+        valid_abn,
+        "supplier_id",
+    ] = (
+        "ABN:"
+        + out.loc[
+            valid_abn,
+            "supplier_abn_normalized",
+        ]
+    )
+
+    out["is_accenture"] = out[
         "supplier_group"
     ].eq(
         "Accenture"
     )
 
-    # -------------------------------------------------------------
-    # Hard supplier invariants
-    # -------------------------------------------------------------
+    # -------------------------------------------------------------------------
+    # Invariants: supplier grouping MUST NOT alter population/value.
+    # -------------------------------------------------------------------------
 
-    blank_supplier_group = (
+    if len(out) != before_rows:
+        raise RuntimeError(
+            "Supplier grouping changed row count: "
+            f"{before_rows:,} -> {len(out):,}"
+        )
+
+    after_value = float(
+        pd.to_numeric(
+            out["Value"],
+            errors="coerce",
+        )
+        .fillna(0)
+        .sum()
+    )
+
+    if abs(
+        before_value
+        - after_value
+    ) > 0.01:
+        raise RuntimeError(
+            "Supplier grouping changed total value."
+        )
+
+    # Every raw source name containing Accenture must map to Accenture.
+    raw_acc = (
         out[
+            "supplier_name_normalized"
+        ]
+        .str.contains(
+            r"\bACCENTURE\b",
+            regex=True,
+            na=False,
+        )
+    )
+
+    bad_acc = (
+        raw_acc
+        & ~out[
             "supplier_group"
-        ]
-        .fillna("")
-        .astype(str)
-        .str.strip()
-        .eq("")
+        ].eq(
+            "Accenture"
+        )
     )
 
-    if blank_supplier_group.any():
+    if bad_acc.any():
+        sample = out.loc[
+            bad_acc,
+            [
+                "CN ID",
+                "Supplier Name",
+                "Supplier ABN",
+                "supplier_group",
+            ],
+        ].head(20)
 
         raise RuntimeError(
-            "Shared supplier identity failed: "
-            f"{int(blank_supplier_group.sum()):,} "
-            "rows have a blank supplier_group."
+            "Accenture supplier reconciliation failed:\n"
+            + sample.to_string(
+                index=False
+            )
         )
 
-    blank_supplier_id = (
-        out[
-            "supplier_id"
-        ]
-        .fillna("")
-        .astype(str)
-        .str.strip()
-        .eq("")
-    )
+    # -------------------------------------------------------------------------
+    # Supplier mapping audit
+    # -------------------------------------------------------------------------
 
-    if blank_supplier_id.any():
-
-        raise RuntimeError(
-            "Shared supplier identity failed: "
-            f"{int(blank_supplier_id.sum()):,} "
-            "rows have a blank supplier_id."
-        )
-
-    # -------------------------------------------------------------
-    # AUDIT 1: raw supplier → canonical mapping
-    # -------------------------------------------------------------
-
-    supplier_mapping_audit = (
+    mapping = (
         out
         .groupby(
             [
@@ -1440,211 +930,136 @@ def add_shared_supplier_identity(
                 "CN ID",
                 "nunique",
             ),
-            total_value=(
+            value=(
                 "Value",
                 "sum",
             ),
         )
         .reset_index()
         .sort_values(
-            "total_value",
+            "value",
             ascending=False,
         )
     )
 
-    supplier_mapping_audit.to_csv(
+    mapping.to_csv(
         audit_dir
         / "supplier_identity_mapping.csv",
         index=False,
     )
 
-    # -------------------------------------------------------------
-    # AUDIT 2: canonical groups and all variants feeding them
-    # -------------------------------------------------------------
+    # -------------------------------------------------------------------------
+    # Review queue: unmapped/unreviewed supplier names.
+    # -------------------------------------------------------------------------
 
-    variant_audit = (
-        supplier_mapping_audit
-        .groupby(
-            [
-                "supplier_group",
-                "supplier_id",
-            ],
-            dropna=False,
-        )
-        .agg(
-            raw_names=(
-                "Supplier Name",
-                lambda s: " | ".join(
-                    sorted(
-                        {
-                            str(v).strip()
-                            for v in s
-                            if str(v).strip()
-                        }
-                    )
-                ),
-            ),
-            raw_abns=(
-                "Supplier ABN",
-                lambda s: " | ".join(
-                    sorted(
-                        {
-                            str(v).strip()
-                            for v in s
-                            if str(v).strip()
-                        }
-                    )
-                ),
-            ),
-            source_variants=(
-                "Supplier Name",
-                "nunique",
-            ),
-            rows=(
-                "rows",
-                "sum",
-            ),
-            contracts=(
-                "contracts",
-                "sum",
-            ),
-            total_value=(
-                "total_value",
-                "sum",
-            ),
-        )
-        .reset_index()
-        .sort_values(
-            "total_value",
-            ascending=False,
-        )
-    )
-
-    variant_audit.to_csv(
-        audit_dir
-        / "supplier_group_variants.csv",
-        index=False,
-    )
-
-    # -------------------------------------------------------------
-    # AUDIT 3: suppliers not matched to reviewed families
-    #
-    # These are NOT dropped. They remain valid suppliers but are
-    # surfaced for future review.
-    # -------------------------------------------------------------
-
-    review_audit = (
-        supplier_mapping_audit.loc[
-            supplier_mapping_audit[
+    (
+        mapping.loc[
+            mapping[
                 "supplier_mapping_status"
             ].eq(
                 "review"
             )
         ]
-        .copy()
         .sort_values(
-            "total_value",
+            "value",
             ascending=False,
+        )
+        .to_csv(
+            audit_dir
+            / "supplier_review_queue.csv",
+            index=False,
         )
     )
 
-    review_audit.to_csv(
-        audit_dir
-        / "supplier_review_queue.csv",
-        index=False,
-    )
+    # -------------------------------------------------------------------------
+    # ABN variant audit.
+    #
+    # ABN is evidence only; this does NOT change supplier_group.
+    # -------------------------------------------------------------------------
 
-    # -------------------------------------------------------------
-    # AUDIT 4: ABN groups with multiple source names
-    # -------------------------------------------------------------
-
-    multi_name_abn = (
-        supplier_mapping_audit.loc[
-            supplier_mapping_audit[
-                "supplier_abn_normalized"
-            ]
-            .astype(str)
-            .str.fullmatch(
-                r"\d{11}",
-                na=False,
-            )
-        ]
-        .groupby(
+    abn_rows = mapping.loc[
+        mapping[
             "supplier_abn_normalized"
-        )
-        .agg(
-            raw_name_count=(
-                "Supplier Name",
-                "nunique",
-            ),
-            canonical_group_count=(
-                "supplier_group",
-                "nunique",
-            ),
-            raw_names=(
-                "Supplier Name",
-                lambda s: " | ".join(
-                    sorted(
-                        {
-                            str(v).strip()
-                            for v in s
-                            if str(v).strip()
-                        }
-                    )
+        ].ne("")
+    ].copy()
+
+    if not abn_rows.empty:
+
+        abn_variants = (
+            abn_rows
+            .groupby(
+                "supplier_abn_normalized",
+                dropna=False,
+            )
+            .agg(
+                supplier_names=(
+                    "Supplier Name",
+                    lambda values: " | ".join(
+                        sorted(
+                            {
+                                clean_text(v)
+                                for v in values
+                                if clean_text(v)
+                            }
+                        )
+                    ),
                 ),
-            ),
-            canonical_groups=(
-                "supplier_group",
-                lambda s: " | ".join(
-                    sorted(
-                        {
-                            str(v).strip()
-                            for v in s
-                            if str(v).strip()
-                        }
-                    )
+                supplier_groups=(
+                    "supplier_group",
+                    lambda values: " | ".join(
+                        sorted(
+                            {
+                                clean_text(v)
+                                for v in values
+                                if clean_text(v)
+                            }
+                        )
+                    ),
                 ),
-            ),
-            total_value=(
-                "total_value",
-                "sum",
-            ),
+                raw_name_count=(
+                    "Supplier Name",
+                    "nunique",
+                ),
+                canonical_group_count=(
+                    "supplier_group",
+                    "nunique",
+                ),
+                value=(
+                    "value",
+                    "sum",
+                ),
+            )
+            .reset_index()
+            .sort_values(
+                "value",
+                ascending=False,
+            )
         )
-        .reset_index()
-    )
 
-    multi_name_abn = (
-        multi_name_abn.loc[
-            multi_name_abn[
-                "raw_name_count"
-            ] > 1
-        ]
-        .sort_values(
-            "total_value",
-            ascending=False,
+        abn_variants.to_csv(
+            audit_dir
+            / "supplier_abn_variants.csv",
+            index=False,
         )
-    )
 
-    multi_name_abn.to_csv(
-        audit_dir
-        / "supplier_abn_name_variants.csv",
-        index=False,
-    )
-
-    # Remove internal helper column only.
-    out.drop(
-        columns=[
-            "_supplier_reviewed_name_group",
-        ],
-        errors="ignore",
-        inplace=True,
-    )
+        (
+            abn_variants.loc[
+                abn_variants[
+                    "canonical_group_count"
+                ].gt(1)
+            ]
+            .to_csv(
+                audit_dir
+                / "supplier_abn_review_queue.csv",
+                index=False,
+            )
+        )
 
     return out
 
 
 # =============================================================================
-# DERIVED FIELDS
+# DERIVED SHARED FIELDS
 # =============================================================================
 
 def financial_year_label(
@@ -1676,9 +1091,7 @@ def add_derived_fields(
 
     out = df.copy()
 
-    out[
-        "Value (AUD)"
-    ] = out[
+    out["Value (AUD)"] = out[
         "Value"
     ]
 
@@ -1770,9 +1183,9 @@ def main() -> None:
         exist_ok=True,
     )
 
-    # -----------------------------------------------------------------
-    # Baseline
-    # -----------------------------------------------------------------
+    # -------------------------------------------------------------------------
+    # Bronze inputs
+    # -------------------------------------------------------------------------
 
     print(
         "Loading historical baseline: "
@@ -1792,24 +1205,20 @@ def main() -> None:
         baseline
     ]
 
-    manifest_rows = [
+    manifest = [
         {
             "source_kind": "baseline",
             "source_file": baseline_path.name,
-            "rows_loaded": int(
+            "rows": int(
                 len(baseline)
             ),
-            "value_loaded": float(
+            "value": float(
                 baseline[
                     "Value"
                 ].sum()
             ),
         }
     ]
-
-    # -----------------------------------------------------------------
-    # Monthly extracts
-    # -----------------------------------------------------------------
 
     monthly_files = (
         sorted(
@@ -1822,43 +1231,37 @@ def main() -> None:
     )
 
     print(
-        "Monthly Financial Year Analysis files found: "
+        "Monthly FYA files found: "
         f"{len(monthly_files)}"
     )
 
     for path in monthly_files:
 
         print(
-            "Loading monthly export: "
+            f"Loading monthly extract: "
             f"{path}"
         )
 
-        monthly = read_monthly_csv(
+        frame = read_monthly(
             path
         )
 
         frames.append(
-            monthly
+            frame
         )
 
-        manifest_rows.append(
-            {
-                "source_kind": "monthly",
-                "source_file": path.name,
-                "rows_loaded": int(
-                    len(monthly)
-                ),
-                "value_loaded": float(
-                    monthly[
-                        "Value"
-                    ].sum()
-                ),
-            }
-        )
-
-    # -----------------------------------------------------------------
-    # Concatenate
-    # -----------------------------------------------------------------
+        manifest.append({
+            "source_kind": "monthly",
+            "source_file": path.name,
+            "rows": int(
+                len(frame)
+            ),
+            "value": float(
+                frame[
+                    "Value"
+                ].sum()
+            ),
+        })
 
     combined_all = pd.concat(
         frames,
@@ -1870,114 +1273,116 @@ def main() -> None:
         combined_all
     )
 
+    value_before = float(
+        combined_all[
+            "Value"
+        ].sum()
+    )
+
+    print()
     print(
-        "Rows before CN reconciliation: "
+        f"Rows before exact-CN dedupe: "
         f"{rows_before:,}"
     )
 
-    # -----------------------------------------------------------------
-    # CN reconciliation
-    # -----------------------------------------------------------------
+    print(
+        f"Value before exact-CN dedupe: "
+        f"${value_before:,.2f}"
+    )
 
-    current = reconcile_current_contracts(
-        combined_all,
-        audit_dir,
+    # -------------------------------------------------------------------------
+    # Silver: dedupe only exact CN IDs
+    # -------------------------------------------------------------------------
+
+    combined = (
+        deduplicate_exact_cn_versions(
+            combined_all,
+            audit_dir,
+        )
     )
 
     print(
-        "Rows after CN reconciliation: "
-        f"{len(current):,}"
+        f"Rows after exact-CN dedupe: "
+        f"{len(combined):,}"
     )
 
-    # -----------------------------------------------------------------
+    print(
+        "Amendment CNs remain separate."
+    )
+
+    # -------------------------------------------------------------------------
+    # Add amendment/version metadata
+    # -------------------------------------------------------------------------
+
+    combined = (
+        add_contract_version_metadata(
+            combined
+        )
+    )
+
+    # -------------------------------------------------------------------------
     # Shared supplier identity
-    # -----------------------------------------------------------------
+    # -------------------------------------------------------------------------
 
     print(
-        "Applying shared ATLAS supplier identity..."
+        "Applying shared supplier grouping..."
     )
 
-    current = add_shared_supplier_identity(
-        current,
+    combined = add_supplier_identity(
+        combined,
         audit_dir,
     )
 
-    mapped_rows = int(
-        current[
-            "supplier_mapping_status"
-        ].eq(
-            "mapped"
-        ).sum()
+    # -------------------------------------------------------------------------
+    # Shared derived fields
+    # -------------------------------------------------------------------------
+
+    combined = add_derived_fields(
+        combined
     )
 
-    abn_grouped_rows = int(
-        current[
-            "supplier_mapping_status"
-        ].eq(
-            "abn_grouped"
-        ).sum()
-    )
+    # -------------------------------------------------------------------------
+    # Write Silver parquet
+    # -------------------------------------------------------------------------
 
-    review_rows = int(
-        current[
-            "supplier_mapping_status"
-        ].eq(
-            "review"
-        ).sum()
-    )
-
-    print(
-        f"Supplier mapped rows:      "
-        f"{mapped_rows:,}"
-    )
-
-    print(
-        f"Supplier ABN-grouped rows: "
-        f"{abn_grouped_rows:,}"
-    )
-
-    print(
-        f"Supplier review rows:      "
-        f"{review_rows:,}"
-    )
-
-    print(
-        "Canonical supplier groups: "
-        f"{current['supplier_group'].nunique():,}"
-    )
-
-    # -----------------------------------------------------------------
-    # Derived ATLAS fields
-    # -----------------------------------------------------------------
-
-    current = add_derived_fields(
-        current
-    )
-
-    # -----------------------------------------------------------------
-    # Write canonical combined parquet
-    # -----------------------------------------------------------------
-
-    current.to_parquet(
+    combined.to_parquet(
         output_path,
         index=False,
     )
 
-    # -----------------------------------------------------------------
-    # Ingestion manifest
-    # -----------------------------------------------------------------
-
     pd.DataFrame(
-        manifest_rows
+        manifest
     ).to_csv(
         audit_dir
         / "ingestion_manifest.csv",
         index=False,
     )
 
-    # -----------------------------------------------------------------
-    # Summary
-    # -----------------------------------------------------------------
+    mapped = int(
+        combined[
+            "supplier_mapping_status"
+        ]
+        .eq(
+            "mapped"
+        )
+        .sum()
+    )
+
+    review = int(
+        combined[
+            "supplier_mapping_status"
+        ]
+        .eq(
+            "review"
+        )
+        .sum()
+    )
+
+    accenture = combined[
+        combined[
+            "is_accenture"
+        ]
+    ]
 
     summary = {
         "baseline_rows": int(
@@ -1986,87 +1391,35 @@ def main() -> None:
         "monthly_files": int(
             len(monthly_files)
         ),
-        "rows_before_reconciliation": int(
+        "rows_before_exact_cn_dedupe": int(
             rows_before
         ),
-        "rows_after_reconciliation": int(
-            len(current)
+        "rows_after_exact_cn_dedupe": int(
+            len(combined)
         ),
-        "superseded_rows": int(
+        "removed_exact_duplicate_cn_rows": int(
             rows_before
-            - len(current)
-        ),
-        "unique_cn_roots": int(
-            current[
-                "CN Root ID"
-            ]
-            .replace(
-                "",
-                pd.NA,
-            )
-            .nunique()
+            - len(combined)
         ),
         "total_value": float(
-            current[
+            combined[
                 "Value"
             ].sum()
         ),
-        "canonical_supplier_groups": int(
-            current[
+        "supplier_groups": int(
+            combined[
                 "supplier_group"
             ].nunique()
         ),
-        "supplier_mapped_rows": (
-            mapped_rows
-        ),
-        "supplier_abn_grouped_rows": (
-            abn_grouped_rows
-        ),
-        "supplier_review_rows": (
-            review_rows
-        ),
+        "mapped_supplier_rows": mapped,
+        "supplier_review_rows": review,
         "accenture_rows": int(
-            current[
-                "is_accenture"
-            ].sum()
+            len(accenture)
         ),
         "accenture_value": float(
-            current.loc[
-                current[
-                    "is_accenture"
-                ],
-                "Value",
+            accenture[
+                "Value"
             ].sum()
-        ),
-        "division_populated_rows": int(
-            current[
-                "Agency Division"
-            ]
-            .fillna("")
-            .astype(str)
-            .str.strip()
-            .ne("")
-            .sum()
-        ),
-        "branch_populated_rows": int(
-            current[
-                "Agency Branch"
-            ]
-            .fillna("")
-            .astype(str)
-            .str.strip()
-            .ne("")
-            .sum()
-        ),
-        "category_type_populated_rows": int(
-            current[
-                "Category Type"
-            ]
-            .fillna("")
-            .astype(str)
-            .str.strip()
-            .ne("")
-            .sum()
         ),
         "output": str(
             output_path
@@ -2085,41 +1438,42 @@ def main() -> None:
         encoding="utf-8",
     )
 
-    # -----------------------------------------------------------------
-    # Console summary
-    # -----------------------------------------------------------------
-
     print()
     print(
-        "============================================"
+        "========================================="
     )
 
     print(
-        "ATLAS Financial Year Analysis combine complete"
+        "ATLAS SHARED SILVER BUILD COMPLETE"
     )
 
     print(
-        "============================================"
+        "========================================="
     )
 
     print(
-        f"Current rows: "
-        f"{len(current):,}"
+        f"Rows: "
+        f"{len(combined):,}"
     )
 
     print(
-        f"Superseded rows: "
-        f"{rows_before - len(current):,}"
-    )
-
-    print(
-        f"Current value: "
-        f"${current['Value'].sum():,.2f}"
+        f"Value: "
+        f"${summary['total_value']:,.2f}"
     )
 
     print(
         f"Supplier groups: "
-        f"{summary['canonical_supplier_groups']:,}"
+        f"{summary['supplier_groups']:,}"
+    )
+
+    print(
+        f"Reviewed supplier rows: "
+        f"{mapped:,}"
+    )
+
+    print(
+        f"Supplier review rows: "
+        f"{review:,}"
     )
 
     print(
@@ -2128,49 +1482,17 @@ def main() -> None:
     )
 
     print(
-        "Accenture value: "
+        f"Accenture value: "
         f"${summary['accenture_value']:,.2f}"
-    )
-
-    print(
-        f"Division populated: "
-        f"{summary['division_populated_rows']:,}"
-    )
-
-    print(
-        f"Branch populated: "
-        f"{summary['branch_populated_rows']:,}"
-    )
-
-    print(
-        f"Category Type populated: "
-        f"{summary['category_type_populated_rows']:,}"
-    )
-
-    print()
-    print(
-        "Supplier audits:"
-    )
-
-    print(
-        f"  {audit_dir / 'supplier_identity_mapping.csv'}"
-    )
-
-    print(
-        f"  {audit_dir / 'supplier_group_variants.csv'}"
-    )
-
-    print(
-        f"  {audit_dir / 'supplier_review_queue.csv'}"
-    )
-
-    print(
-        f"  {audit_dir / 'supplier_abn_name_variants.csv'}"
     )
 
     print()
     print(
         f"Wrote: {output_path}"
+    )
+
+    print(
+        "========================================="
     )
 
 
