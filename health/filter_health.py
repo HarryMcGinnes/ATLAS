@@ -8,72 +8,75 @@ from pathlib import Path
 import pandas as pd
 
 
-AGENCY_COL = "Agency"
-RAW_AGENCY_COL = "Agency Raw"
-AGENCY_GROUP_COL = "agency_group"
-VALUE_COL = "Value"
-CN_ID_COL = "CN ID"
-
-
-# ============================================================
-# HEALTH AGENCY SCOPE
-# ============================================================
+# =============================================================================
+# HEALTH MARKET SCOPE
+# =============================================================================
 #
-# These aliases are intentionally longitudinal.
-# Historical Department names are mapped into stable reporting
-# labels so Health spend is not split by machinery-of-government
-# changes.
+# Historical Health portfolio agency names are retained in Agency Raw and rolled
+# into stable reporting groups.
 #
-# This stage ONLY scopes the Health population.
-# It does NOT classify addressability or Service Offering.
-# ============================================================
+# This file ONLY:
+#   - selects the Health market
+#   - preserves all incoming Silver columns
+#   - adds canonical Health agency grouping
+#   - inherits shared supplier identity
+#
+# It DOES NOT:
+#   - classify addressability
+#   - classify Service Offering
+#   - rebuild supplier identity
+# =============================================================================
 
 HEALTH_AGENCY_ALIASES = {
-    "department of health": (
-        "Department of Health, Disability and Ageing"
-    ),
-    "department of health and aged care": (
-        "Department of Health, Disability and Ageing"
-    ),
-    "department of health disability and ageing": (
-        "Department of Health, Disability and Ageing"
-    ),
-    "department of health and aged care therapeutic goods administration": (
-        "Department of Health and Aged Care - "
-        "Therapeutic Goods Administration"
-    ),
-    "australian digital health agency": (
-        "Australian Digital Health Agency"
-    ),
-    "australian aged care quality agency": (
-        "Australian Aged Care Quality Agency"
-    ),
-    "australian institute of health and welfare": (
-        "Australian Institute of Health and Welfare"
-    ),
-    "department of social services": (
-        "Department of Social Services"
-    ),
-    "independent health and aged care pricing authority": (
-        "Independent Health and Aged Care Pricing Authority"
-    ),
-    "national health funding body": (
-        "National Health Funding Body"
-    ),
-    "national health and medical research council": (
-        "National Health and Medical Research Council"
-    ),
-    "organ and tissue authority": (
-        "Organ and Tissue Authority"
-    ),
+    "department of health":
+        "Department of Health, Disability and Ageing",
+
+    "department of health and aged care":
+        "Department of Health, Disability and Ageing",
+
+    "department of health disability and ageing":
+        "Department of Health, Disability and Ageing",
+
+    "department of health and aged care therapeutic goods administration":
+        "Department of Health and Aged Care - Therapeutic Goods Administration",
+
+    "australian digital health agency":
+        "Australian Digital Health Agency",
+
+    "australian aged care quality agency":
+        "Australian Aged Care Quality Agency",
+
+    "australian institute of health and welfare":
+        "Australian Institute of Health and Welfare",
+
+    "department of social services":
+        "Department of Social Services",
+
+    "independent health and aged care pricing authority":
+        "Independent Health and Aged Care Pricing Authority",
+
+    "national health funding body":
+        "National Health Funding Body",
+
+    "national health and medical research council":
+        "National Health and Medical Research Council",
+
+    "organ and tissue authority":
+        "Organ and Tissue Authority",
 }
 
 
+# =============================================================================
+# CLI
+# =============================================================================
+
 def parse_args() -> argparse.Namespace:
+
     parser = argparse.ArgumentParser(
         description=(
-            "Filter the shared ATLAS AusTender dataset "
-            "to the Health market."
+            "Filter the shared ATLAS Silver AusTender dataset "
+            "to the Health market while preserving all source "
+            "and shared-normalisation columns."
         )
     )
 
@@ -85,14 +88,13 @@ def parse_args() -> argparse.Namespace:
         ),
     )
 
-    # Kept for backwards compatibility with the current workflow.
-    # The canonical Health scope is defined in this script.
+    # Retained so the existing workflow/CLI remains compatible.
     parser.add_argument(
         "--agency-config",
         default=None,
         help=(
-            "Compatibility option. The canonical Health "
-            "agency aliases are defined in this script."
+            "Compatibility option. Canonical longitudinal "
+            "Health agency scope is defined in this script."
         ),
     )
 
@@ -106,44 +108,69 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--audit-dir",
-        default="audits/austender/health",
+        default=(
+            "audits/austender/health"
+        ),
     )
 
     return parser.parse_args()
 
 
-def clean(value: object) -> str:
+# =============================================================================
+# HELPERS
+# =============================================================================
+
+def clean_text(value: object) -> str:
+
     if value is None or pd.isna(value):
         return ""
-
-    text = (
-        str(value)
-        .lower()
-        .replace("&", " and ")
-    )
-
-    text = re.sub(
-        r"[^a-z0-9+#./ -]+",
-        " ",
-        text,
-    )
 
     return re.sub(
         r"\s+",
         " ",
-        text,
-    ).strip()
-
-
-def canonical_agency_name(
-    value: object,
-) -> str | None:
-    return HEALTH_AGENCY_ALIASES.get(
-        clean(value)
+        str(value)
+        .replace("\u00a0", " ")
+        .strip(),
     )
 
 
+def normalise_agency(
+    value: object,
+) -> str:
+
+    return (
+        clean_text(value)
+        .lower()
+    )
+
+
+def choose_agency_column(
+    df: pd.DataFrame,
+) -> str:
+
+    candidates = [
+        "Agency",
+        "01. Agency Name",
+    ]
+
+    for column in candidates:
+
+        if column in df.columns:
+            return column
+
+    raise RuntimeError(
+        "Shared Silver dataset does not contain an "
+        "Agency field. Expected either 'Agency' or "
+        "'01. Agency Name'."
+    )
+
+
+# =============================================================================
+# MAIN
+# =============================================================================
+
 def main() -> None:
+
     args = parse_args()
 
     input_path = Path(
@@ -159,8 +186,9 @@ def main() -> None:
     )
 
     if not input_path.exists():
+
         raise SystemExit(
-            f"Shared AusTender parquet not found: "
+            "Shared ATLAS Silver dataset not found: "
             f"{input_path}"
         )
 
@@ -175,7 +203,7 @@ def main() -> None:
     )
 
     print(
-        f"Loading shared AusTender dataset: "
+        "Loading shared ATLAS Silver dataset: "
         f"{input_path}"
     )
 
@@ -183,162 +211,441 @@ def main() -> None:
         input_path
     )
 
-    if AGENCY_COL not in df.columns:
+    if df.empty:
+
         raise RuntimeError(
-            f"Shared dataset is missing "
-            f"required column: {AGENCY_COL}"
+            "Shared Silver dataset contains zero rows."
         )
 
-    raw_agency = df[
-        AGENCY_COL
-    ].copy()
-
-    canonical = raw_agency.map(
-        canonical_agency_name
+    input_rows = len(
+        df
     )
 
-    mask = canonical.notna()
+    if "Value" not in df.columns:
 
-    health = df.loc[
-        mask
+        raise RuntimeError(
+            "Shared Silver dataset is missing Value."
+        )
+
+    df[
+        "Value"
+    ] = pd.to_numeric(
+        df[
+            "Value"
+        ],
+        errors="coerce",
+    ).fillna(0)
+
+    input_value = float(
+        df[
+            "Value"
+        ].sum()
+    )
+
+    agency_column = (
+        choose_agency_column(
+            df
+        )
+    )
+
+    print(
+        f"Using agency field: "
+        f"{agency_column}"
+    )
+
+    # =========================================================================
+    # Preserve incoming agency
+    # =========================================================================
+
+    out = df.copy()
+
+    if "Agency Raw" not in out.columns:
+
+        out[
+            "Agency Raw"
+        ] = out[
+            agency_column
+        ]
+
+    out[
+        "_agency_normalised"
+    ] = out[
+        agency_column
+    ].map(
+        normalise_agency
+    )
+
+    # =========================================================================
+    # Health scope
+    # =========================================================================
+
+    health_mask = out[
+        "_agency_normalised"
+    ].isin(
+        HEALTH_AGENCY_ALIASES.keys()
+    )
+
+    health = out.loc[
+        health_mask
     ].copy()
 
     if health.empty:
+
         raise RuntimeError(
-            "Health agency scope returned zero rows."
+            "Health filter produced zero rows."
         )
 
-    health[
-        RAW_AGENCY_COL
-    ] = raw_agency.loc[
-        health.index
-    ]
+    # =========================================================================
+    # Stable Health reporting agency
+    # =========================================================================
 
     health[
-        AGENCY_GROUP_COL
-    ] = canonical.loc[
-        health.index
-    ].astype(str)
-
-    health[
-        AGENCY_COL
+        "agency_group"
     ] = health[
-        AGENCY_GROUP_COL
+        "_agency_normalised"
+    ].map(
+        HEALTH_AGENCY_ALIASES
+    )
+
+    # Friendly Agency is the canonical reporting label.
+    #
+    # Original 01. Agency Name remains untouched.
+    health[
+        "Agency"
+    ] = health[
+        "agency_group"
     ]
 
     health[
-        "Health Portfolio Scope"
+        "is_health_scope"
     ] = True
 
-    if VALUE_COL in health.columns:
+    health[
+        "atlas_market"
+    ] = "Health"
+
+    health.drop(
+        columns=[
+            "_agency_normalised",
+        ],
+        errors="ignore",
+        inplace=True,
+    )
+
+    # =========================================================================
+    # Shared supplier identity must already exist
+    # =========================================================================
+
+    required_shared_fields = [
+        "supplier_group",
+        "is_accenture",
+    ]
+
+    missing_shared = [
+        column
+        for column
+        in required_shared_fields
+        if column not in health.columns
+    ]
+
+    if missing_shared:
+
+        raise RuntimeError(
+            "Health filter expected supplier identity "
+            "from the shared Silver layer. Missing: "
+            + ", ".join(
+                missing_shared
+            )
+        )
+
+    blank_supplier = (
         health[
-            VALUE_COL
-        ] = pd.to_numeric(
-            health[VALUE_COL],
-            errors="coerce",
-        ).fillna(0)
+            "supplier_group"
+        ]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .eq("")
+    )
+
+    if blank_supplier.any():
+
+        raise RuntimeError(
+            "Health Silver contains "
+            f"{int(blank_supplier.sum()):,} "
+            "rows with blank supplier_group."
+        )
+
+    # =========================================================================
+    # Health values
+    # =========================================================================
+
+    health[
+        "Value"
+    ] = pd.to_numeric(
+        health[
+            "Value"
+        ],
+        errors="coerce",
+    ).fillna(0)
+
+    health_value = float(
+        health[
+            "Value"
+        ].sum()
+    )
+
+    # =========================================================================
+    # Agency scope audit
+    # =========================================================================
+
+    agency_audit = (
+        health
+        .groupby(
+            [
+                "Agency Raw",
+                "agency_group",
+            ],
+            dropna=False,
+        )
+        .agg(
+            rows=(
+                "Value",
+                "size",
+            ),
+            value=(
+                "Value",
+                "sum",
+            ),
+        )
+        .reset_index()
+        .sort_values(
+            "value",
+            ascending=False,
+        )
+    )
+
+    if "CN ID" in health.columns:
+
+        contracts = (
+            health
+            .groupby(
+                [
+                    "Agency Raw",
+                    "agency_group",
+                ],
+                dropna=False,
+            )[
+                "CN ID"
+            ]
+            .nunique()
+            .rename(
+                "contracts"
+            )
+            .reset_index()
+        )
+
+        agency_audit = (
+            agency_audit
+            .merge(
+                contracts,
+                on=[
+                    "Agency Raw",
+                    "agency_group",
+                ],
+                how="left",
+            )
+        )
+
+    agency_audit.to_csv(
+        audit_dir
+        / "health_agency_scope.csv",
+        index=False,
+    )
+
+    # =========================================================================
+    # Supplier summary
+    # =========================================================================
+
+    supplier_audit = (
+        health
+        .groupby(
+            "supplier_group",
+            dropna=False,
+        )
+        .agg(
+            rows=(
+                "Value",
+                "size",
+            ),
+            value=(
+                "Value",
+                "sum",
+            ),
+        )
+        .reset_index()
+        .sort_values(
+            "value",
+            ascending=False,
+        )
+    )
+
+    if "CN ID" in health.columns:
+
+        supplier_contracts = (
+            health
+            .groupby(
+                "supplier_group",
+                dropna=False,
+            )[
+                "CN ID"
+            ]
+            .nunique()
+            .rename(
+                "contracts"
+            )
+            .reset_index()
+        )
+
+        supplier_audit = (
+            supplier_audit
+            .merge(
+                supplier_contracts,
+                on="supplier_group",
+                how="left",
+            )
+        )
+
+    supplier_audit.to_csv(
+        audit_dir
+        / "health_supplier_summary.csv",
+        index=False,
+    )
+
+    # =========================================================================
+    # Source agency inventory
+    #
+    # Useful when AusTender introduces a new Health agency name.
+    # =========================================================================
+
+    source_agencies = (
+        out
+        .groupby(
+            agency_column,
+            dropna=False,
+        )
+        .agg(
+            rows=(
+                "Value",
+                "size",
+            ),
+            value=(
+                "Value",
+                "sum",
+            ),
+        )
+        .reset_index()
+        .sort_values(
+            "value",
+            ascending=False,
+        )
+    )
+
+    source_agencies[
+        "currently_in_health_scope"
+    ] = (
+        source_agencies[
+            agency_column
+        ]
+        .map(
+            normalise_agency
+        )
+        .isin(
+            HEALTH_AGENCY_ALIASES.keys()
+        )
+    )
+
+    source_agencies.to_csv(
+        audit_dir
+        / "health_source_agency_inventory.csv",
+        index=False,
+    )
+
+    # =========================================================================
+    # Write wide Health Silver
+    # =========================================================================
 
     health.to_parquet(
         output_path,
         index=False,
     )
 
-    # ========================================================
-    # AUDIT: canonical Health agencies
-    # ========================================================
+    # =========================================================================
+    # Summary
+    # =========================================================================
 
-    if VALUE_COL in health.columns:
-        agency_summary = (
-            health
-            .groupby(
-                [
-                    RAW_AGENCY_COL,
-                    AGENCY_COL,
-                ],
-                dropna=False,
-            )
-            .agg(
-                rows=(
-                    CN_ID_COL,
-                    "size",
-                )
-                if CN_ID_COL in health.columns
-                else (
-                    VALUE_COL,
-                    "size",
-                ),
-                contracts=(
-                    CN_ID_COL,
-                    "nunique",
-                )
-                if CN_ID_COL in health.columns
-                else (
-                    VALUE_COL,
-                    "size",
-                ),
-                value=(
-                    VALUE_COL,
-                    "sum",
-                ),
-            )
-            .reset_index()
-            .sort_values(
-                "value",
-                ascending=False,
-            )
-        )
-
-    else:
-        agency_summary = (
-            health
-            .groupby(
-                [
-                    RAW_AGENCY_COL,
-                    AGENCY_COL,
-                ],
-                dropna=False,
-            )
-            .size()
-            .reset_index(
-                name="rows"
-            )
-        )
-
-    agency_summary.to_csv(
-        audit_dir
-        / "health_agency_scope_audit.csv",
-        index=False,
+    accenture_mask = (
+        health[
+            "is_accenture"
+        ]
+        .fillna(False)
+        .astype(bool)
     )
 
-    total_value = (
-        float(
-            health[
-                VALUE_COL
-            ].sum()
-        )
-        if VALUE_COL in health.columns
-        else None
+    accenture_value = float(
+        health.loc[
+            accenture_mask,
+            "Value",
+        ].sum()
     )
 
     summary = {
         "input_rows": int(
-            len(df)
+            input_rows
         ),
+
+        "input_value": (
+            input_value
+        ),
+
         "health_rows": int(
             len(health)
         ),
+
         "health_value": (
-            total_value
+            health_value
         ),
-        "canonical_agencies": sorted(
+
+        "health_supplier_groups": int(
             health[
-                AGENCY_COL
+                "supplier_group"
+            ].nunique()
+        ),
+
+        "accenture_rows": int(
+            accenture_mask.sum()
+        ),
+
+        "accenture_value": (
+            accenture_value
+        ),
+
+        "columns_preserved": int(
+            len(
+                health.columns
+            )
+        ),
+
+        "health_agencies": sorted(
+            health[
+                "agency_group"
             ]
             .dropna()
             .astype(str)
             .unique()
             .tolist()
         ),
+
         "output": str(
             output_path
         ),
@@ -356,14 +663,27 @@ def main() -> None:
         encoding="utf-8",
     )
 
+    # =========================================================================
+    # Console
+    # =========================================================================
+
     print()
+
     print(
-        "ATLAS Health raw filter complete."
+        "========================================"
     )
 
     print(
-        f"Input rows:  "
-        f"{len(df):,}"
+        "ATLAS HEALTH SILVER FILTER COMPLETE"
+    )
+
+    print(
+        "========================================"
+    )
+
+    print(
+        f"Input rows: "
+        f"{input_rows:,}"
     )
 
     print(
@@ -371,23 +691,54 @@ def main() -> None:
         f"{len(health):,}"
     )
 
-    if total_value is not None:
+    print(
+        f"Health value: "
+        f"${health_value:,.2f}"
+    )
+
+    print(
+        f"Health supplier groups: "
+        f"{summary['health_supplier_groups']:,}"
+    )
+
+    print(
+        f"Accenture rows: "
+        f"{summary['accenture_rows']:,}"
+    )
+
+    print(
+        f"Accenture value: "
+        f"${accenture_value:,.2f}"
+    )
+
+    print(
+        f"Columns retained: "
+        f"{summary['columns_preserved']:,}"
+    )
+
+    print()
+
+    print(
+        "Health reporting agencies:"
+    )
+
+    for agency in summary[
+        "health_agencies"
+    ]:
+
         print(
-            f"Health procurement: "
-            f"A${total_value / 1e9:,.2f}B"
+            f"  - {agency}"
         )
 
+    print()
+
     print(
-        f"Wrote: {output_path}"
+        f"Wrote: "
+        f"{output_path}"
     )
 
     print(
-        "Audit:"
-    )
-
-    print(
-        audit_dir
-        / "health_agency_scope_audit.csv"
+        "========================================"
     )
 
 
