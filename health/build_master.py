@@ -1232,347 +1232,121 @@ def export_audits(
 # ============================================================
 
 def main() -> None:
-
     run_regression_checks()
-
     args = parse_args()
-
-    input_path = Path(
-        args.input
-    )
-
-    output_dir = Path(
-        args.output_dir
-    )
-
-    audit_dir = Path(
-        args.audit_dir
-    )
-
-    output_path = (
-        output_dir
-        / "master_health_contracts.parquet"
-    )
-
+    input_path = Path(args.input)
+    output_dir = Path(args.output_dir)
+    audit_dir = Path(args.audit_dir)
+    output_path = output_dir / "master_health_contracts.parquet"
     if not input_path.exists():
-        raise SystemExit(
-            f"Health raw dataset not found: "
-            f"{input_path}"
-        )
+        raise SystemExit(f"Health Silver dataset not found: {input_path}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    audit_dir.mkdir(parents=True, exist_ok=True)
 
-    output_dir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    audit_dir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    print(
-        f"1/5 Loading Health raw dataset: "
-        f"{input_path}"
-    )
-
-    health = pd.read_parquet(
-        input_path
-    )
-
-    required = {
-        AGENCY,
-        DESCRIPTION,
-        CATEGORY,
-        CATEGORY_TYPE,
-        VALUE,
-        SUPPLIER_NAME,
-    }
-
-    missing = sorted(
-        required
-        - set(
-            health.columns
-        )
-    )
-
+    print(f"1/5 Loading Health Silver dataset: {input_path}")
+    health = pd.read_parquet(input_path)
+    required = {CN_ID, AGENCY, DESCRIPTION, CATEGORY, CATEGORY_TYPE,
+                VALUE, SUPPLIER_NAME, SUPPLIER_GROUP_COL, "is_accenture"}
+    missing = sorted(required - set(health.columns))
     if missing:
-        raise RuntimeError(
-            "Health raw dataset missing: "
-            + ", ".join(
-                missing
-            )
-        )
+        raise RuntimeError("Health Silver dataset missing: " + ", ".join(missing))
+    if health.empty:
+        raise RuntimeError("Health Silver dataset is empty")
+    if not health.index.is_unique:
+        health = health.reset_index(drop=True)
+    original_columns = list(health.columns)
+    original_rows = len(health)
+    original_value = pd.to_numeric(health[VALUE], errors="coerce").fillna(0).sum()
+    health[VALUE] = pd.to_numeric(health[VALUE], errors="coerce").fillna(0)
+    incoming_groups = health[SUPPLIER_GROUP_COL].copy()
+    incoming_accenture = health["is_accenture"].copy()
+    if incoming_groups.isna().any() or incoming_groups.astype(str).str.strip().eq("").any():
+        raise RuntimeError("Shared Silver contains blank supplier_group")
+    if not pd.api.types.is_bool_dtype(incoming_accenture):
+        normalized = incoming_accenture.astype(str).str.strip().str.lower()
+        if not normalized.isin(["true", "false"]).all():
+            raise RuntimeError("is_accenture must be a boolean from shared Silver")
+        health["is_accenture"] = normalized.eq("true")
+    if not health["is_accenture"].eq(health[SUPPLIER_GROUP_COL].eq("Accenture")).all():
+        raise RuntimeError("Shared Silver supplier_group / is_accenture disagreement")
+    print(f"Health Silver rows: {original_rows:,}; columns: {len(original_columns):,}")
+    print("2/5 Preserving shared supplier identity (no regrouping)")
 
-    health[
-        VALUE
-    ] = pd.to_numeric(
-        health[
-            VALUE
-        ],
-        errors="coerce",
-    ).fillna(0)
-
-    print(
-        "2/5 Consolidating suppliers"
-    )
-
-    health = add_supplier_grouping(
-        health
-    )
-
-    print(
-        "3/5 Applying addressability"
-    )
-
-    addressability = pd.DataFrame(
-        [
-            classify_addressability(
-                row
-            )
-            for _, row
-            in health.iterrows()
-        ],
+    print("3/5 Applying Health POC addressability rules")
+    addr = pd.DataFrame(
+        [classify_addressability(row) for _, row in health.iterrows()],
         index=health.index,
     )
-
-    health = pd.concat(
-        [
-            health,
-            addressability,
-        ],
-        axis=1,
-    )
-
-    health = (
-        enforce_accenture_addressability(
-            health
-        )
-    )
-
-    print(
-        "4/5 Applying Service Offering"
-    )
-
-    service_offering = pd.DataFrame(
-        [
-            classify_service_offering(
-                row
-            )
-            for _, row
-            in health.iterrows()
-        ],
-        index=health.index,
-    )
-
-    for column in (
-        service_offering.columns
-    ):
-
+    for column in addr.columns:
         if column in health.columns:
-            health = health.drop(
-                columns=[
-                    column
-                ]
-            )
+            health = health.drop(columns=[column])
+    health = pd.concat([health, addr], axis=1)
+    health = enforce_accenture_addressability(health)
 
-    health = pd.concat(
-        [
-            health,
-            service_offering,
-        ],
-        axis=1,
+    print("4/5 Applying Health POC Service Offering rules")
+    offerings = pd.DataFrame(
+        [classify_service_offering(row) for _, row in health.iterrows()],
+        index=health.index,
+    )
+    for column in offerings.columns:
+        if column in health.columns:
+            health = health.drop(columns=[column])
+    health = pd.concat([health, offerings], axis=1)
+    health["classification_review_required"] = (
+        pd.to_numeric(health["addressability_confidence"], errors="coerce").fillna(0).lt(85)
+        | (health["is_addressable"].astype(bool) & (
+            pd.to_numeric(health["service_offering_confidence"], errors="coerce").fillna(0).lt(85)
+            | health["Service Offering"].isna()
+        ))
     )
 
-    # Non-addressable rows must never carry a SO.
-    invalid = (
-        ~health[
-            "is_addressable"
-        ]
-        .fillna(False)
-        .astype(bool)
-        & health[
-            "Service Offering"
-        ].notna()
+    if len(health) != original_rows:
+        raise RuntimeError("Health enrichment changed the Silver row count")
+    if abs(float(health[VALUE].sum() - original_value)) > 0.01:
+        raise RuntimeError("Health enrichment changed total procurement value")
+    for column in original_columns:
+        if column not in health.columns:
+            raise RuntimeError(f"Silver column lost during enrichment: {column}")
+    if not health[SUPPLIER_GROUP_COL].equals(incoming_groups):
+        raise RuntimeError("Health enrichment changed shared supplier_group")
+    if not health["is_accenture"].equals(incoming_accenture.astype(bool)):
+        raise RuntimeError("Health enrichment changed shared is_accenture")
+    if (health["is_accenture"] & ~health["is_addressable"]).any():
+        raise RuntimeError("Observed Accenture win is not addressable")
+    if (~health["is_addressable"] & health["Service Offering"].notna()).any():
+        raise RuntimeError("Non-addressable Health contract received Service Offering")
+
+    print("5/5 Writing wide Health Gold master and audits")
+    health.to_parquet(output_path, index=False)
+    export_audits(health, audit_dir)
+    addressable = health.loc[health["is_addressable"]]
+    acc = health.loc[health["is_accenture"]]
+    unresolved = addressable.loc[addressable["Service Offering"].isna()]
+    summary = {
+        "health_rows": int(len(health)),
+        "silver_columns_preserved": len(original_columns),
+        "gold_columns": len(health.columns),
+        "total_health_procurement": float(health[VALUE].sum()),
+        "addressable_tam": float(addressable[VALUE].sum()),
+        "accenture_wins": float(acc[VALUE].sum()),
+        "addressable_rows": int(len(addressable)),
+        "unresolved_service_offering_rows": int(len(unresolved)),
+        "supplier_groups": int(health[SUPPLIER_GROUP_COL].nunique()),
+        "output": str(output_path),
+    }
+    (audit_dir / "health_master_summary.json").write_text(
+        json.dumps(summary, indent=2), encoding="utf-8"
     )
-
-    if invalid.any():
-        raise RuntimeError(
-            "Invariant failed: "
-            f"{int(invalid.sum()):,} "
-            "non-addressable Health rows "
-            "received a Service Offering."
-        )
-
-    health[
-        "classification_review_required"
-    ] = (
-        pd.to_numeric(
-            health[
-                "addressability_confidence"
-            ],
-            errors="coerce",
-        )
-        .fillna(0)
-        .lt(85)
-        |
-        (
-            health[
-                "is_addressable"
-            ]
-            .fillna(False)
-            .astype(bool)
-            &
-            (
-                pd.to_numeric(
-                    health[
-                        "service_offering_confidence"
-                    ],
-                    errors="coerce",
-                )
-                .fillna(0)
-                .lt(85)
-                |
-                health[
-                    "Service Offering"
-                ].isna()
-            )
-        )
-    )
-
-    print(
-        "5/5 Writing Health master"
-    )
-
-    health.to_parquet(
-        output_path,
-        index=False,
-    )
-
-    export_audits(
-        health,
-        audit_dir,
-    )
-
-    addressable = health[
-        health[
-            "is_addressable"
-        ]
-        .fillna(False)
-        .astype(bool)
-    ]
-
-    health_total = float(
-        health[
-            VALUE
-        ].sum()
-    )
-
-    tam = float(
-        addressable[
-            VALUE
-        ].sum()
-    )
-
-    acc = health[
-        health[
-            "is_accenture"
-        ]
-        .fillna(False)
-        .astype(bool)
-    ]
-
-    acc_total = float(
-        acc[
-            VALUE
-        ].sum()
-    )
-
-    acc_addressable = float(
-        acc.loc[
-            acc[
-                "is_addressable"
-            ]
-            .fillna(False)
-            .astype(bool),
-            VALUE,
-        ].sum()
-    )
-
-    if abs(
-        acc_total
-        - acc_addressable
-    ) > 0.01:
-        raise RuntimeError(
-            "Accenture addressability invariant "
-            "failed."
-        )
-
-    unresolved = addressable[
-        addressable[
-            "Service Offering"
-        ].isna()
-    ]
-
-    print()
-    print(
-        "=" * 72
-    )
-
-    print(
-        "ATLAS HEALTH MASTER COMPLETE"
-    )
-
-    print(
-        "=" * 72
-    )
-
-    print(
-        f"Health rows: "
-        f"{len(health):,}"
-    )
-
-    print(
-        f"Total Health procurement: "
-        f"A${health_total / 1e9:,.2f}B"
-    )
-
-    print(
-        f"Addressable TAM: "
-        f"A${tam / 1e9:,.2f}B"
-    )
-
-    print(
-        f"Addressable share: "
-        f"{tam / health_total * 100 if health_total else 0:.1f}%"
-    )
-
-    print(
-        f"Accenture observed wins: "
-        f"A${acc_total / 1e9:,.3f}B"
-    )
-
-    print(
-        f"Addressable rows: "
-        f"{len(addressable):,}"
-    )
-
-    print(
-        f"Unresolved Service Offering: "
-        f"{len(unresolved):,}"
-    )
-
-    print(
-        f"Master: {output_path}"
-    )
-
-    print(
-        f"Audit: "
-        f"{audit_dir / 'health_classification_audit.csv'}"
-    )
-
-    print(
-        "=" * 72
-    )
+    print("=" * 64)
+    print("ATLAS HEALTH GOLD COMPLETE")
+    print(f"Health rows: {len(health):,}")
+    print(f"Columns: {len(original_columns):,} Silver -> {len(health.columns):,} Gold")
+    print(f"Total Health procurement: A${summary['total_health_procurement']/1e9:,.3f}B")
+    print(f"Addressable TAM: A${summary['addressable_tam']/1e9:,.3f}B")
+    print(f"Accenture addressable wins: A${summary['accenture_wins']/1e9:,.3f}B")
+    print(f"Unresolved Service Offering: {len(unresolved):,}")
+    print(f"Wrote: {output_path}")
+    print("=" * 64)
 
 
 if __name__ == "__main__":
