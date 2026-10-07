@@ -189,6 +189,8 @@ SEVEN_DOMAINS = {
     "Cyber",
     "Space",
     "Capability Enabler",
+    "Joint/Enterprise",
+    "Other",
     "Unmapped",
 }
 
@@ -311,7 +313,17 @@ def load_master_dataset(path: Path) -> pd.DataFrame:
         out["is_defence_scope"] = _parse_bool_series(out["is_defence_scope"])
         out = out[out["is_defence_scope"]].copy()
 
-    out["capability"] = out["capability"].fillna("Unclassified").astype(str)
+    # The Gold master is authoritative: no supplier regrouping or reclassification.
+    # Accept the current Gold schema while keeping the POC visualisation field.
+    if "Service Offering" in out.columns:
+        canonical_offering = out["Service Offering"].fillna("").astype(str).str.strip()
+        existing_offering = out["capability"].fillna("").astype(str).str.strip()
+        out["capability"] = canonical_offering.where(canonical_offering.ne(""), existing_offering)
+    elif "service_offering" in out.columns:
+        canonical_offering = out["service_offering"].fillna("").astype(str).str.strip()
+        existing_offering = out["capability"].fillna("").astype(str).str.strip()
+        out["capability"] = canonical_offering.where(canonical_offering.ne(""), existing_offering)
+    out["capability"] = out["capability"].fillna("Unclassified").replace("", "Unclassified").astype(str)
     out["ReinventionPartner"] = out["ReinventionPartner"].fillna("Unclassified").replace("", "Unclassified").astype(str)
     out["ReinventionEngine"] = out["ReinventionEngine"].fillna("Unclassified").replace("", "Unclassified").astype(str)
     out["supplier_group"] = out["supplier_group"].fillna("Unknown").replace("", "Unknown").astype(str)
@@ -334,8 +346,8 @@ def load_master_dataset(path: Path) -> pd.DataFrame:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", default="master_output/master_defence_contracts.parquet")
-    parser.add_argument("--output-dir", default="DefenceTAMDashboard_output")
+    parser.add_argument("--input", default="defence/data/processed/master_defence_contracts.parquet")
+    parser.add_argument("--output-dir", default="defence/dashboards/output")
     parser.add_argument(
         "--value-mode",
         choices=["total", "annualised"],
@@ -1952,6 +1964,11 @@ def export_classification_audit_outputs(df: pd.DataFrame, value_col: str, output
     """
     data = df.copy()
     data[value_col] = pd.to_numeric(data[value_col], errors="coerce").fillna(0)
+    for optional in ("service_line", "matched_terms", "generic_terms", "specific_terms", "detailed_capability"):
+        if optional not in data.columns:
+            data[optional] = ""
+    if "confidence" not in data.columns:
+        data["confidence"] = pd.to_numeric(data.get("service_offering_confidence", 0), errors="coerce").fillna(0) if "service_offering_confidence" in data.columns else 0
     data["capability"] = data.get("capability", "Unclassified")
     if "detailed_capability" not in data.columns:
         data["detailed_capability"] = "Unclassified"
