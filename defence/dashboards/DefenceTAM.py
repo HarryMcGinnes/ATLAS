@@ -3546,7 +3546,7 @@ def main() -> None:
 
     classified_path = output_dir / "dashboard_input_snapshot.csv"
     summary_path = output_dir / "market_summary.csv"
-    dashboard_path = output_dir / "AccentureDefenceTAMDashboard.html"
+    dashboard_path = output_dir / "TAMOverview.html"
 
     export_defence_scope_audit(df_all, df, value_col, output_dir)
     pd.DataFrame([summary]).to_csv(summary_path, index=False)
