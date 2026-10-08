@@ -41,6 +41,27 @@ jobs:
       - name: Validate Bronze
         run: python atlas/bronze/validate.py
 
+      - name: Build Silver Core
+        run: |
+          python atlas/silver/core/normalise.py \
+            --bronze-dir data/bronze/austender \
+            --output data/silver/core/austender_contracts.parquet
+
+      - name: Verify Silver Core
+        run: |
+          python - <<'PY'
+          import pandas as pd
+
+          path = "data/silver/core/austender_contracts.parquet"
+          df = pd.read_parquet(path)
+
+          assert len(df) > 0, "Silver Core is empty"
+          assert df["CN ID"].notna().any()
+          assert "supplier_group" in df.columns
+
+          print(f"Silver Core PASS: {len(df):,} rows")
+          PY
+
       - name: Upload Bronze artifacts
         uses: actions/upload-artifact@v4
         with:
