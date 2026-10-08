@@ -131,20 +131,7 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
     addressable_mask = parse_bool_series(df["is_addressable"])
     df = df.loc[addressable_mask].copy()
 
-    # Defensive TAM guardrail. The master classifier remains the source of truth, but
-    # the TAM explorer must never surface obvious clinical/product procurement if an
-    # older parquet was generated before the latest Health exclusions. Accenture rows
-    # are retained because observed Accenture wins are addressable by business rule.
-    desc = df.get(DESCRIPTION_COL, pd.Series("", index=df.index)).fillna("").astype(str).str.lower()
-    cat = df.get(CATEGORY_COL, pd.Series("", index=df.index)).fillna("").astype(str).str.lower()
-    supplier = df.get(SUPPLIER_GROUP_COL, df.get(RAW_SUPPLIER_COL, pd.Series("", index=df.index))).fillna("").astype(str)
-    is_accenture = supplier.str.contains(r"\baccenture\b", case=False, regex=True, na=False)
-    obvious_non_tam = (
-        desc.str.contains(r"\b(vaccine|vaccines|medicine|medicines|pharmaceutical|pharmaceuticals|medical products?|medical equipment|medical devices?|blood products?|plasma)\b", regex=True, na=False)
-        | cat.str.contains(r"\b(medical equipment|medical devices?|patient care and treatment products|disease prevention and control|pharmaceutical|vaccines?)\b", regex=True, na=False)
-        | desc.str.fullmatch(r"\s*funding pool\s*", na=False)
-    )
-    df = df.loc[~obvious_non_tam | is_accenture].copy()
+    # Trust canonical Health addressability; no dashboard-level reclassification.
     if df.empty:
         raise SystemExit("No addressable Health contracts were found in the input dataset.")
 
@@ -156,7 +143,11 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
         else:
             df[SUPPLIER_GROUP_COL] = "Unknown supplier"
 
-    if CAPABILITY_COL not in df.columns:
+    if "service_offering" in df.columns:
+        df[CAPABILITY_COL] = df["service_offering"]
+    elif "Service Offering" in df.columns:
+        df[CAPABILITY_COL] = df["Service Offering"]
+    elif CAPABILITY_COL not in df.columns:
         if "Service Offering" in df.columns:
             df[CAPABILITY_COL] = df["Service Offering"]
         else:
@@ -359,7 +350,7 @@ def main() -> None:
 
     df, value_col = load_data(input_path, args.value_mode)
     payload = build_payload(df)
-    html_path = output_dir / "HealthTAMExploratoryAnalysis.html"
+    html_path = output_dir / "HealthContractExplorer.html"
     build_html(payload, html_path, args.value_mode)
 
     agency_audit = (
