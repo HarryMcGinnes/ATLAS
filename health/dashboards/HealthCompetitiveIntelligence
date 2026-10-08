@@ -160,7 +160,9 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
 
     # Service Offering is authoritative from the Health filter. Addressable rows that
     # remain unresolved are shown as a visible 'Uncategorised' bucket so TAM reconciles.
-    if SERVICE_OFFERING_COL in out.columns:
+    if "service_offering" in out.columns:
+        out[CAPABILITY_COL] = out["service_offering"]
+    elif SERVICE_OFFERING_COL in out.columns:
         out[CAPABILITY_COL] = out[SERVICE_OFFERING_COL]
     elif CAPABILITY_COL not in out.columns:
         raise SystemExit("Health master is missing Service Offering/capability classification.")
@@ -755,7 +757,7 @@ def main() -> None:
     as_at = pd.Timestamp(as_at).normalize()
 
     model = build_model(df, args.top_n_suppliers, as_at)
-    dashboard_path = output_dir / "HealthCompareDashboard.html"
+    dashboard_path = output_dir / "HealthCompetitiveIntelligence.html"
     build_html(model, dashboard_path, as_at, args.value_mode)
 
     model["supplier_total"].to_csv(output_dir / "supplier_summary.csv", index=False)  # type: ignore[index]
