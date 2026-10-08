@@ -70,8 +70,6 @@ OPTIONAL_CLASSIFICATION_COLS = [
 
 MASTER_REQUIRED_COLUMNS = {
     "capability",
-    "ReinventionPartner",
-    "ReinventionEngine",
     "is_addressable",
     "supplier_group",
     "is_accenture",
@@ -170,8 +168,6 @@ def load_master_dataset(path: Path) -> pd.DataFrame:
         out = out[out["is_defence_scope"]].copy()
 
     out["capability"] = out["capability"].fillna("Unclassified").astype(str)
-    out["ReinventionPartner"] = out["ReinventionPartner"].fillna("Unclassified").replace("", "Unclassified").astype(str)
-    out["ReinventionEngine"] = out["ReinventionEngine"].fillna("Unclassified").replace("", "Unclassified").astype(str)
     out["supplier_group"] = out["supplier_group"].fillna("Unknown").replace("", "Unknown").astype(str)
     out["defence_domain"] = out["defence_domain"].fillna("Unmapped").replace("", "Unmapped").astype(str)
 
@@ -192,8 +188,8 @@ def load_master_dataset(path: Path) -> pd.DataFrame:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", default="master_output/master_defence_contracts.parquet")
-    parser.add_argument("--output-dir", default="ServiceGrowthDashboard_Output")
+    parser.add_argument("--input", default="defence/data/processed/master_defence_contracts.parquet")
+    parser.add_argument("--output-dir", default="defence/dashboards/output/ServiceOfferingGrowth")
     parser.add_argument(
         "--value-mode",
         choices=["total", "annualised"],
@@ -471,266 +467,6 @@ def prepare_growth_data(df: pd.DataFrame, value_col: str, top_n: int, min_year_v
 
     summary = pd.DataFrame(summary_rows).sort_values("total_value", ascending=False)
     return annual, summary
-
-
-def prepare_reinvention_growth_data(df: pd.DataFrame, value_col: str, min_year_value: float = 0) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Prepare annual growth data for every Reinvention Partner x Reinvention Engine combination."""
-    if FIN_YEAR_COL not in df.columns:
-        raise SystemExit(f"Missing required column: {FIN_YEAR_COL}")
-
-    required = {"ReinventionPartner", "ReinventionEngine", "is_addressable", "is_accenture"}
-    missing = sorted(required - set(df.columns))
-    if missing:
-        raise SystemExit(
-            "Master parquet is missing Reinvention Model columns: " + ", ".join(missing)
-            + ". Rebuild the master with the Reinvention Model classifier first."
-        )
-
-    data = df[df["is_addressable"]].copy()
-    data["ReinventionPartner"] = data["ReinventionPartner"].fillna("Unclassified").replace("", "Unclassified")
-    data["ReinventionEngine"] = data["ReinventionEngine"].fillna("Unclassified").replace("", "Unclassified")
-    data = data[~data["ReinventionPartner"].eq("Non-addressable")].copy()
-    data = data[~data["ReinventionEngine"].eq("Non-addressable")].copy()
-    data["reinvention_combination"] = data["ReinventionPartner"] + " | " + data["ReinventionEngine"]
-    data["_fy_start_year"] = data[FIN_YEAR_COL].map(financial_year_start_year)
-    data = data.dropna(subset=["_fy_start_year"])
-    data["_fy_start_year"] = data["_fy_start_year"].astype(int)
-    data[FIN_YEAR_COL] = data[FIN_YEAR_COL].astype(str)
-
-    combinations = (
-        data.groupby(["ReinventionPartner", "ReinventionEngine"], as_index=False)[value_col]
-        .sum()
-        .sort_values(value_col, ascending=False)
-    )
-    combination_order = (
-        combinations["ReinventionPartner"] + " | " + combinations["ReinventionEngine"]
-    ).tolist()
-
-    annual = (
-        data.groupby(["ReinventionPartner", "ReinventionEngine", "reinvention_combination", FIN_YEAR_COL, "_fy_start_year"], as_index=False)
-        .agg(
-            segment_value=(value_col, "sum"),
-            accenture_wins=(value_col, lambda s: s[data.loc[s.index, "is_accenture"]].sum()),
-            contracts=(CN_ID_COL, "nunique") if CN_ID_COL in data.columns else (value_col, "size"),
-        )
-        .sort_values(["reinvention_combination", "_fy_start_year"])
-    )
-    annual = annual[annual["segment_value"] >= min_year_value].copy()
-
-    years = data[[FIN_YEAR_COL, "_fy_start_year"]].drop_duplicates().sort_values("_fy_start_year")
-    full_index = pd.MultiIndex.from_product(
-        [combination_order, years[FIN_YEAR_COL].tolist()],
-        names=["reinvention_combination", FIN_YEAR_COL],
-    ).to_frame(index=False)
-    parts = full_index["reinvention_combination"].str.split(" | ", n=1, expand=True, regex=False)
-    full_index["ReinventionPartner"] = parts[0]
-    full_index["ReinventionEngine"] = parts[1]
-    full_index = full_index.merge(years, on=FIN_YEAR_COL, how="left")
-    annual = full_index.merge(
-        annual,
-        on=["ReinventionPartner", "ReinventionEngine", "reinvention_combination", FIN_YEAR_COL, "_fy_start_year"],
-        how="left",
-    )
-    annual[["segment_value", "accenture_wins", "contracts"]] = annual[["segment_value", "accenture_wins", "contracts"]].fillna(0)
-    annual = annual.sort_values(["reinvention_combination", "_fy_start_year"])
-    annual["segment_value_b"] = annual["segment_value"] / 1_000_000_000
-    annual["accenture_wins_b"] = annual["accenture_wins"] / 1_000_000_000
-    annual["accenture_share_pct"] = annual["accenture_wins"] / annual["segment_value"].replace(0, pd.NA) * 100
-    annual["yoy_growth_pct"] = annual.groupby("reinvention_combination")["segment_value"].pct_change() * 100
-    annual.loc[annual.groupby("reinvention_combination")["segment_value"].shift(1).fillna(0).eq(0), "yoy_growth_pct"] = pd.NA
-
-    summary_rows = []
-    for combo, g in annual.groupby("reinvention_combination", sort=False):
-        g = g.sort_values("_fy_start_year")
-        nonzero = g[g["segment_value"] > 0]
-        first_value = float(nonzero["segment_value"].iloc[0]) if not nonzero.empty else 0
-        last_value = float(g["segment_value"].iloc[-1]) if not g.empty else 0
-        first_year = str(nonzero[FIN_YEAR_COL].iloc[0]) if not nonzero.empty else "n/a"
-        latest_year = str(g[FIN_YEAR_COL].iloc[-1]) if not g.empty else "n/a"
-        periods = max(0, int(nonzero["_fy_start_year"].iloc[-1] - nonzero["_fy_start_year"].iloc[0])) if len(nonzero) >= 2 else 0
-        cagr = ((last_value / first_value) ** (1 / periods) - 1) * 100 if first_value > 0 and last_value > 0 and periods > 0 else pd.NA
-        peak_idx = g["segment_value"].idxmax() if not g.empty else None
-        peak_year = str(g.loc[peak_idx, FIN_YEAR_COL]) if peak_idx is not None else "n/a"
-        peak_value = float(g.loc[peak_idx, "segment_value"]) if peak_idx is not None else 0
-        total_value = float(g["segment_value"].sum())
-        accenture_total = float(g["accenture_wins"].sum())
-        share = accenture_total / total_value * 100 if total_value else 0
-
-        share_nonzero = g[g["segment_value"].gt(0)].copy()
-        share_nonzero["_share_for_cagr"] = share_nonzero["accenture_wins"] / share_nonzero["segment_value"].replace(0, pd.NA) * 100
-        share_nonzero = share_nonzero.dropna(subset=["_share_for_cagr"])
-        share_nonzero = share_nonzero[share_nonzero["_share_for_cagr"].gt(0)]
-        if len(share_nonzero) >= 2:
-            first_share = float(share_nonzero["_share_for_cagr"].iloc[0])
-            last_share = float(share_nonzero["_share_for_cagr"].iloc[-1])
-            share_periods = max(0, int(share_nonzero["_fy_start_year"].iloc[-1] - share_nonzero["_fy_start_year"].iloc[0]))
-            accenture_share_cagr = ((last_share / first_share) ** (1 / share_periods) - 1) * 100 if first_share > 0 and last_share > 0 and share_periods > 0 else pd.NA
-        else:
-            accenture_share_cagr = pd.NA
-
-        summary_rows.append({
-            "reinvention_combination": combo,
-            "ReinventionPartner": str(g["ReinventionPartner"].iloc[0]),
-            "ReinventionEngine": str(g["ReinventionEngine"].iloc[0]),
-            "total_value": total_value,
-            "latest_year": latest_year,
-            "latest_value": last_value,
-            "first_year": first_year,
-            "first_value": first_value,
-            "cagr_pct": cagr,
-            "peak_year": peak_year,
-            "peak_value": peak_value,
-            "accenture_wins": accenture_total,
-            "accenture_share_pct": share,
-            "accenture_share_cagr_pct": accenture_share_cagr,
-        })
-
-    summary = pd.DataFrame(summary_rows).sort_values("total_value", ascending=False)
-    return annual, summary
-
-
-def build_reinvention_growth_chart(annual: pd.DataFrame, summary: pd.DataFrame, value_mode: str) -> str:
-    """Build a second explorer using linked Reinvention Partner and Engine selectors."""
-    partners = summary["ReinventionPartner"].drop_duplicates().tolist()
-    datasets = []
-    for _, s in summary.iterrows():
-        combo = s["reinvention_combination"]
-        g = annual[annual["reinvention_combination"].eq(combo)].sort_values("_fy_start_year")
-        datasets.append({
-            "combination": combo,
-            "partner": s["ReinventionPartner"],
-            "engine": s["ReinventionEngine"],
-            "financial_years": g[FIN_YEAR_COL].astype(str).tolist(),
-            "values_b": g["segment_value_b"].fillna(0).round(6).tolist(),
-            "competitor_values_b": ((g["segment_value"] - g["accenture_wins"]).clip(lower=0) / 1_000_000_000).fillna(0).round(6).tolist(),
-            "accenture_wins_b": g["accenture_wins_b"].fillna(0).round(6).tolist(),
-            "yoy": [None if pd.isna(x) else round(float(x), 2) for x in g["yoy_growth_pct"].tolist()],
-            "contracts": [int(x) for x in g["contracts"].fillna(0).tolist()],
-            "accenture_share": [None if pd.isna(x) else round(float(x), 2) for x in g["accenture_share_pct"].tolist()],
-        })
-
-    partner_options = "\n".join(f'<option value="{p}">{p}</option>' for p in partners)
-    chart_data = json.dumps(datasets)
-
-    return f"""
-<div class="growth-app reinvention-growth-app">
-  <div class="growth-header">
-    <div>
-      <h2>Reinvention Model Growth Explorer</h2>
-      <p>Select a Reinvention Partner and Reinvention Engine to see annual addressable value, Accenture wins and growth across that combination.</p>
-    </div>
-    <div class="reinvention-selectors">
-      <div class="selector-box">
-        <label for="rpSelect">Reinvention Partner</label>
-        <select id="rpSelect">{partner_options}</select>
-      </div>
-      <div class="selector-box">
-        <label for="reSelect">Reinvention Engine</label>
-        <select id="reSelect"></select>
-      </div>
-    </div>
-  </div>
-
-  <div class="mini-cards">
-    <div class="mini-card"><span>Total selected-period value</span><b id="rpCardTotal">-</b></div>
-    <div class="mini-card"><span>Latest FY value</span><b id="rpCardLatest">-</b></div>
-    <div class="mini-card"><span>Combination CAGR</span><b id="rpCardCagr">-</b></div>
-    <div class="mini-card accenture-mini-card"><span>Accenture share CAGR</span><b id="rpCardShareCagr">-</b></div>
-    <div class="mini-card"><span>Peak FY</span><b id="rpCardPeak">-</b></div>
-    <div class="mini-card"><span>Accenture share</span><b id="rpCardShare">-</b></div>
-  </div>
-
-  <div class="range-controls growth-range-controls">
-    <label class="range-pill"><input type="radio" name="reinventionRange" value="all" checked> All years</label>
-    <label class="range-pill"><input type="radio" name="reinventionRange" value="last5"> Last 5 FY</label>
-    <label class="range-pill"><input type="radio" name="reinventionRange" value="last3"> Last 3 FY</label>
-  </div>
-
-  <div id="reinventionGrowthChart" style="height:670px; width:100%;"></div>
-</div>
-
-<script>
-(function() {{
-  const datasets = {chart_data};
-  const rpSelect = document.getElementById('rpSelect');
-  const reSelect = document.getElementById('reSelect');
-  const chartId = 'reinventionGrowthChart';
-
-  function rangeMode() {{
-    const checked = document.querySelector('input[name="reinventionRange"]:checked');
-    return checked ? checked.value : 'all';
-  }}
-  function parseFyStart(fy) {{ const m = String(fy || '').match(/(20[0-9]{{2}}|19[0-9]{{2}})/); return m ? Number(m[1]) : null; }}
-  function moneyFromB(v) {{
-    const dollars = Number(v || 0) * 1000000000, abs = Math.abs(dollars), sign = dollars < 0 ? '-' : '';
-    if (abs >= 1000000000) return sign + '$' + (abs / 1000000000).toFixed(2) + 'B';
-    if (abs >= 100000000) return sign + '$' + (abs / 1000000).toFixed(0) + 'M';
-    if (abs >= 10000000) return sign + '$' + (abs / 1000000).toFixed(1) + 'M';
-    if (abs >= 1000000) return sign + '$' + (abs / 1000000).toFixed(2) + 'M';
-    if (abs >= 1000) return sign + '$' + (abs / 1000).toFixed(0) + 'K';
-    return sign + '$' + abs.toFixed(0);
-  }}
-  function pctText(v) {{ return isFinite(Number(v)) ? Number(v).toFixed(1) + '%' : 'n/a'; }}
-  function cagr(rows, key) {{
-    const valid = rows.filter(r => Number(r[key] || 0) > 0 && r.fyStart !== null);
-    if (valid.length < 2) return null;
-    const first = valid[0], last = valid[valid.length - 1];
-    const periods = Math.max(0, last.fyStart - first.fyStart);
-    if (!periods) return null;
-    return (Math.pow(Number(last[key]) / Number(first[key]), 1 / periods) - 1) * 100;
-  }}
-  function updateEngineOptions() {{
-    const partner = rpSelect.value;
-    const engines = [...new Set(datasets.filter(d => d.partner === partner).map(d => d.engine))];
-    reSelect.innerHTML = engines.map(e => '<option value="' + e + '">' + e + '</option>').join('');
-  }}
-  function currentDataset() {{ return datasets.find(d => d.partner === rpSelect.value && d.engine === reSelect.value) || datasets[0]; }}
-  function filtered(d) {{
-    const mode = rangeMode();
-    const n = mode === 'last3' ? 3 : (mode === 'last5' ? 5 : d.financial_years.length);
-    const start = Math.max(0, d.financial_years.length - n);
-    const rows = d.financial_years.map((fy, i) => ({{
-      fy, fyStart: parseFyStart(fy), totalB: Number(d.values_b[i] || 0), accB: Number(d.accenture_wins_b[i] || 0),
-      compB: Math.max(0, Number(d.competitor_values_b[i] || 0)), contracts: Number(d.contracts[i] || 0)
-    }})).slice(start);
-    rows.forEach(r => r.share = r.totalB > 0 ? r.accB / r.totalB * 100 : null);
-    const totalB = rows.reduce((a,r)=>a+r.totalB,0), accB = rows.reduce((a,r)=>a+r.accB,0);
-    return {{rows, totalB, accB, latest: rows[rows.length-1] || null,
-      peak: rows.reduce((b,r)=>!b||r.totalB>b.totalB?r:b,null),
-      growthCagr: cagr(rows,'totalB'),
-      shareCagr: cagr(rows.map(r=>({{fyStart:r.fyStart, shareValue:r.share||0}})),'shareValue'),
-      shareTotal: totalB > 0 ? accB/totalB*100 : 0,
-      label: mode === 'last3' ? 'Last 3 FY' : (mode === 'last5' ? 'Last 5 FY' : 'All years')
-    }};
-  }}
-  function render() {{
-    const d = currentDataset(); if (!d) return;
-    const fd = filtered(d);
-    document.getElementById('rpCardTotal').textContent = moneyFromB(fd.totalB);
-    document.getElementById('rpCardLatest').textContent = fd.latest ? fd.latest.fy + ': ' + moneyFromB(fd.latest.totalB) : 'n/a';
-    document.getElementById('rpCardCagr').textContent = fd.growthCagr === null ? 'n/a' : pctText(fd.growthCagr);
-    document.getElementById('rpCardShareCagr').textContent = fd.shareCagr === null ? 'n/a' : pctText(fd.shareCagr);
-    document.getElementById('rpCardPeak').textContent = fd.peak ? fd.peak.fy + ': ' + moneyFromB(fd.peak.totalB) : 'n/a';
-    document.getElementById('rpCardShare').textContent = pctText(fd.shareTotal);
-    const maxBar = Math.max(0.1, ...fd.rows.map(r => r.totalB));
-    const competitor = {{type:'bar', name:'Competitor-owned segment value', x:fd.rows.map(r=>r.fy), y:fd.rows.map(r=>r.compB), marker:{{color:'#D7DEE9'}}, customdata:fd.rows.map(r=>[moneyFromB(r.totalB),moneyFromB(r.compB),moneyFromB(r.accB),r.contracts,r.share]), hovertemplate:'<b>%{{x}}</b><br>Total value: %{{customdata[0]}}<br>Competitor-owned value: %{{customdata[1]}}<br>Accenture wins: %{{customdata[2]}}<br>Contracts: %{{customdata[3]}}<br>Accenture share: %{{customdata[4]:,.1f}}%<extra></extra>'}};
-    const acc = {{type:'bar', name:'Accenture wins', x:fd.rows.map(r=>r.fy), y:fd.rows.map(r=>r.accB), marker:{{color:'#A100FF'}}, customdata:fd.rows.map(r=>[moneyFromB(r.accB),r.share,moneyFromB(r.totalB)]), hovertemplate:'<b>%{{x}}</b><br>Accenture wins: %{{customdata[0]}}<br>Accenture share: %{{customdata[1]:,.1f}}%<br>Total value: %{{customdata[2]}}<extra></extra>'}};
-    const annotations = [{{text:'Grey = competitor-owned segment value. Purple = Accenture wins. Only Accenture-addressable contracts are included.',x:0,y:1.15,xref:'paper',yref:'paper',showarrow:false,xanchor:'left',font:{{size:12,color:'#526070'}}}}];
-    fd.rows.forEach(r => {{
-      const pad=maxBar*0.055, y=r.compB>pad*1.8?r.compB-pad:Math.max(r.compB*0.5,maxBar*0.018);
-      annotations.push({{x:r.fy,y,xref:'x',yref:'y',text:moneyFromB(r.totalB),showarrow:false,font:{{size:11,color:'#1f2937'}},bgcolor:'rgba(0,0,0,0)',bordercolor:'rgba(0,0,0,0)',borderpad:0}});
-      if (r.accB>0.0005 && r.share!==null) annotations.push({{x:r.fy,y:r.totalB+maxBar*0.06,xref:'x',yref:'y',text:'<b>'+pctText(r.share)+'</b>',showarrow:false,font:{{size:12,color:'#A100FF'}},bgcolor:'rgba(255,255,255,0.90)',borderpad:3}});
-    }});
-    const layout={{title:d.partner+' + '+d.engine+' - annual addressable value<br><sup>'+fd.label+'</sup>',template:'plotly_white',height:670,margin:{{t:95,l:70,r:90,b:100}},legend:{{orientation:'h',y:-0.18}},barmode:'stack',bargap:fd.rows.length<=3?0.48:0.34,xaxis:{{title:'Financial year',tickangle:-35}},yaxis:{{title:'$B',range:[0,maxBar*1.46],showgrid:true}},annotations}};
-    Plotly.react(chartId,[competitor,acc],layout,{{responsive:true,displayModeBar:false,staticPlot:false,scrollZoom:false,doubleClick:false}});
-  }}
-  rpSelect.addEventListener('change',()=>{{updateEngineOptions();render();}});
-  reSelect.addEventListener('change',render);
-  document.querySelectorAll('input[name="reinventionRange"]').forEach(i=>i.addEventListener('change',render));
-  updateEngineOptions(); render();
-}})();
-</script>
-"""
 
 
 def build_interactive_growth_chart(annual: pd.DataFrame, summary: pd.DataFrame, value_mode: str) -> str:
@@ -1045,7 +781,7 @@ def build_ranked_growth_table(summary: pd.DataFrame) -> str:
 """
 
 
-def build_html(annual: pd.DataFrame, summary: pd.DataFrame, reinvention_annual: pd.DataFrame, reinvention_summary: pd.DataFrame, output_html: Path, value_mode: str) -> None:
+def build_html(annual: pd.DataFrame, summary: pd.DataFrame, output_html: Path, value_mode: str) -> None:
     total_value = float(summary["total_value"].sum()) if not summary.empty else 0
     latest_total = float(summary["latest_value"].sum()) if not summary.empty else 0
     top_cap = summary.iloc[0]["capability"] if not summary.empty else "n/a"
@@ -1126,8 +862,6 @@ def build_html(annual: pd.DataFrame, summary: pd.DataFrame, reinvention_annual: 
     .growth-header h2 {{ margin: 0 0 6px 0; font-size: 22px; }}
     .growth-header p {{ margin: 0; color: #526070; line-height: 1.45; }}
     .selector-box {{ min-width: 320px; }}
-    .reinvention-selectors {{ display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }}
-    .reinvention-selectors .selector-box {{ min-width:260px; }}
     .selector-box label {{ display: block; font-size: 13px; color: #667085; margin-bottom: 6px; }}
     .selector-box select {{ width: 100%; border: 1px solid #d0d5dd; border-radius: 10px; padding: 10px 12px; font-size: 14px; background: #fff; }}
     .mini-cards {{ display: grid; grid-template-columns: repeat(6, minmax(140px, 1fr)); gap: 10px; margin: 16px 0 8px 0; }}
@@ -1188,11 +922,6 @@ def build_html(annual: pd.DataFrame, summary: pd.DataFrame, reinvention_annual: 
   <div class="panel">
     {build_interactive_growth_chart(annual, summary, value_mode)}
   </div>
-
-  <div class="panel">
-    {build_reinvention_growth_chart(reinvention_annual, reinvention_summary, value_mode)}
-  </div>
-
   <div class="panel">
     {build_ranked_growth_table(summary)}
   </div>
@@ -1283,36 +1012,28 @@ def main() -> None:
     df_all = clean_value_columns(df_all, [VALUE_COL, ANNUALISED_VALUE_COL])
     df = filter_defence_scope(df_all, include_all_agencies=args.include_all_agencies)
     annual, summary = prepare_growth_data(df, value_col, args.top_n_capabilities, args.min_year_value)
-    reinvention_annual, reinvention_summary = prepare_reinvention_growth_data(df, value_col, args.min_year_value)
 
     annual_path = output_dir / "capability_growth_by_year.csv"
     summary_path = output_dir / "capability_growth_summary.csv"
-    reinvention_annual_path = output_dir / "reinvention_growth_by_year.csv"
-    reinvention_summary_path = output_dir / "reinvention_growth_summary.csv"
-    dashboard_path = output_dir / "ServiceGrowthDashboard.html"
+    dashboard_path = output_dir / "ServiceOfferingGrowth.html"
 
     export_defence_scope_audit(df_all, df, value_col, output_dir)
 
     annual.to_csv(annual_path, index=False)
-    slim_cols = [c for c in [AGENCY_COL, AGENCY_DIVISION_COL, AGENCY_BRANCH_COL, FIN_YEAR_COL, CN_ID_COL, SUPPLIER_COL, DESCRIPTION_COL, "capability", "ReinventionPartner", "ReinventionEngine", "reinvention_mapping_confidence", "reinvention_mapping_reason", "is_addressable", "is_accenture", value_col] if c in df.columns]
+    slim_cols = [c for c in [AGENCY_COL, AGENCY_DIVISION_COL, AGENCY_BRANCH_COL, FIN_YEAR_COL, CN_ID_COL, SUPPLIER_COL, DESCRIPTION_COL, "capability", "is_addressable", "is_accenture", value_col] if c in df.columns]
     df[slim_cols].to_csv(output_dir / "defence_filtered_contracts_slim.csv", index=False)
     summary.to_csv(summary_path, index=False)
-    reinvention_annual.to_csv(reinvention_annual_path, index=False)
-    reinvention_summary.to_csv(reinvention_summary_path, index=False)
-    build_html(annual, summary, reinvention_annual, reinvention_summary, dashboard_path, args.value_mode)
+    build_html(annual, summary, dashboard_path, args.value_mode)
 
     print("Service Offering growth dashboard complete")
     print(f"Value mode: {args.value_mode} / column used: {value_col}")
     print(f"Service Offerings shown: {len(summary)}")
-    print(f"Reinvention combinations shown: {len(reinvention_summary)}")
     print(f"Rows after Defence filter: {len(df):,}")
     print(f"Defence filter active: {not args.include_all_agencies}")
     print(f"Filtered Defence addressable value: {short_money(summary['total_value'].sum() if not summary.empty else 0)}")
     print(f"Wrote: {dashboard_path}")
     print(f"Wrote: {annual_path}")
     print(f"Wrote: {summary_path}")
-    print(f"Wrote: {reinvention_annual_path}")
-    print(f"Wrote: {reinvention_summary_path}")
     print(f"Wrote: {output_dir / 'defence_filtered_contracts_slim.csv'}")
     print(f"Wrote: {output_dir / 'defence_scope_audit_by_agency.csv'}")
     print(f"Wrote: {output_dir / 'defence_scope_audit_by_org.csv'}")
