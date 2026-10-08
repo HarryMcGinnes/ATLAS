@@ -62,9 +62,15 @@ jobs:
           print(f"Silver Core PASS: {len(df):,} rows")
           PY
 
-      - name: Upload Bronze artifacts
+
+      - name: Upload ATLAS datasets
         uses: actions/upload-artifact@v4
         with:
-          name: atlas-bronze-test
-          path: data/bronze/austender/
+          name: atlas-pipeline-test
           retention-days: 7
+          if-no-files-found: error
+          path: |
+            data/bronze/austender/
+            data/silver/core/
+            audits/silver/core/
+
