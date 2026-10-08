@@ -110,9 +110,7 @@ MASTER_REQUIRED_COLUMNS = {
     "supplier_group",
     "is_accenture",
     "defence_domain",
-    "ReinventionPartner",
-    "ReinventionEngine",
-    "Value",
+        "Value",
 }
 
 SEVEN_DOMAINS = {
@@ -246,8 +244,6 @@ def load_master_dataset(path: Path) -> pd.DataFrame:
         out = out[out["is_defence_scope"]].copy()
 
     out["capability"] = out["capability"].fillna("Unclassified").astype(str)
-    out["ReinventionPartner"] = out["ReinventionPartner"].fillna("Unclassified").replace("", "Unclassified").astype(str)
-    out["ReinventionEngine"] = out["ReinventionEngine"].fillna("Unclassified").replace("", "Unclassified").astype(str)
     out["supplier_group"] = out["supplier_group"].fillna("Unknown").replace("", "Unknown").astype(str)
     out["defence_domain"] = out["defence_domain"].fillna("Unmapped").replace("", "Unmapped").astype(str)
 
@@ -268,8 +264,8 @@ def load_master_dataset(path: Path) -> pd.DataFrame:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", default="master_output/master_defence_contracts.parquet")
-    parser.add_argument("--output-dir", default="CompareDashboard_Output")
+    parser.add_argument("--input", default="defence/data/processed/master_defence_contracts.parquet")
+    parser.add_argument("--output-dir", default="defence/dashboards/output/CompetitiveIntelligence")
     parser.add_argument(
         "--value-mode",
         choices=["total", "annualised"],
@@ -3345,7 +3341,7 @@ def main() -> None:
     domain_summary.to_csv(output_dir / "supplier_domain_summary.csv", index=False)
     domain_yearly.to_csv(output_dir / "supplier_domain_yearly.csv", index=False)
 
-    dashboard_path = output_dir / "CompareDashboard.html"
+    dashboard_path = output_dir / "CompetitiveIntelligence.html"
     build_html(
         model,
         value_col,
