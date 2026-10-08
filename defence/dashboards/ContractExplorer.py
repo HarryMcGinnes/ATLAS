@@ -161,12 +161,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--input",
-        default="master_output/master_defence_contracts.parquet",
+        default="defence/data/processed/master_defence_contracts.parquet",
         help="Canonical master Defence parquet.",
     )
     parser.add_argument(
         "--output-dir",
-        default="ProcurementExplorationDashboard_output",
+        default="defence/dashboards/output/ContractExplorer",
     )
     parser.add_argument(
         "--value-mode",
@@ -366,6 +366,13 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
         consolidated_branch(branch, div)
         for branch, div in zip(out[BRANCH_COL], out["_division"])
     ]
+
+    if "defence_division_group" in out.columns:
+        valid = out["defence_division_group"].notna() & out["defence_division_group"].astype(str).str.strip().ne("")
+        out.loc[valid, "_division"] = out.loc[valid, "defence_division_group"].astype(str)
+    if "defence_branch_group" in out.columns:
+        valid = out["defence_branch_group"].notna() & out["defence_branch_group"].astype(str).str.strip().ne("")
+        out.loc[valid, "_branch"] = out.loc[valid, "defence_branch_group"].astype(str)
 
     out["_value"] = pd.to_numeric(out[value_col], errors="coerce").fillna(0).clip(lower=0)
     out["_total_value"] = pd.to_numeric(out[VALUE_COL], errors="coerce").fillna(0).clip(lower=0)
@@ -1769,7 +1776,7 @@ def main() -> None:
     df, value_col = load_data(input_path, args.value_mode)
     payload = build_payload(df)
 
-    html_path = output_dir / "ProcurementExplorationDashboard.html"
+    html_path = output_dir / "ContractExplorer.html"
     build_html(payload, html_path, args.value_mode)
 
     division_audit = (
