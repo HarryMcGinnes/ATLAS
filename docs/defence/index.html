@@ -1,69 +1,149 @@
+
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-
-  <style>
-    :root{--bg:#f5f5f6;--panel:#fff;--text:#111827;--muted:#5d6675;--line:#dedfe3;--black:#050505}
-    *{box-sizing:border-box}
-    body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text)}
-    .topbar{background:var(--black);color:white;padding:18px 22px}
-    .brand{font-size:34px;font-weight:800;letter-spacing:.04em}
-    .tag{font-size:15px;margin-top:2px}
-    .wrap{max-width:1040px;margin:0 auto;padding:64px 28px}
-    .back{display:inline-block;margin-bottom:26px;color:#475467;text-decoration:none;font-size:14px}
-    .back:hover{text-decoration:underline}
-    h1{font-size:40px;margin:0 0 8px}
-    .lead{color:var(--muted);font-size:17px;line-height:1.5;margin:0 0 34px}
-    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px}
-    .card{display:block;text-decoration:none;color:inherit;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:28px;min-height:185px;transition:.15s ease}
-    .card:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(17,24,39,.07)}
-    .card h2{font-size:24px;margin:0 0 10px}
-    .card p{color:var(--muted);line-height:1.5;margin:0}
-    .go{margin-top:20px;font-weight:700}
-    footer{margin-top:48px;padding-top:22px;border-top:1px solid var(--line);font-size:13px;color:#697386}
-    @media(max-width:760px){.grid{grid-template-columns:1fr}.wrap{padding:42px 18px}}
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ATLAS | Defence Intelligence</title>
+<style>
+* { box-sizing:border-box; }
+body {
+  margin:0;
+  font-family:Arial,Helvetica,sans-serif;
+  background:#f5f5f6;
+  color:#111827;
+}
+header {
+  background:#050505;
+  color:white;
+  padding:18px 22px;
+}
+.brand {
+  font-size:34px;
+  font-weight:800;
+  letter-spacing:.04em;
+}
+.tag { font-size:15px; margin-top:2px; }
+.wrap {
+  max-width:1180px;
+  margin:auto;
+  padding:60px 28px;
+}
+.back {
+  display:inline-block;
+  margin-bottom:26px;
+  color:#6500a8;
+  font-weight:700;
+  text-decoration:none;
+}
+h1 { font-size:42px; margin:0 0 10px; }
+.lead {
+  font-size:18px;
+  color:#5d6675;
+  line-height:1.55;
+  margin-bottom:38px;
+}
+.cards {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:22px;
+}
+.card {
+  display:block;
+  background:white;
+  color:inherit;
+  text-decoration:none;
+  border:1px solid #dedfe3;
+  border-radius:16px;
+  padding:30px;
+  min-height:230px;
+  transition:.15s ease;
+}
+.card:hover {
+  transform:translateY(-2px);
+  box-shadow:0 8px 28px rgba(17,24,39,.08);
+  border-color:#A100FF;
+}
+.eyebrow {
+  color:#A100FF;
+  text-transform:uppercase;
+  font-size:12px;
+  font-weight:700;
+  letter-spacing:.08em;
+}
+.card h2 { font-size:27px; margin:12px 0; }
+.card p { color:#5d6675; line-height:1.55; }
+.go { color:#6500a8; font-weight:700; margin-top:24px; }
+footer {
+  margin-top:54px;
+  padding-top:24px;
+  border-top:1px solid #dedfe3;
+  color:#697386;
+  font-size:13px;
+}
+@media(max-width:760px) {
+  .cards { grid-template-columns:1fr; }
+  .wrap { padding:40px 18px; }
+}
+</style>
 </head>
 <body>
-  <header class="topbar">
+<header>
   <div class="brand">ATLAS</div>
   <div class="tag">Accenture Total Landscape Analytics and Spend</div>
-  </header>
+</header>
 
-  <main class="wrap">
-    <a class="back" href="../">← All markets</a>
-    <h1>Defence Market Intelligence</h1>
-    <p class="lead">Explore the Australian Defence procurement market, competitive landscape, spending trends and contract activity.</p>
+<main class="wrap">
+  <a class="back" href="../">← Back to ATLAS</a>
+  <h1>Defence Intelligence</h1>
+  <p class="lead">
+    Explore the Australian Defence procurement landscape
+    through four interactive market intelligence dashboards.
+  </p>
 
-    <section class="grid">
-      <a class="card" href="tam-overview/">
-        <h2>TAM Overview</h2>
-        <p>Understand total Defence procurement, the Accenture-addressable market, Accenture performance and supplier market share.</p>
-        <div class="go">Open dashboard →</div>
-      </a>
+  <section class="cards">
+    <a class="card" href="DefenceTAMDashboard.html">
+      <div class="eyebrow">Market overview</div>
+      <h2>TAM Overview</h2>
+      <p>
+        Understand total Defence procurement, Accenture-addressable
+        market size, Accenture wins and leading suppliers.
+      </p>
+      <div class="go">Open dashboard →</div>
+    </a>
 
-      <a class="card" href="competitive-intelligence/">
-        <h2>Competitive Intelligence</h2>
-        <p>Compare suppliers across market share, Service Offerings, Defence domains and current contracts.</p>
-        <div class="go">Open dashboard →</div>
-      </a>
+    <a class="card" href="CompetitiveIntelligenceDashboard.html">
+      <div class="eyebrow">Competitive positioning</div>
+      <h2>Competitive Intelligence</h2>
+      <p>
+        Compare suppliers, Service Offering strengths,
+        market share and current Defence contracts.
+      </p>
+      <div class="go">Open dashboard →</div>
+    </a>
 
-      <a class="card" href="service-offering-growth/">
-        <h2>Service Offering Growth</h2>
-        <p>Explore historical spending patterns, growth and Accenture share across Service Offerings and Reinvention Model combinations.</p>
-        <div class="go">Open dashboard →</div>
-      </a>
+    <a class="card" href="ProcurementExplorationDashboard.html">
+      <div class="eyebrow">Procurement analysis</div>
+      <h2>Contract Explorer</h2>
+      <p>
+        Explore addressable contracts by Defence agency,
+        division, branch, supplier and Service Offering.
+      </p>
+      <div class="go">Open dashboard →</div>
+    </a>
 
-      <a class="card" href="contract-explorer/">
-        <h2>Contract Explorer</h2>
-        <p>Drill into Defence agencies, divisions, branches, suppliers, domains, Service Offerings and individual contracts.</p>
-        <div class="go">Open dashboard →</div>
-      </a>
-    </section>
+    <a class="card" href="ServiceGrowthDashboard.html">
+      <div class="eyebrow">Market trends</div>
+      <h2>Service Offering Growth</h2>
+      <p>
+        Analyse historical Service Offering expenditure,
+        Accenture wins and market growth trends.
+      </p>
+      <div class="go">Open dashboard →</div>
+    </a>
+  </section>
 
-    <footer>Data source: Australian Government AusTender</footer>
-  </main>
+  <footer>Data source: Australian Government AusTender</footer>
+</main>
 </body>
 </html>
