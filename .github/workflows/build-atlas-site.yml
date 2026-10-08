@@ -200,14 +200,14 @@ jobs:
 
       - name: Build Health Competitive Intelligence
         run: |
-          python health/dashboards/HealthCompareDashboard.py \
+          python health/dashboards/HealthCompetitiveIntelligence.py \
             --input "$HEALTH_MASTER" \
             --output-dir "$HEALTH_SITE_DIR" \
             --value-mode total
 
       - name: Build Health Exploratory Analysis
         run: |
-          python health/dashboards/HealthTAMExploratoryAnalysis.py \
+          python health/dashboards/HealthContractExplorer.py \
             --input "$HEALTH_MASTER" \
             --output-dir "$HEALTH_SITE_DIR" \
             --value-mode total
@@ -258,8 +258,8 @@ jobs:
 
           expected = [
               "AccentureHealthTAMOverview.html",
-              "HealthCompareDashboard.html",
-              "HealthTAMExploratoryAnalysis.html",
+              "HealthCompetitiveIntelligence.html",
+              "HealthContractExplorer.html",
           ]
 
           print()
