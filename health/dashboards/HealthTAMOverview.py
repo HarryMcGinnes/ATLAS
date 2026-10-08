@@ -223,10 +223,14 @@ def classify(df: pd.DataFrame) -> pd.DataFrame:
     if ANNUALISED_VALUE_COL in out.columns:
         out[ANNUALISED_VALUE_COL] = pd.to_numeric(out[ANNUALISED_VALUE_COL], errors="coerce").fillna(0)
 
-    # Dashboard-only supplier grouping. This does not affect addressability/SO.
-    abns = out[SUPPLIER_ABN_COL] if SUPPLIER_ABN_COL in out.columns else pd.Series("", index=out.index)
-    out["supplier_group"] = [supplier_group(n, a) for n, a in zip(out[SUPPLIER_COL], abns)]
-    out["is_accenture"] = out["supplier_group"].eq("Accenture")
+    # Canonical supplier grouping is authoritative across all Health dashboards.
+    if "supplier_group" not in out.columns:
+        raise SystemExit("Missing canonical supplier_group; rebuild the Health master dataset.")
+    out["supplier_group"] = out["supplier_group"].fillna("Unknown supplier").astype(str)
+    if "is_accenture" in out.columns:
+        out["is_accenture"] = _as_bool_series(out["is_accenture"])
+    else:
+        out["is_accenture"] = out["supplier_group"].eq("Accenture")
 
     if "is_addressable" not in out.columns:
         raise SystemExit(
@@ -373,12 +377,12 @@ body{{font-family:Arial,Helvetica,sans-serif;margin:0;background:#f6f8fb;color:#
 .panel{{padding:18px;margin-bottom:18px}}.panel h3{{margin:4px 0;font-size:18px}}.panel p{{margin:4px 0 10px;color:#526070;font-size:13px}}.controls{{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}}.pill{{display:inline-flex;align-items:center;gap:6px;border:1px solid #d0d5dd;border-radius:999px;padding:7px 12px;background:#fff;font-size:12px;cursor:pointer}}.pill:has(input:checked){{background:#eef2ff;border-color:#636efa;color:#243b9f;font-weight:600}}
 .flow-head{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;text-align:center;margin:14px 0 0}}.flow-head b{{font-size:17px;line-height:1.25}}.flow-head span{{display:block;color:#667085;font-size:12px;margin-top:5px}}.donut-stage{{position:relative;height:430px;min-width:980px}}#donutChart{{height:430px;width:100%;margin:0 auto}}.flow-transition{{position:absolute;top:45%;width:118px;transform:translate(-50%,-50%);z-index:5;text-align:center;color:#5B21B6;pointer-events:none}}.flow-transition.one{{left:33.5%}}.flow-transition.two{{left:66.5%}}.flow-transition .pct{{font-size:18px;font-weight:800;line-height:1}}.flow-transition .lbl{{font-size:11px;line-height:1.2;margin-top:4px}}.flow-transition .val{{font-size:15px;font-weight:700;margin-top:4px}}.flow-arrow{{height:18px;position:relative;margin-top:8px}}.flow-arrow:before{{content:'';position:absolute;left:0;right:12px;top:8px;height:3px;border-radius:999px;background:#5B21B6}}.flow-arrow:after{{content:'';position:absolute;right:0;top:1px;border-top:8px solid transparent;border-bottom:8px solid transparent;border-left:13px solid #5B21B6}}.donut-legends{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;padding:0 24px 10px;min-width:980px}}.donut-legend{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 16px;align-items:start;padding:12px 14px 14px;border:1px solid #E2E8F0;border-radius:10px;background:#FAFBFD;min-height:70px}}.donut-legend-title{{grid-column:1/-1;font-size:12px;font-weight:800;color:#475467;text-transform:uppercase;letter-spacing:.04em;padding-bottom:6px;border-bottom:1px solid #E9EDF3;margin-bottom:2px}}.legend-item{{display:grid;grid-template-columns:14px minmax(0,1fr);gap:8px;align-items:start;font-size:12px;color:#344054}}.legend-swatch{{width:14px;height:14px;border-radius:3px;margin-top:1px}}.legend-item b{{display:block;font-size:12px;line-height:1.2}}.legend-item small{{display:block;color:#667085;margin-top:2px;line-height:1.2}}.note{{font-size:12px;color:#667085;margin-top:8px}}@media(max-width:800px){{.cards{{grid-template-columns:1fr}}.flow-scroll{{overflow:auto}}}}
 </style></head><body><div class="wrap">
-<h1>Accenture Health Addressable Market Dashboard</h1><p class="subtitle">Initial Health Portfolio TAM view using the filtered AusTender Health dataset.</p>
+<h1>Accenture Health Addressable Market Dashboard</h1><p class="subtitle">Canonical Health portfolio procurement and Accenture-addressable market.</p>
 <section class="summary"><h2>Executive Summary</h2><p>This dashboard provides a first-pass view of Health portfolio procurement, the portion provisionally addressable to Accenture, Accenture's historical wins, service-offering demand and leading suppliers.</p><div class="warning"><b>Classifier status:</b> this is a first-pass Health TAM classifier. It deliberately excludes obvious clinical products, medical goods and commodities, then identifies consulting, digital, data, cloud, cyber and managed-services evidence. Review the exported audit before using the TAM as a final executive figure.</div></section>
 <div class="cards">
 <div class="card"><div class="ct">Total Health procurement</div><div class="cv">{money(s['total'])}</div><div class="cs">Full Health Portfolio dataset</div></div>
-<div class="card"><div class="ct">Provisional addressable TAM</div><div class="cv">{money(s['addressable'])}</div><div class="cs">{s['addressable_pct']:.1f}% of Health procurement</div></div>
-<div class="card"><div class="ct">Accenture wins in TAM</div><div class="cv">{money(s['accenture'])}</div><div class="cs">{s['accenture_share']:.1f}% of provisional TAM</div></div>
+<div class="card"><div class="ct">Addressable TAM</div><div class="cv">{money(s['addressable'])}</div><div class="cs">{s['addressable_pct']:.1f}% of Health procurement</div></div>
+<div class="card"><div class="ct">Accenture wins in TAM</div><div class="cv">{money(s['accenture'])}</div><div class="cs">{s['accenture_share']:.1f}% of addressable TAM</div></div>
 <div class="card"><div class="ct">Competitor-owned TAM</div><div class="cv">{money(s['competitor'])}</div><div class="cs">Addressable value awarded to other suppliers</div></div>
 <div class="card"><div class="ct">Avg annual addressable</div><div class="cv">{money(s['avg_addressable'])}</div><div class="cs">Across {s['years']} financial years</div></div>
 <div class="card"><div class="ct">Avg annual Accenture wins</div><div class="cv">{money(s['avg_accenture'])}</div><div class="cs">Across {s['years']} financial years</div></div>
@@ -476,7 +480,7 @@ function renderService(){{
     paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)'
   }},{{responsive:true,displayModeBar:false,staticPlot:true,scrollZoom:false,doubleClick:false}});
 }}
-function renderSupplier(){{const d=DATA.supplier[selected('supplierRange')],r=(d.rows||[]).slice().sort((a,b)=>a.share-b.share),mx=Math.max(.1,...r.map(x=>x.share));Plotly.react('supplierChart',[{{type:'bar',orientation:'h',y:r.map(x=>x.name),x:r.map(x=>x.share),marker:{{color:r.map(x=>x.name==='Accenture'?'#A100FF':'#667785')}},text:r.map(x=>fmtPct(x.share)),textposition:'outside',cliponaxis:false,customdata:r.map(x=>[x.value_label,x.contracts]),hovertemplate:'<b>%{{y}}</b><br>Share: %{{x:.1f}}%<br>Value: %{{customdata[0]}}<br>Contracts: %{{customdata[1]}}<extra></extra>'}}],{{height:760,margin:{{l:260,r:100,t:20,b:70}},xaxis:{{title:'Share of provisional TAM (%)',range:[0,mx*1.18],ticksuffix:'%'}}}},{{responsive:true,displayModeBar:false}});}}
+function renderSupplier(){{const d=DATA.supplier[selected('supplierRange')],r=(d.rows||[]).slice().sort((a,b)=>a.share-b.share),mx=Math.max(.1,...r.map(x=>x.share));Plotly.react('supplierChart',[{{type:'bar',orientation:'h',y:r.map(x=>x.name),x:r.map(x=>x.share),marker:{{color:r.map(x=>x.name==='Accenture'?'#A100FF':'#667785')}},text:r.map(x=>fmtPct(x.share)),textposition:'outside',cliponaxis:false,customdata:r.map(x=>[x.value_label,x.contracts]),hovertemplate:'<b>%{{y}}</b><br>Share: %{{x:.1f}}%<br>Value: %{{customdata[0]}}<br>Contracts: %{{customdata[1]}}<extra></extra>'}}],{{height:760,margin:{{l:260,r:100,t:20,b:70}},xaxis:{{title:'Share of addressable TAM (%)',range:[0,mx*1.18],ticksuffix:'%'}}}},{{responsive:true,displayModeBar:false}});}}
 [['donutRange',renderDonut],['serviceRange',renderService],['supplierRange',renderSupplier]].forEach(([n,f])=>document.querySelectorAll('input[name="'+n+'"]').forEach(x=>x.addEventListener('change',f)));renderDonut();renderService();renderSupplier();
 </script></body></html>'''
     output.write_text(html, encoding="utf-8")
@@ -513,7 +517,7 @@ def main() -> None:
     build_html(df,value_col,dashboard)
 
     print("="*72)
-    print("HEALTH TAM OVERVIEW - FIRST PASS")
+    print("HEALTH TAM OVERVIEW - CANONICAL DATA")
     print("="*72)
     print(f"Rows loaded:              {len(df):,}")
     print(f"Total Health procurement: {money(s['total'])}")
