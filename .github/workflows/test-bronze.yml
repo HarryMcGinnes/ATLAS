@@ -1,0 +1,49 @@
+
+name: Test ATLAS Bronze
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-bronze:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install pandas pyarrow
+
+      - name: Download baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p data/austender/baseline
+          gh release download atlas-data \
+            --pattern "austender_baseline.parquet" \
+            --dir data/austender/baseline
+
+      - name: Build Bronze
+        run: |
+          python atlas/bronze/ingest.py \
+            --baseline data/austender/baseline/austender_baseline.parquet \
+            --monthly-dir data/austender/monthly
+
+      - name: Validate Bronze
+        run: python atlas/bronze/validate.py
+
+      - name: Upload Bronze artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: atlas-bronze-test
+          path: data/bronze/austender/
+          retention-days: 7
