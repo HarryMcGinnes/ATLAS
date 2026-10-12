@@ -62,6 +62,29 @@ jobs:
           print(f"Silver Core PASS: {len(df):,} rows")
           PY
 
+      - name: Build Defence Silver Industry
+        run: |
+          python atlas/silver/industry/defence/classify.py \
+            --input data/silver/core/austender_contracts.parquet \
+            --output data/silver/industry/defence/defence_contracts.parquet
+
+      - name: Validate Defence Silver Industry
+        run: |
+          python - <<'PY'
+          import pandas as pd
+
+          path = "data/silver/industry/defence/defence_contracts.parquet"
+          df = pd.read_parquet(path)
+
+          assert len(df) > 0, "Defence dataset is empty"
+          assert df["is_defence_scope"].all()
+          assert df["CN ID"].is_unique, "Duplicate contract IDs"
+          assert df["supplier_group"].notna().all()
+
+          print(f"Defence Silver PASS: {len(df):,} contracts")
+          print(f"Total value: A${df['Value'].sum()/1e9:,.3f}B")
+          PY
+
       - name: Build legacy dataset for comparison
         run: |
           python pipeline/combine_financial_year_analysis.py \
