@@ -1,0 +1,24 @@
+
+service_offerings:
+  - id: STA
+    name: "Strategy, Transformation & Advisory"
+
+  - id: SIE
+    name: "SI & Engineering"
+
+  - id: DAA
+    name: "Data, AI & Automation"
+
+  - id: CIC
+    name: "Cloud Infrastructure & Cyber"
+
+  - id: MSO
+    name: "Managed Services & Operations"
+
+classification:
+  use_category: true
+  use_description: true
+  use_supplier_context: true
+  allow_unclassified: true
+  record_confidence: true
+  record_evidence: true
