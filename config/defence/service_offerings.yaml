@@ -3,17 +3,147 @@ service_offerings:
   - id: STA
     name: "Strategy, Transformation & Advisory"
 
+    rules:
+      - field: "Description"
+        pattern: '\b(?:strategy|strategic advisory|business advisory)\b'
+        weight: 15
+        reason: "Strategy or advisory services"
+
+      - field: "Description"
+        pattern: '\b(?:business transformation|operating model|change management)\b'
+        weight: 15
+        reason: "Business transformation"
+
+      - field: "Description"
+        pattern: '\b(?:feasibility study|business case|options analysis)\b'
+        weight: 15
+        reason: "Feasibility or business case"
+
+      - field: "Description"
+        pattern: '\b(?:project management|program management|pmo)\b'
+        weight: 12
+        reason: "Project or program management"
+
   - id: SIE
     name: "SI & Engineering"
+
+    rules:
+      - field: "Description"
+        pattern: '\b(?:systems? integration|platform integration|application integration)\b'
+        weight: 18
+        reason: "Systems or platform integration"
+
+      - field: "Description"
+        pattern: '\b(?:software development|application development|software engineering)\b'
+        weight: 17
+        reason: "Software or application development"
+
+      - field: "Description"
+        pattern: '\b(?:devops|devsecops|digital engineering|systems engineering)\b'
+        weight: 14
+        reason: "Digital or systems engineering"
+
+      - field: "Description"
+        pattern: '\b(?:erp implementation|sap implementation|platform implementation)\b'
+        weight: 16
+        reason: "Enterprise platform implementation"
 
   - id: DAA
     name: "Data, AI & Automation"
 
+    rules:
+      - field: "Description"
+        pattern: '\b(?:data engineering|data migration|data integration|data governance)\b'
+        weight: 17
+        reason: "Data engineering or management"
+
+      - field: "Description"
+        pattern: '\b(?:data platform|data warehouse|data lake|data remediation)\b'
+        weight: 17
+        reason: "Data platforms and infrastructure"
+
+      - field: "Description"
+        pattern: '\b(?:analytics|business intelligence|power bi|tableau)\b'
+        weight: 16
+        reason: "Analytics and business intelligence"
+
+      - field: "Description"
+        pattern: '\b(?:artificial intelligence|machine learning|generative ai|genai)\b'
+        weight: 18
+        reason: "Artificial intelligence"
+
+      - field: "Description"
+        pattern: '\b(?:automation|robotic process automation|rpa)\b'
+        weight: 16
+        reason: "Automation"
+
   - id: CIC
     name: "Cloud Infrastructure & Cyber"
 
+    rules:
+      - field: "Description"
+        pattern: '\b(?:cloud services?|cloud migration|cloud hosting|cloud infrastructure)\b'
+        weight: 18
+        reason: "Cloud services and infrastructure"
+
+      - field: "Description"
+        pattern: '\b(?:aws|amazon web services|azure|google cloud|gcp)\b'
+        weight: 15
+        reason: "Cloud platform"
+
+      - field: "Description"
+        pattern: '\b(?:cybersecurity|cyber security|security operations|zero trust|siem)\b'
+        weight: 18
+        reason: "Cybersecurity services"
+
+      - field: "Description"
+        pattern: '\b(?:identity and access management|iam|irap)\b'
+        weight: 17
+        reason: "Identity and security assurance"
+
+      - field: "Description"
+        pattern: '\b(?:network architecture|network engineering|network infrastructure|network implementation)\b'
+        weight: 15
+        reason: "Network infrastructure"
+
+      - field: "Description"
+        pattern: '\b(?:data centre hosting|infrastructure hosting|hosting services?)\b'
+        weight: 16
+        reason: "Infrastructure hosting"
+
   - id: MSO
     name: "Managed Services & Operations"
+
+    rules:
+      - field: "Description"
+        pattern: '\b(?:managed services?|application managed services?)\b'
+        weight: 20
+        reason: "Managed services"
+
+      - field: "Description"
+        pattern: '\b(?:service desk|help desk|end user support|desktop support)\b'
+        weight: 18
+        reason: "End-user and service desk support"
+
+      - field: "Description"
+        pattern: '\b(?:application support|system support|software support)\b'
+        weight: 17
+        reason: "Application and system support"
+
+      - field: "Description"
+        pattern: '\b(?:software maintenance|application maintenance|system maintenance)\b'
+        weight: 17
+        reason: "Software and system maintenance"
+
+      - field: "Description"
+        pattern: '\b(?:systems? operations?|application sustainment|software sustainment)\b'
+        weight: 16
+        reason: "Technology operations and sustainment"
+
+      - field: "Description"
+        pattern: '\b(?:renewal|subscription|licen[cs]e renewal)\b'
+        weight: 15
+        reason: "Renewals and subscriptions"
 
 classification:
   use_category: true
