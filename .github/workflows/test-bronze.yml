@@ -21,8 +21,8 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install pandas pyarrow
-
+        run: pip install pandas pyarrow pyyaml
+        
       - name: Download baseline
         env:
           GH_TOKEN: ${{ github.token }}
@@ -109,6 +109,13 @@ jobs:
           print("Defence domain validation: PASS")
           print(df["defence_domain"].value_counts().to_string())
           PY
+
+      - name: Test Defence Gold Classification
+        run: |
+          python atlas/gold/defence/classify.py \
+            --input data/silver/industry/defence/defence_enriched.parquet \
+            --output data/gold/defence/defence_classified.parquet
+
 
       - name: Build Health Silver Industry
         run: |
