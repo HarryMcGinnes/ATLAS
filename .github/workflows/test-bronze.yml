@@ -139,6 +139,19 @@ jobs:
           PY
 
 
+      - name: Reconcile Health datasets
+        run: |
+          python health/filter_health.py \
+            --input data/silver/core/austender_contracts.parquet \
+            --agency-config health/config/health_agencies.txt \
+            --output data/legacy_health.parquet \
+            --audit-dir audits/legacy_health
+
+          python atlas/silver/core/reconcile.py \
+            --old data/legacy_health.parquet \
+            --new data/silver/industry/health/health_contracts.parquet
+
+
       - name: Reconcile Defence datasets
         run: |
           python defence/filter_defence.py \
