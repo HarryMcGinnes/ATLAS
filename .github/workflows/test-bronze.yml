@@ -62,6 +62,20 @@ jobs:
           print(f"Silver Core PASS: {len(df):,} rows")
           PY
 
+      - name: Build legacy dataset for comparison
+        run: |
+          python pipeline/combine_financial_year_analysis.py \
+            --baseline data/austender/baseline/austender_baseline.parquet \
+            --monthly-dir data/austender/monthly \
+            --output data/austender/combined/austender_combined.parquet \
+            --audit-dir audits/austender/combined
+
+      - name: Reconcile Silver Core
+        run: |
+          python atlas/silver/core/reconcile.py \
+            --old data/austender/combined/austender_combined.parquet \
+            --new data/silver/core/austender_contracts.parquet
+
 
       - name: Upload ATLAS datasets
         uses: actions/upload-artifact@v4
