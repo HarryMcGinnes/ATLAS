@@ -23,6 +23,12 @@ service_offerings:
         pattern: '\b(?:project management|program management|pmo)\b'
         weight: 12
         reason: "Project or program management"
+        
+      - field: "Category"
+        pattern: '\b(?:management advisory|strategic planning consultation|project management|project administration or planning|feasibility studies)\b'
+        weight: 14
+        reason: "Strategy/advisory procurement category"
+
 
   - id: SIE
     name: "SI & Engineering"
@@ -47,6 +53,22 @@ service_offerings:
         pattern: '\b(?:erp implementation|sap implementation|platform implementation)\b'
         weight: 16
         reason: "Enterprise platform implementation"
+        
+      - field: "Category"
+        pattern: '\b(?:software development|application implementation|systems? integration)\b'
+        weight: 17
+        reason: "Software development or systems integration category"
+
+      - field: "Category"
+        pattern: '\b(?:software or hardware engineering|enterprise software)\b'
+        weight: 15
+        reason: "Software engineering category"
+
+      - field: "Category"
+        pattern: '\b(?:computer services|information technology services)\b'
+        weight: 8
+        reason: "General IT services category"
+
 
   - id: DAA
     name: "Data, AI & Automation"
@@ -76,6 +98,22 @@ service_offerings:
         pattern: '\b(?:automation|robotic process automation|rpa)\b'
         weight: 16
         reason: "Automation"
+        
+      - field: "Category"
+        pattern: '\b(?:data management|database|data services|data processing)\b'
+        weight: 16
+        reason: "Data management and processing category"
+
+      - field: "Category"
+        pattern: '\b(?:analytics|business intelligence|statistical services)\b'
+        weight: 17
+        reason: "Analytics and business intelligence category"
+
+      - field: "Category"
+        pattern: '\b(?:artificial intelligence|machine learning)\b'
+        weight: 18
+        reason: "AI and machine learning category"
+
 
   - id: CIC
     name: "Cloud Infrastructure & Cyber"
@@ -110,6 +148,22 @@ service_offerings:
         pattern: '\b(?:data centre hosting|infrastructure hosting|hosting services?)\b'
         weight: 16
         reason: "Infrastructure hosting"
+        
+      - field: "Category"
+        pattern: '\b(?:cloud computing|cloud infrastructure|hosting services)\b'
+        weight: 18
+        reason: "Cloud computing and hosting category"
+
+      - field: "Category"
+        pattern: '\b(?:cyber security|cybersecurity|information security)\b'
+        weight: 18
+        reason: "Cybersecurity category"
+
+      - field: "Category"
+        pattern: '\b(?:network services|telecommunications services)\b'
+        weight: 14
+        reason: "Network and telecommunications category"
+
 
   - id: MSO
     name: "Managed Services & Operations"
@@ -144,6 +198,22 @@ service_offerings:
         pattern: '\b(?:renewal|subscription|licen[cs]e renewal)\b'
         weight: 15
         reason: "Renewals and subscriptions"
+        
+      - field: "Category"
+        pattern: '\b(?:software maintenance and support|maintenance or support fees)\b'
+        weight: 18
+        reason: "Software maintenance and support category"
+
+      - field: "Category"
+        pattern: '\b(?:system administrators|service management|workflow management)\b'
+        weight: 17
+        reason: "System administration and service management category"
+
+      - field: "Category"
+        pattern: '\b(?:customer relationship management|learning management)\b'
+        weight: 15
+        reason: "Enterprise operations category"
+
 
 classification:
   use_category: true
