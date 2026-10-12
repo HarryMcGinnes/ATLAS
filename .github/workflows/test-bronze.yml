@@ -85,6 +85,32 @@ jobs:
           print(f"Total value: A${df['Value'].sum()/1e9:,.3f}B")
           PY
 
+          
+      - name: Build Defence Domains
+        run: |
+          python atlas/silver/industry/defence/domains.py \
+            --input data/silver/industry/defence/defence_contracts.parquet \
+            --lookup defence/config/defence_domain_lookup.csv \
+            --output data/silver/industry/defence/defence_enriched.parquet
+
+      - name: Validate Defence Domains
+        run: |
+          python - <<'PY'
+          import pandas as pd
+
+          df = pd.read_parquet(
+              "data/silver/industry/defence/defence_enriched.parquet"
+          )
+
+          assert len(df) == 332026, "Defence row count changed"
+          assert "defence_domain" in df.columns
+          assert df["defence_domain"].notna().all()
+
+          print("Defence domain validation: PASS")
+          print(df["defence_domain"].value_counts().to_string())
+          PY
+
+
       - name: Reconcile Defence datasets
         run: |
           python defence/filter_defence.py \
