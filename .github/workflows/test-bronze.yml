@@ -116,6 +116,10 @@ jobs:
             --input data/silver/industry/defence/defence_enriched.parquet \
             --output data/gold/defence/defence_classified.parquet
 
+      - name: Audit Unclassified Defence Contracts
+        run: |
+          python atlas/gold/defence/audit_unclassified.py
+
 
       - name: Build Health Silver Industry
         run: |
