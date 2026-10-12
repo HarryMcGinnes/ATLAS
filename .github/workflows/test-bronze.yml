@@ -147,4 +147,5 @@ jobs:
             data/bronze/austender/
             data/silver/core/
             audits/silver/core/
+            data/silver/industry/defence/
 
