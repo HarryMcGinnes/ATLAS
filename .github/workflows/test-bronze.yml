@@ -110,6 +110,34 @@ jobs:
           print(df["defence_domain"].value_counts().to_string())
           PY
 
+      - name: Build Health Silver Industry
+        run: |
+          python atlas/silver/industry/health/classify.py \
+            --input data/silver/core/austender_contracts.parquet \
+            --agency-config health/config/health_agencies.txt \
+            --aliases config/health/agency_aliases.csv \
+            --output data/silver/industry/health/health_contracts.parquet
+
+      - name: Validate Health Silver Industry
+        run: |
+          python - <<'PY'
+          import pandas as pd
+
+          df = pd.read_parquet(
+              "data/silver/industry/health/health_contracts.parquet"
+          )
+
+          assert len(df) > 0, "Health dataset is empty"
+          assert df["CN ID"].is_unique, "Duplicate contract IDs"
+          assert df["supplier_group"].notna().all()
+          assert df["is_health_scope"].all()
+
+          print("Health Silver validation: PASS")
+          print(f"Contracts: {len(df):,}")
+          print(f"Value: A${df['Value'].sum()/1e9:,.3f}B")
+          print(f"Accenture rows: {df['is_accenture'].sum():,}")
+          PY
+
 
       - name: Reconcile Defence datasets
         run: |
