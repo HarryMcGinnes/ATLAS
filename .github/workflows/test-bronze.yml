@@ -85,6 +85,17 @@ jobs:
           print(f"Total value: A${df['Value'].sum()/1e9:,.3f}B")
           PY
 
+      - name: Reconcile Defence datasets
+        run: |
+          python defence/filter_defence.py \
+            --input data/silver/core/austender_contracts.parquet \
+            --output data/legacy_defence.parquet \
+            --audit-dir audits/legacy_defence
+
+          python atlas/silver/core/reconcile.py \
+            --old data/legacy_defence.parquet \
+            --new data/silver/industry/defence/defence_contracts.parquet
+
       - name: Build legacy dataset for comparison
         run: |
           python pipeline/combine_financial_year_analysis.py \
