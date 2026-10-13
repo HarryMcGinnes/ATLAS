@@ -57,3 +57,37 @@ review[columns].to_csv(
     "defence_classification_review.csv",
     index=False
 )
+
+
+from pathlib import Path
+
+review_terms = (
+    r"software|digital|ict|cloud|cyber|data|"
+    r"systems? integration|engineering|"
+    r"consulting|advisory|transformation"
+)
+
+candidates = unclassified[
+    unclassified["Description"].fillna("").str.contains(
+        review_terms, case=False, regex=True
+    )
+].copy()
+
+candidates = candidates.sort_values(
+    "Value", ascending=False
+)
+
+output = Path("audits/gold/defence")
+output.mkdir(parents=True, exist_ok=True)
+
+candidates[
+    ["CN ID", "Category", "Description",
+     "Supplier Name", "Value"]
+].to_csv(
+    output / "classification_review_queue.csv",
+    index=False
+)
+
+print(f"Review candidates: {len(candidates):,}")
+print(f"Review value: A${candidates['Value'].sum()/1e9:,.2f}B")
+
