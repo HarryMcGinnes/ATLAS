@@ -27,3 +27,33 @@ print(
     f"\nUnclassified value: "
     f"A${unclassified['Value'].sum()/1e9:,.2f}B"
 )
+
+
+review_categories = [
+    "Military services and national defence",
+    "Professional engineering services",
+    "Management support services",
+    "Software",
+]
+
+review = unclassified[
+    unclassified["Category"].isin(review_categories)
+].copy()
+
+columns = [
+    "CN ID",
+    "Category",
+    "Description",
+    "Supplier Name",
+    "Value",
+]
+
+review = review.sort_values("Value", ascending=False)
+
+print("\nTOP 40 CONTRACTS FOR CLASSIFICATION REVIEW")
+print(review[columns].head(40).to_string(index=False))
+
+review[columns].to_csv(
+    "defence_classification_review.csv",
+    index=False
+)
