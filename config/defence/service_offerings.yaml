@@ -181,6 +181,34 @@ service_offerings:
         weight: 20
         reason: "Managed services"
 
+
+      - field: "Description"
+        pattern: '\b(?:ict support|it support|technology support|ict management and support services)\b'
+        weight: 18
+        reason: "ICT and technology support services"
+
+      - field: "Description"
+        pattern: '\b(?:application sustainment|systems? sustainment|software sustainment)\b'
+        weight: 17
+        reason: "Application and system sustainment"
+
+      - field: "Description"
+        pattern: '\b(?:ict operations|it operations|systems? administration)\b'
+        weight: 17
+        reason: "Technology operations and administration"
+
+        
+      - field: "Description"
+        pattern: '\b(?:software licen[cs]es?|licen[cs]e renewal|software subscription|annual subscription)\b'
+        weight: 18
+        reason: "Software licensing and subscriptions"
+
+      - field: "Category"
+        pattern: '\b(?:software maintenance and support|maintenance or support fees)\b'
+        weight: 16
+        reason: "Software maintenance and support"
+
+
       - field: "Description"
         pattern: '\b(?:service desk|help desk|end user support|desktop support)\b'
         weight: 18
