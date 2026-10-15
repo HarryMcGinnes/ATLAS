@@ -11,6 +11,7 @@ CONFIG_PATH = Path("config/defence/service_offerings.yaml")
 
 def load_config(path=CONFIG_PATH):
     """Load the Defence Service Offering configuration."""
+
     with open(path, encoding="utf-8") as file:
         return yaml.safe_load(file)
 
@@ -21,8 +22,9 @@ def classify_contract(contract, config):
     scores = {}
     evidence = {}
 
-    for offering in config["service_offerings"]:
+    for offering in config.get("service_offerings", []):
         name = offering["name"]
+
         scores[name] = 0
         evidence[name] = []
 
@@ -33,11 +35,28 @@ def classify_contract(contract, config):
 
             value = str(contract.get(field, "") or "")
 
-            if re.search(pattern, value, flags=re.IGNORECASE):
+            if re.search(
+                pattern,
+                value,
+                flags=re.IGNORECASE,
+            ):
                 scores[name] += weight
                 evidence[name].append(
                     rule.get("reason", pattern)
                 )
+
+    # Safety check in case no Service Offerings exist in config.
+    if not scores:
+        return {
+            "service_offering": None,
+            "service_offering_score": 0,
+            "service_offering_runner_up": None,
+            "service_offering_runner_up_score": 0,
+            "service_offering_score_margin": 0,
+            "service_offering_confidence": 0,
+            "service_offering_reason": "No Service Offerings configured",
+            "classification_review_required": True,
+        }
 
     ranked = sorted(
         scores.items(),
@@ -45,10 +64,16 @@ def classify_contract(contract, config):
         reverse=True,
     )
 
-    winner, score = ranked[0]
-    runner_up, runner_up_score = ranked[1]
+    winner, winner_score = ranked[0]
 
-    if score == 0:
+    if len(ranked) > 1:
+        runner_up, runner_up_score = ranked[1]
+    else:
+        runner_up = None
+        runner_up_score = 0
+
+    # Nothing matched.
+    if winner_score == 0:
         return {
             "service_offering": None,
             "service_offering_score": 0,
@@ -57,27 +82,4 @@ def classify_contract(contract, config):
             "service_offering_score_margin": 0,
             "service_offering_confidence": 0,
             "service_offering_reason": "No matching rules",
-            "classification_review_required": True,
-        }
-
-    margin = score - runner_up_score
-
-    relative_margin = round(
-        100 * margin / max(score, 1)
-    )
-
-    tie = score == runner_up_score
-
-    if tie:
-        winner_value = None
-        confidence = 0
-        review_required = True
-        reason = (
-            f"Ambiguous classification: "
-            f"{winner} and {runner_up} both scored {score}"
-        )
-    else:
-        winner_value = winner
-        confidence = relative_margin
-
-     
+            "classification_review
