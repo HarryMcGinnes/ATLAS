@@ -1,3 +1,20 @@
+"""ATLAS configurable classification engine."""
+
+import re
+from pathlib import Path
+
+import yaml
+
+
+CONFIG_PATH = Path("config/defence/service_offerings.yaml")
+
+
+def load_config(path=CONFIG_PATH):
+    """Load the Defence Service Offering configuration."""
+    with open(path, encoding="utf-8") as file:
+        return yaml.safe_load(file)
+
+
 def classify_contract(contract, config):
     """Score a contract against configured classification rules."""
 
@@ -63,22 +80,4 @@ def classify_contract(contract, config):
         winner_value = winner
         confidence = relative_margin
 
-        # Initial review rule.
-        # We will tune this after analysing real results.
-        review_required = (
-            score < 12
-            or margin < 4
-        )
-
-        reason = "; ".join(evidence[winner])
-
-    return {
-        "service_offering": winner_value,
-        "service_offering_score": score,
-        "service_offering_runner_up": runner_up,
-        "service_offering_runner_up_score": runner_up_score,
-        "service_offering_score_margin": margin,
-        "service_offering_confidence": confidence,
-        "service_offering_reason": reason,
-        "classification_review_required": review_required,
-    }
+     
