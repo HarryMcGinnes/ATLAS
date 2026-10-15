@@ -116,6 +116,80 @@ jobs:
             --input data/silver/industry/defence/defence_enriched.parquet \
             --output data/gold/defence/defence_classified.parquet
 
+      - name: Inspect Defence Service Offering Classification
+        run: |
+          python - <<'PY'
+          import pandas as pd
+
+          path = "data/gold/defence/defence_classified.parquet"
+          df = pd.read_parquet(path)
+
+          print()
+          print("SERVICE OFFERING DISTRIBUTION")
+          print("=" * 50)
+          print(
+              df["service_offering"]
+              .fillna("Unclassified")
+              .value_counts()
+              .to_string()
+          )
+
+          print()
+          print("SERVICE OFFERING VALUE")
+          print("=" * 50)
+
+          summary = (
+              df.assign(
+                  service_offering=df["service_offering"]
+                  .fillna("Unclassified")
+              )
+              .groupby("service_offering")["Value"]
+              .agg(["count", "sum"])
+              .sort_values("sum", ascending=False)
+          )
+
+          summary["value_bn"] = summary["sum"] / 1e9
+
+          print(
+              summary[
+                  ["count", "value_bn"]
+              ].to_string()
+          )
+
+          print()
+          print("CLASSIFICATION QUALITY")
+          print("=" * 50)
+
+          classified = df["service_offering"].notna()
+          review = (
+              df["classification_review_required"]
+              .fillna(False)
+          )
+
+          print(
+              f"Classified: "
+              f"{classified.mean() * 100:.2f}%"
+          )
+          print(
+              f"Unclassified: "
+              f"{(~classified).sum():,}"
+          )
+          print(
+              f"Review required: "
+              f"{review.sum():,}"
+          )
+
+          print()
+          print("SCORE DISTRIBUTION")
+          print("=" * 50)
+
+          print(
+              df["service_offering_score"]
+              .describe()
+              .to_string()
+          )
+          PY
+
       - name: Audit Unclassified Defence Contracts
         run: |
           python atlas/gold/defence/audit_unclassified.py
