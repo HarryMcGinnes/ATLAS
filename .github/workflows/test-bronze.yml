@@ -204,3 +204,10 @@ jobs:
             data/gold/defence/
             audits/gold/defence/
 
+      - name: Upload Defence Review CSV
+        uses: actions/upload-artifact@v4
+        with:
+          name: defence-review-only
+          path: audits/gold/defence/classification_review_queue.csv
+          retention-days: 7
+
