@@ -49,6 +49,13 @@ service_offerings:
         weight: 14
         reason: "Digital or systems engineering"
 
+        
+      - field: "Description"
+        pattern: '^(?:software|software services?)$'
+        weight: 14
+        reason: "Explicit software procurement"
+
+
       - field: "Description"
         pattern: '\b(?:erp implementation|sap implementation|platform implementation)\b'
         weight: 16
