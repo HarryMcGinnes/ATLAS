@@ -201,4 +201,6 @@ jobs:
             audits/silver/core/
             data/silver/industry/defence/
             data/silver/industry/health/
+            data/gold/defence/
+            audits/gold/defence/
 
