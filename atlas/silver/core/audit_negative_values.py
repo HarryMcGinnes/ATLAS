@@ -1,8 +1,10 @@
 
-"""ATLAS read-only audit of negative contract values."""
+"""ATLAS read-only negative contract value audit."""
 
 from pathlib import Path
+import re
 import pandas as pd
+
 
 DATASETS = {
     "Bronze": Path("data/bronze/austender"),
@@ -17,30 +19,79 @@ DATASETS = {
 OUTPUT = Path("audits/silver/core/negative_values_audit.csv")
 
 
+def find_column(df, exact_names, keywords=None):
+    """Identify a column without changing the source dataset."""
 
-def audit(name, df):
-    print(f"\nAuditing: {name}", flush=True)
-    print(f"Rows: {len(df):,}", flush=True)
-    print(f"Columns: {list(df.columns)}", flush=True)
+    for name in exact_names:
+        if name in df.columns:
+            return name
 
-    if "Value" not in df.columns:
-        raise RuntimeError(
-            f"{name} has no Value column. "
-            "Check the source schema."
-        )
+    if keywords:
+        matches = [
+            col for col in df.columns
+            if all(word in col.lower() for word in keywords)
+        ]
 
-    values = pd.to_numeric(df["Value"], errors="coerce")
+        if len(matches) == 1:
+            return matches[0]
 
-    ids = df["CN ID"].fillna("").astype(str).str.upper()
+    raise ValueError(
+        f"Cannot uniquely identify column. "
+        f"Expected: {exact_names}. "
+        f"Available: {list(df.columns)}"
+    )
 
-    amendments = ids.str.contains(r"-A\d+$", regex=True)
+
+def audit(name, df, source=""):
+    value_col = find_column(
+        df,
+        [
+            "Value",
+            "37. Value",
+            "Contract Value",
+            "Contract Value (AUD)",
+            "Contract Value (Including GST)",
+        ],
+        keywords=["value"],
+    )
+
+    cn_col = find_column(
+        df,
+        ["CN ID", "03. Contract Notice ID"],
+    )
+
+    values = pd.to_numeric(
+        df[value_col]
+        .astype("string")
+        .str.replace(",", "", regex=False)
+        .str.replace("$", "", regex=False)
+        .str.strip(),
+        errors="coerce",
+    )
+
+    ids = (
+        df[cn_col]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+
+    amendments = ids.str.contains(
+        r"-A\d+$", regex=True
+    )
+
     negative = values < 0
 
     return {
         "dataset": name,
+        "source": source,
+        "value_column": value_col,
         "rows": len(df),
         "negative_rows": int(negative.sum()),
-        "negative_amendments": int((negative & amendments).sum()),
+        "negative_amendments": int(
+            (negative & amendments).sum()
+        ),
         "negative_total": float(values[negative].sum()),
         "negative_amendment_total": float(
             values[negative & amendments].sum()
@@ -54,52 +105,37 @@ def main():
     results = []
 
     for name, path in DATASETS.items():
-        
         if path.is_dir():
             files = sorted(path.rglob("*.parquet"))
+
             if not files:
                 raise FileNotFoundError(
                     f"No Parquet files found in {path}"
                 )
 
-            frames = []
-
             for file in files:
-                part = pd.read_parquet(file)
-
-                if "Value" not in part.columns:
-                    print(
-                        f"SKIPPED {file}: no Value column. "
-                        f"Available columns: {list(part.columns)}"
-                    )
-                    continue
-
-                if "CN ID" not in part.columns:
-                    print(f"SKIPPED {file}: no CN ID column")
-                    continue
-
-                frames.append(part)
-
-            if not frames:
-                raise RuntimeError(
-                    f"No auditable contract files found in {path}"
+                df = pd.read_parquet(file)
+                results.append(
+                    audit(name, df, str(file))
                 )
-
-            df = pd.concat(frames, ignore_index=True)
 
         else:
             df = pd.read_parquet(path)
-
-
-        results.append(audit(name, df))
+            results.append(
+                audit(name, df, str(path))
+            )
 
     report = pd.DataFrame(results)
 
-    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT.parent.mkdir(
+        parents=True, exist_ok=True
+    )
+
     report.to_csv(OUTPUT, index=False)
 
     print("\nATLAS NEGATIVE VALUE AUDIT")
-    print("=" * 70)
+    print("=" * 90)
+
     print(report.to_string(index=False))
 
     print(f"\nSaved: {OUTPUT}")
