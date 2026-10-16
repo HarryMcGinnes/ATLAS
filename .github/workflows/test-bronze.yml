@@ -162,6 +162,19 @@ jobs:
             --input data/silver/industry/defence/defence_enriched.parquet \
             --output data/gold/defence/defence_classified.parquet
 
+      - name: Audit Negative Contract Values
+        run: |
+          python atlas/silver/core/audit_negative_values.py
+
+      - name: Upload Negative Value Audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: negative-values-audit
+          path: audits/silver/core/negative_values_audit.csv
+          retention-days: 7
+          if-no-files-found: error
+
+
       - name: Validate Defence Gold POC
         run: |
           python - <<'PY'
