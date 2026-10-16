@@ -1,13 +1,13 @@
 
-"""ATLAS Defence multi-signal Service Offering classification engine.
+"""ATLAS Defence Service Offering classification engine.
 
-Service Offering classification is independent of addressability.
-Scores represent evidence strength, not statistical probabilities.
+Uses Description, Category, Organisation, Supplier and Domain.
+Addressability is deliberately handled separately.
+Scores represent evidence strength, not calibrated probabilities.
 """
 
 from pathlib import Path
 import re
-
 import yaml
 
 
@@ -27,50 +27,11 @@ HIGH_CONFIDENCE_THRESHOLD = 80
 MINIMUM_CLEAR_MARGIN = 10
 
 DECISIVE_DESCRIPTION_THRESHOLD = 35
-DECISIVE_CATEGORY_THRESHOLD = 25
+DECISIVE_CATEGORY_THRESHOLD = 24
 SUPPORTING_DESCRIPTION_THRESHOLD = 15
 
 
-def load_config(path=CONFIG_PATH):
-    """Load and validate classification configuration."""
-    with open(path, encoding="utf-8") as file:
-        config = yaml.safe_load(file)
-
-    if not isinstance(config, dict):
-        raise ValueError("Invalid Service Offering configuration")
-
-    offerings = config.get("service_offerings")
-
-    if not isinstance(offerings, list) or len(offerings) < 2:
-        raise ValueError("At least two Service Offerings are required")
-
-    names = [item["name"] for item in offerings]
-
-    if len(names) != len(set(names)):
-        raise ValueError("Duplicate Service Offering names")
-
-    for offering in offerings:
-        rules = offering.get("rules", {})
-        if not isinstance(rules, dict):
-            raise ValueError(f"Invalid rules for {offering['name']}")
-
-        for source, source_rules in rules.items():
-            if source not in SOURCE_CAPS:
-                raise ValueError(f"Unknown evidence source: {source}")
-
-            for rule in source_rules:
-                re.compile(rule["pattern"])
-                weight = int(rule.get("weight", 0))
-                if weight < 0 or weight > SOURCE_CAPS[source]:
-                    raise ValueError(
-                        f"Invalid {source} weight in {offering['name']}"
-                    )
-
-    return config
-
-
 def clean_text(value):
-    """Safely normalise source text."""
     if value is None:
         return ""
 
@@ -84,7 +45,6 @@ def clean_text(value):
 
 
 def first_available(contract, fields):
-    """Return the first non-empty source value."""
     for field in fields:
         value = clean_text(contract.get(field))
         if value:
@@ -92,15 +52,66 @@ def first_available(contract, fields):
     return ""
 
 
+def load_config(path=CONFIG_PATH):
+    with open(path, encoding="utf-8") as file:
+        config = yaml.safe_load(file)
+
+    if not isinstance(config, dict):
+        raise ValueError("Invalid classification configuration")
+
+    offerings = config.get("service_offerings")
+
+    if not isinstance(offerings, list) or len(offerings) < 2:
+        raise ValueError("At least two Service Offerings required")
+
+    names = [item["name"] for item in offerings]
+
+    if len(names) != len(set(names)):
+        raise ValueError("Duplicate Service Offering names")
+
+    for offering in offerings:
+        rules = offering.get("rules", {})
+
+        if not isinstance(rules, dict):
+            raise ValueError("Invalid Service Offering rules")
+
+        for source, entries in rules.items():
+            if source not in SOURCE_CAPS:
+                raise ValueError(f"Unknown evidence source: {source}")
+
+            if not isinstance(entries, list):
+                raise ValueError(f"Invalid rules for {source}")
+
+            for entry in entries:
+                re.compile(entry["pattern"])
+                weight = int(entry.get("weight", 0))
+
+                if not 0 <= weight <= SOURCE_CAPS[source]:
+                    raise ValueError(
+                        f"Invalid weight in {offering['name']}: {source}"
+                    )
+
+    return config
+
+
 def get_contract_context(contract):
-    """Extract the five evidence sources."""
     division = first_available(
         contract,
-        ["Agency Division", "Agency Divison", "div_clean"],
+        [
+            "Agency Division",
+            "35. Agency Division",
+            "Agency Divison",
+            "div_clean",
+        ],
     )
+
     branch = first_available(
         contract,
-        ["Agency Branch", "branch_clean"],
+        [
+            "Agency Branch",
+            "36. Agency Branch",
+            "branch_clean",
+        ],
     )
 
     return {
@@ -109,14 +120,14 @@ def get_contract_context(contract):
         "Category Type": clean_text(contract.get("Category Type")),
         "Organisation": f"{division} {branch}".strip(),
         "Supplier": first_available(
-            contract, ["supplier_group", "Supplier Name"]
+            contract,
+            ["supplier_group", "Supplier Name"],
         ),
         "Domain": clean_text(contract.get("defence_domain")),
     }
 
 
 def matches_any(text, patterns):
-    """Return the first matched text or None."""
     for pattern in patterns:
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
@@ -125,68 +136,89 @@ def matches_any(text, patterns):
 
 
 def goods_guardrail(context, config):
-    """Restrict Service Offering assignment for physical Goods.
+    """Prevent physical Goods from receiving misleading SO labels."""
 
-    This is a classification guardrail, not an addressability
-    decision. Physical/digital conflicts remain unclassified.
-    """
     if context["Category Type"] != "goods":
         return True, None
 
     settings = config.get("goods_guardrail", {})
+
     physical = matches_any(
         context["Category"],
         settings.get("physical_patterns", []),
     )
+
     digital = matches_any(
-        context["Description"],
-        settings.get("digital_patterns", []),
-    )
-    category_digital = matches_any(
-        context["Category"],
+        context["Description"] + " " + context["Category"],
         settings.get("digital_patterns", []),
     )
 
     if physical:
         return False, (
-            "Physical Goods category requires review"
-            + (f"; digital Description [{digital}]" if digital else "")
+            "Physical Goods category; digital component requires review"
+            if digital else "Physical Goods category"
         )
 
-    if not digital and not category_digital:
+    if not digital:
         return False, "Goods without explicit digital evidence"
 
     return True, None
 
 
-def source_score(text, rules, source_name, cap):
-    """Take the strongest matching rule per evidence source."""
+def source_score(text, rules, source, cap):
+    """Retain the strongest matching rule per evidence source."""
+
     best_score = 0
-    best_evidence = None
+    best_reason = None
 
     for rule in rules:
         match = re.search(
-            rule["pattern"], text, flags=re.IGNORECASE
+            rule["pattern"],
+            text,
+            flags=re.IGNORECASE,
         )
 
-        if not match:
-            continue
+        weight = min(int(rule.get("weight", 0)), cap)
 
-        score = min(int(rule.get("weight", 0)), cap)
-
-        if score > best_score:
-            best_score = score
-            reason = rule.get("reason", rule["pattern"])
-            best_evidence = (
-                f"{source_name}: {reason} "
-                f"[{match.group(0)}] (+{score})"
+        if match and weight > best_score:
+            best_score = weight
+            best_reason = (
+                f"{source}: "
+                f"{rule.get('reason', rule['pattern'])} "
+                f"[{match.group(0)}] (+{weight})"
             )
 
-    return best_score, best_evidence
+    return best_score, best_reason
 
 
-def confidence_grade(score, classified=True):
-    """Grade evidence strength, not statistical confidence."""
+def score_offering(context, offering):
+    rules = offering.get("rules", {})
+    scores = {}
+    evidence = []
+
+    for source, cap in SOURCE_CAPS.items():
+        score, reason = source_score(
+            context[source],
+            rules.get(source, []),
+            source,
+            cap,
+        )
+
+        scores[source] = score
+
+        if reason:
+            evidence.append(reason)
+
+    return {
+        "name": offering["name"],
+        "score": min(sum(scores.values()), 100),
+        "scores": scores,
+        "evidence": evidence,
+        "source_count": sum(v > 0 for v in scores.values()),
+    }
+
+
+def confidence_grade(score, classified):
     if not classified:
         return "D"
     if score >= HIGH_CONFIDENCE_THRESHOLD:
@@ -207,7 +239,6 @@ def make_result(
     reason="",
     review=True,
 ):
-    """Return a consistent classification record."""
     scores = scores or {}
 
     return {
@@ -219,7 +250,6 @@ def make_result(
         "service_offering_runner_up": runner_up,
         "service_offering_runner_up_score": int(runner_up_score),
         "service_offering_score_margin": int(margin),
-        # Compatibility with existing audit scripts.
         "service_offering_confidence": int(score),
         "service_offering_reason": reason,
         "service_offering_description_score": int(
@@ -242,35 +272,9 @@ def make_result(
     }
 
 
-def score_offering(context, offering):
-    """Score one Service Offering against all evidence sources."""
-    rules = offering.get("rules", {})
-    scores = {}
-    evidence = []
-
-    for source, cap in SOURCE_CAPS.items():
-        score, reason = source_score(
-            context[source],
-            rules.get(source, []),
-            source,
-            cap,
-        )
-
-        scores[source] = score
-        if reason:
-            evidence.append(reason)
-
-    return {
-        "name": offering["name"],
-        "score": min(sum(scores.values()), 100),
-        "scores": scores,
-        "evidence": evidence,
-        "source_count": sum(v > 0 for v in scores.values()),
-    }
-
-
 def classify_contract(contract, config):
-    """Classify a Defence contract independently of addressability."""
+    """Classify a contract without deciding addressability."""
+
     context = get_contract_context(contract)
 
     allowed, guardrail_reason = goods_guardrail(context, config)
@@ -278,20 +282,16 @@ def classify_contract(contract, config):
     if not allowed:
         return make_result(reason=guardrail_reason)
 
-    results = [
-        score_offering(context, offering)
-        for offering in config["service_offerings"]
-    ]
-
-    # Stable ordering makes equal-score behaviour deterministic.
     ranked = sorted(
-        results,
+        [
+            score_offering(context, offering)
+            for offering in config["service_offerings"]
+        ],
         key=lambda item: item["score"],
         reverse=True,
     )
 
-    winner = ranked[0]
-    runner_up = ranked[1]
+    winner, runner_up = ranked[:2]
 
     score = winner["score"]
     second_score = runner_up["score"]
@@ -313,6 +313,42 @@ def classify_contract(contract, config):
             **common,
         )
 
+    description = scores["Description"]
+    category = scores["Category"]
+    organisation = scores["Organisation"]
+    supplier = scores["Supplier"]
+
+    # Strong explicit descriptions are sufficient independently.
+    decisive_description = (
+        description >= DECISIVE_DESCRIPTION_THRESHOLD
+    )
+
+    # Category reinforced by a relevant description.
+    category_with_description = (
+        category >= DECISIVE_CATEGORY_THRESHOLD
+        and description >= SUPPORTING_DESCRIPTION_THRESHOLD
+    )
+
+    # Generic professional-service categories can be reinforced
+    # by supplier or procuring organisation context.
+    category_with_context = (
+        category >= DECISIVE_CATEGORY_THRESHOLD
+        and (organisation > 0 or supplier > 0)
+    )
+
+    # Supplier, Organisation and Domain cannot classify alone.
+    subject_evidence = description > 0 or category > 0
+
+    sufficient_evidence = (
+        subject_evidence
+        and (
+            score >= CLASSIFICATION_THRESHOLD
+            or decisive_description
+            or category_with_description
+            or category_with_context
+        )
+    )
+
     if margin == 0:
         return make_result(
             reason=(
@@ -322,29 +358,7 @@ def classify_contract(contract, config):
             **common,
         )
 
-    decisive_description = (
-        scores["Description"] >= DECISIVE_DESCRIPTION_THRESHOLD
-    )
-
-    supported_category = (
-        scores["Category"] >= DECISIVE_CATEGORY_THRESHOLD
-        and scores["Description"] >= SUPPORTING_DESCRIPTION_THRESHOLD
-    )
-
-    sufficient_evidence = (
-        score >= CLASSIFICATION_THRESHOLD
-        or decisive_description
-        or supported_category
-    )
-
-    # Context alone cannot establish a Service Offering.
-    # At least Category or Description must support the winner.
-    subject_evidence = (
-        scores["Description"] > 0
-        or scores["Category"] > 0
-    )
-
-    if not sufficient_evidence or not subject_evidence:
+    if not sufficient_evidence:
         return make_result(
             reason=(
                 f"Insufficient subject evidence for "
@@ -354,6 +368,8 @@ def classify_contract(contract, config):
             **common,
         )
 
+    # Preserve provisional classifications while flagging
+    # weaker or closely competing interpretations for review.
     review_required = (
         score < REVIEW_THRESHOLD
         or margin < MINIMUM_CLEAR_MARGIN
