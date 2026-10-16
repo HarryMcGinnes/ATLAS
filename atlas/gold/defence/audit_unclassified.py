@@ -267,5 +267,44 @@ def main():
     print(OUTPUT_DIR)
 
 
+    print("\nUNCLASSIFIED SCORE DISTRIBUTION")
+    
+    scores = pd.to_numeric(
+        unclassified["service_offering_score"],
+        errors="coerce"
+    ).fillna(0)
+    
+    print(pd.cut(
+        scores,
+        bins=[-1, 0, 15, 25, 35, 50, 65, 100],
+        labels=[
+            "0",
+            "1-15",
+            "16-25",
+            "26-35",
+            "36-50",
+            "51-65",
+            "66-100"
+        ]
+    ).value_counts().sort_index())
+    
+    print("\nHIGH-SCORING UNCLASSIFIED CONTRACTS")
+    
+    high = unclassified.loc[
+        scores >= 35,
+        [
+            "CN ID", "Category", "Description",
+            "service_offering_score",
+            "service_offering_reason"
+        ]
+    ].sort_values(
+        "service_offering_score",
+        ascending=False
+    )
+    
+    print(high.head(20).to_string(index=False))
+
+
+
 if __name__ == "__main__":
     main()
