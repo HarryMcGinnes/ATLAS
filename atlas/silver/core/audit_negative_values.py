@@ -42,18 +42,42 @@ def main():
     results = []
 
     for name, path in DATASETS.items():
+        
         if path.is_dir():
             files = sorted(path.rglob("*.parquet"))
             if not files:
                 raise FileNotFoundError(
                     f"No Parquet files found in {path}"
                 )
-            df = pd.concat(
-                [pd.read_parquet(f) for f in files],
-                ignore_index=True,
-            )
+
+            frames = []
+
+            for file in files:
+                part = pd.read_parquet(file)
+
+                if "Value" not in part.columns:
+                    print(
+                        f"SKIPPED {file}: no Value column. "
+                        f"Available columns: {list(part.columns)}"
+                    )
+                    continue
+
+                if "CN ID" not in part.columns:
+                    print(f"SKIPPED {file}: no CN ID column")
+                    continue
+
+                frames.append(part)
+
+            if not frames:
+                raise RuntimeError(
+                    f"No auditable contract files found in {path}"
+                )
+
+            df = pd.concat(frames, ignore_index=True)
+
         else:
             df = pd.read_parquet(path)
+
 
         results.append(audit(name, df))
 
