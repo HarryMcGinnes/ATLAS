@@ -1,93 +1,271 @@
-
-import pandas as pd
-
-df = pd.read_parquet(
-    "data/gold/defence/defence_classified.parquet"
-)
-
-unclassified = df[df["service_offering"].isna()].copy()
-
-summary = (
-    unclassified.groupby(
-        ["Category Type", "Category"],
-        dropna=False
-    )
-    .agg(
-        contracts=("CN ID", "count"),
-        total_value=("Value", "sum")
-    )
-    .reset_index()
-    .sort_values("total_value", ascending=False)
-)
-
-print("\nTOP 30 UNCLASSIFIED CATEGORIES")
-print(summary.head(30).to_string(index=False))
-
-print(
-    f"\nUnclassified value: "
-    f"A${unclassified['Value'].sum()/1e9:,.2f}B"
-)
-
-
-review_categories = [
-    "Military services and national defence",
-    "Professional engineering services",
-    "Management support services",
-    "Software",
-]
-
-review = unclassified[
-    unclassified["Category"].isin(review_categories)
-].copy()
-
-columns = [
-    "CN ID",
-    "Category",
-    "Description",
-    "Supplier Name",
-    "Value",
-]
-
-review = review.sort_values("Value", ascending=False)
-
-print("\nTOP 40 CONTRACTS FOR CLASSIFICATION REVIEW")
-print(review[columns].head(40).to_string(index=False))
-
-review[columns].to_csv(
-    "defence_classification_review.csv",
-    index=False
-)
-
+"""Audit Defence Service Offering classification results."""
 
 from pathlib import Path
 
-review_terms = (
-    r"software|digital|ict|cloud|cyber|data|"
-    r"systems? integration|engineering|"
-    r"consulting|advisory|transformation"
+import pandas as pd
+
+
+INPUT_PATH = Path(
+    "data/gold/defence/defence_classified.parquet"
 )
 
-candidates = unclassified[
-    unclassified["Description"].fillna("").str.contains(
-        review_terms, case=False, regex=True
+OUTPUT_DIR = Path("audits/gold/defence")
+
+
+def main():
+    df = pd.read_parquet(INPUT_PATH)
+
+    OUTPUT_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
     )
-].copy()
 
-candidates = candidates.sort_values(
-    "Value", ascending=False
-)
+    # ------------------------------------------------------------
+    # BASIC CLASSIFICATION STATES
+    # ------------------------------------------------------------
 
-output = Path("audits/gold/defence")
-output.mkdir(parents=True, exist_ok=True)
+    no_match = (
+        df["service_offering"].isna()
+        & df["service_offering_score"].eq(0)
+    )
 
-candidates[
-    ["CN ID", "Category", "Description",
-     "Supplier Name", "Value"]
-].to_csv(
-    output / "classification_review_queue.csv",
-    index=False
-)
+    ambiguous = (
+        df["service_offering"].isna()
+        & df["service_offering_score"].gt(0)
+    )
 
-print(f"Review candidates: {len(candidates):,}")
-print(f"Review value: A${candidates['Value'].sum()/1e9:,.2f}B")
+    weak_score = (
+        df["service_offering"].notna()
+        & df["service_offering_score"].lt(12)
+    )
 
+    close_score = (
+        df["service_offering"].notna()
+        & df["service_offering_score_margin"].lt(4)
+    )
+
+    df["classification_audit_status"] = "classified"
+
+    df.loc[
+        no_match,
+        "classification_audit_status",
+    ] = "no_match"
+
+    df.loc[
+        ambiguous,
+        "classification_audit_status",
+    ] = "ambiguous"
+
+    df.loc[
+        weak_score,
+        "classification_audit_status",
+    ] = "weak_score"
+
+    df.loc[
+        close_score,
+        "classification_audit_status",
+    ] = "close_score"
+
+    # ------------------------------------------------------------
+    # SUMMARY
+    # ------------------------------------------------------------
+
+    summary = (
+        df.groupby(
+            "classification_audit_status",
+            dropna=False,
+        )
+        .agg(
+            contracts=("CN ID", "count"),
+            total_value=("Value", "sum"),
+        )
+        .reset_index()
+        .sort_values(
+            "total_value",
+            ascending=False,
+        )
+    )
+
+    summary["value_bn"] = (
+        summary["total_value"] / 1e9
+    )
+
+    print()
+    print("CLASSIFICATION AUDIT")
+    print("=" * 60)
+    print(
+        summary[
+            [
+                "classification_audit_status",
+                "contracts",
+                "value_bn",
+            ]
+        ].to_string(index=False)
+    )
+
+    # ------------------------------------------------------------
+    # UNCLASSIFIED CATEGORY SUMMARY
+    # ------------------------------------------------------------
+
+    unclassified = df[
+        df["service_offering"].isna()
+    ].copy()
+
+    category_summary = (
+        unclassified.groupby(
+            ["Category Type", "Category"],
+            dropna=False,
+        )
+        .agg(
+            contracts=("CN ID", "count"),
+            total_value=("Value", "sum"),
+        )
+        .reset_index()
+        .sort_values(
+            "total_value",
+            ascending=False,
+        )
+    )
+
+    print()
+    print("TOP 30 UNCLASSIFIED CATEGORIES")
+    print("=" * 60)
+    print(
+        category_summary
+        .head(30)
+        .to_string(index=False)
+    )
+
+    print(
+        f"\nUnclassified value: "
+        f"A${unclassified['Value'].sum() / 1e9:,.2f}B"
+    )
+
+    # ------------------------------------------------------------
+    # REVIEW CANDIDATES
+    # ------------------------------------------------------------
+
+    review_terms = (
+        r"software|digital|ict|information technology|"
+        r"cloud|cyber|data|analytics|"
+        r"systems? integration|"
+        r"engineering|"
+        r"consulting|advisory|transformation|"
+        r"managed services?|"
+        r"sustainment|support services?"
+    )
+
+    service_candidate = (
+        unclassified["Description"]
+        .fillna("")
+        .str.contains(
+            review_terms,
+            case=False,
+            regex=True,
+        )
+    )
+
+    candidates = unclassified[
+        service_candidate
+    ].copy()
+
+    candidates = candidates.sort_values(
+        "Value",
+        ascending=False,
+    )
+
+    review_columns = [
+        "CN ID",
+        "Category Type",
+        "Category",
+        "Description",
+        "Supplier Name",
+        "Value",
+        "service_offering_score",
+        "service_offering_runner_up",
+        "service_offering_runner_up_score",
+        "service_offering_score_margin",
+        "service_offering_confidence",
+        "service_offering_reason",
+        "classification_audit_status",
+    ]
+
+    candidates[
+        review_columns
+    ].to_csv(
+        OUTPUT_DIR
+        / "classification_review_queue.csv",
+        index=False,
+    )
+
+    # ------------------------------------------------------------
+    # AMBIGUOUS CLASSIFICATIONS
+    # ------------------------------------------------------------
+
+    df.loc[
+        ambiguous,
+        review_columns,
+    ].sort_values(
+        "Value",
+        ascending=False,
+    ).to_csv(
+        OUTPUT_DIR
+        / "classification_ambiguous.csv",
+        index=False,
+    )
+
+    # ------------------------------------------------------------
+    # WEAK / CLOSE CLASSIFICATIONS
+    # ------------------------------------------------------------
+
+    classified_review = df[
+        weak_score | close_score
+    ].copy()
+
+    classified_review[
+        review_columns
+    ].sort_values(
+        "Value",
+        ascending=False,
+    ).to_csv(
+        OUTPUT_DIR
+        / "classification_low_confidence.csv",
+        index=False,
+    )
+
+    # ------------------------------------------------------------
+    # TOP REVIEW CONTRACTS
+    # ------------------------------------------------------------
+
+    print()
+    print("TOP 40 UNCLASSIFIED SERVICE CANDIDATES")
+    print("=" * 60)
+
+    print(
+        candidates[
+            [
+                "CN ID",
+                "Category",
+                "Description",
+                "Supplier Name",
+                "Value",
+            ]
+        ]
+        .head(40)
+        .to_string(index=False)
+    )
+
+    print()
+    print(f"Review candidates: {len(candidates):,}")
+    print(
+        f"Review value: "
+        f"A${candidates['Value'].sum() / 1e9:,.2f}B"
+    )
+
+    print()
+    print("Audit files written to:")
+    print(OUTPUT_DIR)
+
+
+if __name__ == "__main__":
+    main()
