@@ -72,6 +72,20 @@ jobs:
           print(f"Silver Core PASS: {len(df):,} rows")
           PY
 
+
+      - name: Audit Contract Amendments
+        run: |
+          python atlas/silver/core/audit_amendments.py
+
+      - name: Upload Amendment Audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: amendment-review-only
+          path: audits/silver/core/amendment_review.csv
+          retention-days: 7
+          if-no-files-found: error
+
+
       # ---------------------------------------------------------
       # DEFENCE SILVER INDUSTRY
       # ---------------------------------------------------------
