@@ -1,14 +1,17 @@
-"""ATLAS configurable multi-signal Service Offering engine."""
 
-import re
+"""ATLAS Defence multi-signal Service Offering classification engine.
+
+Service Offering classification is independent of addressability.
+Scores represent evidence strength, not statistical probabilities.
+"""
+
 from pathlib import Path
+import re
 
 import yaml
 
 
-CONFIG_PATH = Path(
-    "config/defence/service_offerings.yaml"
-)
+CONFIG_PATH = Path("config/defence/service_offerings.yaml")
 
 SOURCE_CAPS = {
     "Description": 40,
@@ -23,533 +26,342 @@ REVIEW_THRESHOLD = 65
 HIGH_CONFIDENCE_THRESHOLD = 80
 MINIMUM_CLEAR_MARGIN = 10
 
+DECISIVE_DESCRIPTION_THRESHOLD = 35
+DECISIVE_CATEGORY_THRESHOLD = 25
+SUPPORTING_DESCRIPTION_THRESHOLD = 15
+
 
 def load_config(path=CONFIG_PATH):
-    """Load the Defence Service Offering configuration."""
-
+    """Load and validate classification configuration."""
     with open(path, encoding="utf-8") as file:
         config = yaml.safe_load(file)
 
-    if not config:
-        raise ValueError(
-            "Service Offering configuration is empty."
-        )
+    if not isinstance(config, dict):
+        raise ValueError("Invalid Service Offering configuration")
 
-    if not config.get("service_offerings"):
-        raise ValueError(
-            "No Service Offerings found in configuration."
-        )
+    offerings = config.get("service_offerings")
+
+    if not isinstance(offerings, list) or len(offerings) < 2:
+        raise ValueError("At least two Service Offerings are required")
+
+    names = [item["name"] for item in offerings]
+
+    if len(names) != len(set(names)):
+        raise ValueError("Duplicate Service Offering names")
+
+    for offering in offerings:
+        rules = offering.get("rules", {})
+        if not isinstance(rules, dict):
+            raise ValueError(f"Invalid rules for {offering['name']}")
+
+        for source, source_rules in rules.items():
+            if source not in SOURCE_CAPS:
+                raise ValueError(f"Unknown evidence source: {source}")
+
+            for rule in source_rules:
+                re.compile(rule["pattern"])
+                weight = int(rule.get("weight", 0))
+                if weight < 0 or weight > SOURCE_CAPS[source]:
+                    raise ValueError(
+                        f"Invalid {source} weight in {offering['name']}"
+                    )
 
     return config
 
 
 def clean_text(value):
-    """Normalise a source value for regex matching."""
-
+    """Safely normalise source text."""
     if value is None:
         return ""
 
-    text = str(value).lower()
-    text = text.replace("&", " and ")
-    text = re.sub(r"\s+", " ", text)
+    text = str(value).strip()
 
-    return text.strip()
+    if text.lower() in {"nan", "none", "<na>", "nat"}:
+        return ""
+
+    text = text.lower().replace("&", " and ")
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def first_available(contract, fields):
-    """Return the first populated field from a list."""
-
+    """Return the first non-empty source value."""
     for field in fields:
-        value = contract.get(field)
-
-        if value is not None:
-            text = str(value).strip()
-
-            if text:
-                return text
-
+        value = clean_text(contract.get(field))
+        if value:
+            return value
     return ""
 
 
-def empty_result(reason, score=0, runner_up=None):
-    """Return a standard unclassified result."""
-
-    return {
-        "service_offering": None,
-        "service_offering_score": int(score),
-        "service_offering_grade": "D",
-        "service_offering_runner_up": runner_up,
-        "service_offering_runner_up_score": 0,
-        "service_offering_score_margin": 0,
-        "service_offering_confidence": int(score),
-        "service_offering_reason": reason,
-        "service_offering_description_score": 0,
-        "service_offering_category_score": 0,
-        "service_offering_organisation_score": 0,
-        "service_offering_supplier_score": 0,
-        "service_offering_domain_score": 0,
-        "service_offering_evidence_sources": 0,
-        "classification_review_required": True,
-    }
-
-
-def source_score(
-    text,
-    rules,
-    source_name,
-    cap,
-):
-    """
-    Score one evidence source.
-
-    Only the strongest rule for each source is retained. This prevents
-    duplicate or overlapping regex rules from artificially increasing
-    the classification score.
-    """
-
-    best_score = 0
-    best_reason = None
-    best_match = None
-
-    for rule in rules:
-        pattern = rule["pattern"]
-        weight = int(rule.get("weight", 0))
-
-        match = re.search(
-            pattern,
-            text,
-            flags=re.IGNORECASE,
-        )
-
-        if match and weight > best_score:
-            best_score = min(weight, cap)
-            best_reason = rule.get(
-                "reason",
-                pattern,
-            )
-            best_match = match.group(0)
-
-    if best_score == 0:
-        return 0, None
-
-    evidence = (
-        f"{source_name}: "
-        f"{best_reason} "
-        f"[{best_match}] "
-        f"(+{best_score})"
+def get_contract_context(contract):
+    """Extract the five evidence sources."""
+    division = first_available(
+        contract,
+        ["Agency Division", "Agency Divison", "div_clean"],
+    )
+    branch = first_available(
+        contract,
+        ["Agency Branch", "branch_clean"],
     )
 
-    return best_score, evidence
+    return {
+        "Description": clean_text(contract.get("Description")),
+        "Category": clean_text(contract.get("Category")),
+        "Category Type": clean_text(contract.get("Category Type")),
+        "Organisation": f"{division} {branch}".strip(),
+        "Supplier": first_available(
+            contract, ["supplier_group", "Supplier Name"]
+        ),
+        "Domain": clean_text(contract.get("defence_domain")),
+    }
 
 
 def matches_any(text, patterns):
-    """Return the first matching pattern, if any."""
-
+    """Return the first matched text or None."""
     for pattern in patterns:
-        match = re.search(
-            pattern,
-            text,
-            flags=re.IGNORECASE,
-        )
-
+        match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
             return match.group(0)
-
     return None
 
 
-def get_contract_context(contract):
-    """Build the source fields used by the classifier."""
-
-    description = clean_text(
-        contract.get("Description", "")
-    )
-
-    category = clean_text(
-        contract.get("Category", "")
-    )
-
-    category_type = clean_text(
-        contract.get("Category Type", "")
-    )
-
-    supplier = clean_text(
-        first_available(
-            contract,
-            [
-                "supplier_group",
-                "Supplier Name",
-            ],
-        )
-    )
-
-    division = clean_text(
-        first_available(
-            contract,
-            [
-                "Agency Division",
-                "Agency Divison",
-                "div_clean",
-            ],
-        )
-    )
-
-    branch = clean_text(
-        first_available(
-            contract,
-            [
-                "Agency Branch",
-                "branch_clean",
-            ],
-        )
-    )
-
-    organisation = (
-        f"{division} {branch}"
-    ).strip()
-
-    domain = clean_text(
-        contract.get(
-            "defence_domain",
-            "",
-        )
-    )
-
-    return {
-        "Description": description,
-        "Category": category,
-        "Category Type": category_type,
-        "Supplier": supplier,
-        "Organisation": organisation,
-        "Domain": domain,
-    }
-
-
 def goods_guardrail(context, config):
-    """
-    Apply a Service Offering classification guardrail for Goods.
+    """Restrict Service Offering assignment for physical Goods.
 
-    This does not determine addressability. It only prevents physical
-    Defence goods from being assigned to a Service Offering without
-    strong explicit digital evidence.
+    This is a classification guardrail, not an addressability
+    decision. Physical/digital conflicts remain unclassified.
     """
-
     if context["Category Type"] != "goods":
         return True, None
 
-    settings = config.get(
-        "goods_guardrail",
-        {},
-    )
-
-    physical_patterns = settings.get(
-        "physical_patterns",
-        [],
-    )
-
-    digital_patterns = settings.get(
-        "digital_patterns",
-        [],
-    )
-
-    combined_text = (
-        f"{context['Category']} "
-        f"{context['Description']}"
-    )
-
-    physical_match = matches_any(
+    settings = config.get("goods_guardrail", {})
+    physical = matches_any(
         context["Category"],
-        physical_patterns,
+        settings.get("physical_patterns", []),
+    )
+    digital = matches_any(
+        context["Description"],
+        settings.get("digital_patterns", []),
+    )
+    category_digital = matches_any(
+        context["Category"],
+        settings.get("digital_patterns", []),
     )
 
-    digital_match = matches_any(
-        combined_text,
-        digital_patterns,
-    )
-
-    if physical_match and not digital_match:
-        return (
-            False,
-            (
-                "Goods classification guardrail: "
-                f"physical Category evidence "
-                f"[{physical_match}] and no strong "
-                "digital Service Offering evidence."
-            ),
+    if physical:
+        return False, (
+            "Physical Goods category requires review"
+            + (f"; digital Description [{digital}]" if digital else "")
         )
 
-    if not digital_match:
-        return (
-            False,
-            (
-                "Goods classification guardrail: "
-                "no strong digital Service Offering evidence."
-            ),
-        )
+    if not digital and not category_digital:
+        return False, "Goods without explicit digital evidence"
 
     return True, None
 
 
-def confidence_grade(score):
-    """Convert the 100-point evidence score into a grade."""
+def source_score(text, rules, source_name, cap):
+    """Take the strongest matching rule per evidence source."""
+    best_score = 0
+    best_evidence = None
 
+    for rule in rules:
+        match = re.search(
+            rule["pattern"], text, flags=re.IGNORECASE
+        )
+
+        if not match:
+            continue
+
+        score = min(int(rule.get("weight", 0)), cap)
+
+        if score > best_score:
+            best_score = score
+            reason = rule.get("reason", rule["pattern"])
+            best_evidence = (
+                f"{source_name}: {reason} "
+                f"[{match.group(0)}] (+{score})"
+            )
+
+    return best_score, best_evidence
+
+
+def confidence_grade(score, classified=True):
+    """Grade evidence strength, not statistical confidence."""
+    if not classified:
+        return "D"
     if score >= HIGH_CONFIDENCE_THRESHOLD:
         return "A"
-
     if score >= REVIEW_THRESHOLD:
         return "B"
+    return "C"
 
-    if score >= CLASSIFICATION_THRESHOLD:
-        return "C"
 
-    return "D"
+def make_result(
+    offering=None,
+    score=0,
+    runner_up=None,
+    runner_up_score=0,
+    margin=0,
+    scores=None,
+    source_count=0,
+    reason="",
+    review=True,
+):
+    """Return a consistent classification record."""
+    scores = scores or {}
+
+    return {
+        "service_offering": offering,
+        "service_offering_score": int(score),
+        "service_offering_grade": confidence_grade(
+            score, offering is not None
+        ),
+        "service_offering_runner_up": runner_up,
+        "service_offering_runner_up_score": int(runner_up_score),
+        "service_offering_score_margin": int(margin),
+        # Compatibility with existing audit scripts.
+        "service_offering_confidence": int(score),
+        "service_offering_reason": reason,
+        "service_offering_description_score": int(
+            scores.get("Description", 0)
+        ),
+        "service_offering_category_score": int(
+            scores.get("Category", 0)
+        ),
+        "service_offering_organisation_score": int(
+            scores.get("Organisation", 0)
+        ),
+        "service_offering_supplier_score": int(
+            scores.get("Supplier", 0)
+        ),
+        "service_offering_domain_score": int(
+            scores.get("Domain", 0)
+        ),
+        "service_offering_evidence_sources": int(source_count),
+        "classification_review_required": bool(review),
+    }
+
+
+def score_offering(context, offering):
+    """Score one Service Offering against all evidence sources."""
+    rules = offering.get("rules", {})
+    scores = {}
+    evidence = []
+
+    for source, cap in SOURCE_CAPS.items():
+        score, reason = source_score(
+            context[source],
+            rules.get(source, []),
+            source,
+            cap,
+        )
+
+        scores[source] = score
+        if reason:
+            evidence.append(reason)
+
+    return {
+        "name": offering["name"],
+        "score": min(sum(scores.values()), 100),
+        "scores": scores,
+        "evidence": evidence,
+        "source_count": sum(v > 0 for v in scores.values()),
+    }
 
 
 def classify_contract(contract, config):
-    """Classify one Defence contract using multiple evidence sources."""
+    """Classify a Defence contract independently of addressability."""
+    context = get_contract_context(contract)
 
-    context = get_contract_context(
-        contract
-    )
+    allowed, guardrail_reason = goods_guardrail(context, config)
 
-    goods_allowed, goods_reason = goods_guardrail(
-        context,
-        config,
-    )
+    if not allowed:
+        return make_result(reason=guardrail_reason)
 
-    if not goods_allowed:
-        return empty_result(
-            goods_reason
-        )
+    results = [
+        score_offering(context, offering)
+        for offering in config["service_offerings"]
+    ]
 
-    results = []
-
-    for position, offering in enumerate(
-        config["service_offerings"]
-    ):
-        name = offering["name"]
-        rules = offering.get("rules", {})
-
-        description_score, description_evidence = (
-            source_score(
-                context["Description"],
-                rules.get("Description", []),
-                "Description",
-                SOURCE_CAPS["Description"],
-            )
-        )
-
-        category_score, category_evidence = (
-            source_score(
-                context["Category"],
-                rules.get("Category", []),
-                "Category",
-                SOURCE_CAPS["Category"],
-            )
-        )
-
-        organisation_score, organisation_evidence = (
-            source_score(
-                context["Organisation"],
-                rules.get("Organisation", []),
-                "Organisation",
-                SOURCE_CAPS["Organisation"],
-            )
-        )
-
-        supplier_score, supplier_evidence = (
-            source_score(
-                context["Supplier"],
-                rules.get("Supplier", []),
-                "Supplier",
-                SOURCE_CAPS["Supplier"],
-            )
-        )
-
-        domain_score, domain_evidence = (
-            source_score(
-                context["Domain"],
-                rules.get("Domain", []),
-                "Domain",
-                SOURCE_CAPS["Domain"],
-            )
-        )
-
-        scores = {
-            "description": description_score,
-            "category": category_score,
-            "organisation": organisation_score,
-            "supplier": supplier_score,
-            "domain": domain_score,
-        }
-
-        evidence = [
-            value
-            for value in [
-                description_evidence,
-                category_evidence,
-                organisation_evidence,
-                supplier_evidence,
-                domain_evidence,
-            ]
-            if value
-        ]
-
-        total_score = min(
-            sum(scores.values()),
-            100,
-        )
-
-        results.append(
-            {
-                "name": name,
-                "position": position,
-                "score": total_score,
-                "scores": scores,
-                "evidence": evidence,
-                "source_count": sum(
-                    score > 0
-                    for score in scores.values()
-                ),
-            }
-        )
-
+    # Stable ordering makes equal-score behaviour deterministic.
     ranked = sorted(
         results,
-        key=lambda item: (
-            -item["score"],
-            item["position"],
-        ),
+        key=lambda item: item["score"],
+        reverse=True,
     )
 
     winner = ranked[0]
     runner_up = ranked[1]
 
-    winner_score = winner["score"]
-    runner_up_score = runner_up["score"]
-    margin = winner_score - runner_up_score
+    score = winner["score"]
+    second_score = runner_up["score"]
+    margin = score - second_score
+    scores = winner["scores"]
 
-    if winner_score == 0:
-        return empty_result(
-            "No matching Service Offering evidence."
+    common = {
+        "score": score,
+        "runner_up": runner_up["name"],
+        "runner_up_score": second_score,
+        "margin": margin,
+        "scores": scores,
+        "source_count": winner["source_count"],
+    }
+
+    if score == 0:
+        return make_result(
+            reason="No matching Service Offering evidence",
+            **common,
         )
 
-    if winner_score == runner_up_score:
-        return {
-            "service_offering": None,
-            "service_offering_score": winner_score,
-            "service_offering_grade": "D",
-            "service_offering_runner_up": runner_up["name"],
-            "service_offering_runner_up_score": runner_up_score,
-            "service_offering_score_margin": 0,
-            "service_offering_confidence": winner_score,
-            "service_offering_reason": (
-                "Ambiguous classification: "
-                f"{winner['name']} and "
-                f"{runner_up['name']} both scored "
-                f"{winner_score}/100."
+    if margin == 0:
+        return make_result(
+            reason=(
+                f"Ambiguous: {winner['name']} and "
+                f"{runner_up['name']} both scored {score}/100"
             ),
-            "service_offering_description_score": (
-                winner["scores"]["description"]
-            ),
-            "service_offering_category_score": (
-                winner["scores"]["category"]
-            ),
-            "service_offering_organisation_score": (
-                winner["scores"]["organisation"]
-            ),
-            "service_offering_supplier_score": (
-                winner["scores"]["supplier"]
-            ),
-            "service_offering_domain_score": (
-                winner["scores"]["domain"]
-            ),
-            "service_offering_evidence_sources": (
-                winner["source_count"]
-            ),
-            "classification_review_required": True,
-        }
+            **common,
+        )
 
-    grade = confidence_grade(
-        winner_score
-    )
-
-   
     decisive_description = (
-        winner["scores"]["description"] >= 35
+        scores["Description"] >= DECISIVE_DESCRIPTION_THRESHOLD
     )
 
     supported_category = (
-        winner["scores"]["category"] >= 25
-        and winner["scores"]["description"] >= 15
+        scores["Category"] >= DECISIVE_CATEGORY_THRESHOLD
+        and scores["Description"] >= SUPPORTING_DESCRIPTION_THRESHOLD
     )
 
     sufficient_evidence = (
-        winner_score >= CLASSIFICATION_THRESHOLD
+        score >= CLASSIFICATION_THRESHOLD
         or decisive_description
         or supported_category
     )
 
-    if not sufficient_evidence:
-        service_offering = None
-        review_required = True
-        reason = (
-            f"Insufficient evidence for {winner['name']}: "
-            f"{winner_score}/100. "
-            + "; ".join(winner["evidence"])
-        )
-    else:
-        service_offering = winner["name"]
-        review_required = (
-            winner_score < REVIEW_THRESHOLD
-            or margin < MINIMUM_CLEAR_MARGIN
-        )
-        reason = "; ".join(winner["evidence"])
+    # Context alone cannot establish a Service Offering.
+    # At least Category or Description must support the winner.
+    subject_evidence = (
+        scores["Description"] > 0
+        or scores["Category"] > 0
+    )
 
-        reason = (
-            f"Weak Service Offering evidence for "
-            f"{winner['name']}: "
-            f"{winner_score}/100. "
-            + "; ".join(winner["evidence"])
-        )
-    else:
-        service_offering = winner["name"]
-
-        review_required = (
-            winner_score < REVIEW_THRESHOLD
-            or margin < MINIMUM_CLEAR_MARGIN
+    if not sufficient_evidence or not subject_evidence:
+        return make_result(
+            reason=(
+                f"Insufficient subject evidence for "
+                f"{winner['name']}: {score}/100. "
+                + "; ".join(winner["evidence"])
+            ),
+            **common,
         )
 
-        reason = "; ".join(
-            winner["evidence"]
-        )
+    review_required = (
+        score < REVIEW_THRESHOLD
+        or margin < MINIMUM_CLEAR_MARGIN
+    )
 
-    return {
-        "service_offering": service_offering,
-        "service_offering_score": winner_score,
-        "service_offering_grade": grade,
-        "service_offering_runner_up": runner_up["name"],
-        "service_offering_runner_up_score": runner_up_score,
-        "service_offering_score_margin": margin,
-        "service_offering_confidence": winner_score,
-        "service_offering_reason": reason,
-        "service_offering_description_score": (
-            winner["scores"]["description"]
-        ),
-        "service_offering_category_score": (
-            winner["scores"]["category"]
-        ),
-        "service_offering_organisation_score": (
-            winner["scores"]["organisation"]
-        ),
-        "service_offering_supplier_score": (
-            winner["scores"]["supplier"]
-        ),
-        "service_offering_domain_score": (
-            winner["scores"]["domain"]
-        ),
-        "service_offering_evidence_sources": (
-            winner["source_count"]
-        ),
-        "classification_review_required": review_required,
-    }
+    return make_result(
+        offering=winner["name"],
+        reason="; ".join(winner["evidence"]),
+        review=review_required,
+        **common,
+    )
