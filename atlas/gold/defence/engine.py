@@ -474,9 +474,38 @@ def classify_contract(contract, config):
         winner_score
     )
 
-    if winner_score < CLASSIFICATION_THRESHOLD:
+   
+    decisive_description = (
+        winner["scores"]["description"] >= 35
+    )
+
+    supported_category = (
+        winner["scores"]["category"] >= 25
+        and winner["scores"]["description"] >= 15
+    )
+
+    sufficient_evidence = (
+        winner_score >= CLASSIFICATION_THRESHOLD
+        or decisive_description
+        or supported_category
+    )
+
+    if not sufficient_evidence:
         service_offering = None
         review_required = True
+        reason = (
+            f"Insufficient evidence for {winner['name']}: "
+            f"{winner_score}/100. "
+            + "; ".join(winner["evidence"])
+        )
+    else:
+        service_offering = winner["name"]
+        review_required = (
+            winner_score < REVIEW_THRESHOLD
+            or margin < MINIMUM_CLEAR_MARGIN
+        )
+        reason = "; ".join(winner["evidence"])
+
         reason = (
             f"Weak Service Offering evidence for "
             f"{winner['name']}: "
