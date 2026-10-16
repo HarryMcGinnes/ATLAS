@@ -17,8 +17,20 @@ DATASETS = {
 OUTPUT = Path("audits/silver/core/negative_values_audit.csv")
 
 
+
 def audit(name, df):
+    print(f"\nAuditing: {name}", flush=True)
+    print(f"Rows: {len(df):,}", flush=True)
+    print(f"Columns: {list(df.columns)}", flush=True)
+
+    if "Value" not in df.columns:
+        raise RuntimeError(
+            f"{name} has no Value column. "
+            "Check the source schema."
+        )
+
     values = pd.to_numeric(df["Value"], errors="coerce")
+
     ids = df["CN ID"].fillna("").astype(str).str.upper()
 
     amendments = ids.str.contains(r"-A\d+$", regex=True)
