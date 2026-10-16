@@ -116,6 +116,9 @@ jobs:
             --input data/silver/industry/defence/defence_enriched.parquet \
             --output data/gold/defence/defence_classified.parquet
 
+      - name: Check Defence engine syntax
+        run: python -m py_compile atlas/gold/defence/engine.py
+
       - name: Inspect Defence Service Offering Classification
         run: |
           python - <<'PY'
