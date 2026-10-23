@@ -1,11 +1,12 @@
 
 name: Test ATLAS Bronze
 
-on:
+"on":
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   test-bronze:
@@ -301,12 +302,42 @@ jobs:
             atlas/gold/health/poc_classifier.py \
             atlas/gold/health/classify.py
 
+      - name: Download original Health Gold baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p data/gold/health/baseline
+          gh run download 39906120302 \
+            --repo "${{ github.repository }}" \
+            --name atlas-pipeline-test \
+            --dir data/gold/health/baseline
+          python - <<'PYCODE'
+          from pathlib import Path
+          import shutil
+          base = Path("data/gold/health/baseline")
+          matches = list(base.rglob("health_classified.parquet"))
+          if len(matches) != 1:
+              raise RuntimeError(
+                  f"Expected one baseline health_classified.parquet, found {len(matches)}: {matches}"
+              )
+          destination = Path("data/gold/health/health_baseline.parquet")
+          shutil.copy2(matches[0], destination)
+          print(f"Baseline copied from {matches[0]} to {destination}")
+          PYCODE
+
       - name: Build Health Gold
         run: |
           python atlas/gold/health/classify.py \
             --input data/silver/industry/health/health_contracts.parquet \
             --output data/gold/health/health_classified.parquet \
             --audit-dir audits/gold/health
+
+      - name: Compare Health Gold QA
+        run: |
+          python atlas/gold/health/compare_qa.py \
+            --old data/gold/health/health_baseline.parquet \
+            --new data/gold/health/health_classified.parquet \
+            --output audits/gold/health/health_qa_changes.csv
 
       - name: Validate Health Gold
         run: |
@@ -341,37 +372,6 @@ jobs:
           print(f"Accenture wins: A${gold.loc[acc, 'Value'].sum()/1e9:,.3f}B")
           print(gold.loc[addr, "service_offering"].fillna("Unresolved").value_counts().to_string())
           PYCODE
-
-      - name: Export Unresolved Health CSV
-        run: |
-          python - <<'PY'
-          import pandas as pd
-          from pathlib import Path
-
-          df = pd.read_parquet(
-              "data/gold/health/health_classified.parquet"
-          )
-
-          unresolved = df[
-              df["is_addressable"].fillna(False).astype(bool)
-              & df["service_offering"].isna()
-          ].copy()
-
-          output = Path("audits/gold/health/unresolved_health.csv")
-          output.parent.mkdir(parents=True, exist_ok=True)
-
-          unresolved.to_csv(output, index=False)
-
-          print(f"Exported {len(unresolved):,} unresolved contracts")
-          PY
-
-      - name: Upload Unresolved Health CSV
-        uses: actions/upload-artifact@v4
-        with:
-          name: health-unresolved-only
-          path: audits/gold/health/unresolved_health.csv
-          retention-days: 7
-          if-no-files-found: error
 
       # ---------------------------------------------------------
       # RECONCILIATION
