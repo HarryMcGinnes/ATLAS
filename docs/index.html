@@ -97,12 +97,18 @@ footer {
   .cards { grid-template-columns:1fr; }
   h1 { font-size:34px; }
 }
+
+.atlas-nav { display:flex; gap:8px; flex-wrap:wrap; margin-top:18px; }
+.atlas-nav a { color:#e5e7eb; text-decoration:none; border:1px solid #555; border-radius:8px; padding:9px 16px; font-size:14px; font-weight:700; }
+.atlas-nav a:hover,.atlas-nav a[aria-current="page"] { background:#A100FF; color:#fff; border-color:#A100FF; }
+.atlas-nav a:focus-visible,.card:focus-visible { outline:3px solid #A100FF; outline-offset:3px; }
 </style>
 </head>
 <body>
 <header class="topbar">
   <div class="brand">ATLAS</div>
   <div class="tag">Accenture Total Landscape Analytics and Spend</div>
+  <nav class="atlas-nav" aria-label="ATLAS navigation"><a href="./" aria-current="page">Home</a><a href="defence/" >Defence</a><a href="health/" >Federal Health</a></nav>
 </header>
 
 <main class="wrap">
@@ -126,13 +132,13 @@ footer {
 
     <a class="card" href="health/">
       <div class="eyebrow">Available now</div>
-      <h2>Health</h2>
+      <h2>Federal Health</h2>
       <p>
         Explore Australian Government Health procurement,
         addressable market intelligence, supplier comparisons
         and contract activity.
       </p>
-      <div class="go">Open Health intelligence →</div>
+      <div class="go">Open Federal Health intelligence →</div>
     </a>
   </section>
 
