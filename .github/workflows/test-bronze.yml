@@ -1,295 +1,58 @@
-
-name: Test ATLAS Bronze
-
-on:
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-jobs:
-  test-bronze:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: pip install pandas pyarrow pyyaml
-
-      # ---------------------------------------------------------
-      # BRONZE
-      # ---------------------------------------------------------
-
-      - name: Download baseline
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p data/austender/baseline
-          gh release download atlas-data \
-            --pattern "austender_baseline.parquet" \
-            --dir data/austender/baseline
-
-      - name: Build Bronze
-        run: |
-          python atlas/bronze/ingest.py \
-            --baseline data/austender/baseline/austender_baseline.parquet \
-            --monthly-dir data/austender/monthly
-
-      - name: Validate Bronze
-        run: python atlas/bronze/validate.py
-
-      # ---------------------------------------------------------
-      # SILVER CORE
-      # ---------------------------------------------------------
-
-      - name: Build Silver Core
-        run: |
-          python atlas/silver/core/normalise.py \
-            --bronze-dir data/bronze/austender \
-            --output data/silver/core/austender_contracts.parquet
-
-      - name: Verify Silver Core
-        run: |
-          python - <<'PY'
-          import pandas as pd
-
-          df = pd.read_parquet(
-              "data/silver/core/austender_contracts.parquet"
-          )
-
-          assert len(df) > 0, "Silver Core is empty"
-          assert df["CN ID"].notna().any()
-          assert "supplier_group" in df.columns
-          assert "is_accenture" in df.columns
-
-          print(f"Silver Core PASS: {len(df):,} rows")
-          PY
-
-
-      - name: Audit Contract Amendments
-        run: |
-          python atlas/silver/core/audit_amendments.py
-
-      - name: Upload Amendment Audit
-        uses: actions/upload-artifact@v4
-        with:
-          name: amendment-review-only
-          path: audits/silver/core/amendment_review.csv
-          retention-days: 7
-          if-no-files-found: error
-
-
-      # ---------------------------------------------------------
-      # DEFENCE SILVER INDUSTRY
-      # ---------------------------------------------------------
-
-      - name: Build Defence Silver Industry
-        run: |
-          python atlas/silver/industry/defence/classify.py \
-            --input data/silver/core/austender_contracts.parquet \
-            --output data/silver/industry/defence/defence_contracts.parquet
-
-      - name: Validate Defence Silver Industry
-        run: |
-          python - <<'PY'
-          import pandas as pd
-
-          df = pd.read_parquet(
-              "data/silver/industry/defence/defence_contracts.parquet"
-          )
-
-          assert len(df) > 0, "Defence dataset is empty"
-          assert df["is_defence_scope"].all()
-          assert df["CN ID"].is_unique, "Duplicate contract IDs"
-          assert df["supplier_group"].notna().all()
-
-          print(f"Defence Silver PASS: {len(df):,} contracts")
-          print(f"Total value: A${df['Value'].sum()/1e9:,.3f}B")
-          PY
-
-      # ---------------------------------------------------------
-      # DEFENCE DOMAINS
-      # ---------------------------------------------------------
-
-      - name: Build Defence Domains
-        run: |
-          python atlas/silver/industry/defence/domains.py \
-            --input data/silver/industry/defence/defence_contracts.parquet \
-            --lookup defence/config/defence_domain_lookup.csv \
-            --output data/silver/industry/defence/defence_enriched.parquet
-
-      - name: Validate Defence Domains
-        run: |
-          python - <<'PY'
-          import pandas as pd
-
-          source = pd.read_parquet(
-              "data/silver/industry/defence/defence_contracts.parquet"
-          )
-          df = pd.read_parquet(
-              "data/silver/industry/defence/defence_enriched.parquet"
-          )
-
-          assert len(df) == len(source), "Defence row count changed"
-          assert "defence_domain" in df.columns
-          assert df["defence_domain"].notna().all()
-          assert df["CN ID"].is_unique
-
-          print("Defence domain validation: PASS")
-          print(df["defence_domain"].value_counts().to_string())
-          PY
-
-      # ---------------------------------------------------------
-      # DEFENCE GOLD - ORIGINAL POC CLASSIFIER
-      # ---------------------------------------------------------
-
-      - name: Check POC classifier syntax
-        run: |
-          python -m py_compile \
-            atlas/gold/defence/poc_classifier.py \
-            atlas/gold/defence/classify.py
-
-      - name: Test Defence Gold POC Classifier
-        run: |
-          python atlas/gold/defence/classify.py \
-            --input data/silver/industry/defence/defence_enriched.parquet \
-            --output data/gold/defence/defence_classified.parquet
-
-      - name: Audit Negative Contract Values
-        run: |
-          python atlas/silver/core/audit_negative_values.py
-
-      - name: Upload Negative Value Audit
-        uses: actions/upload-artifact@v4
-        with:
-          name: negative-values-audit
-          path: audits/silver/core/negative_values_audit.csv
-          retention-days: 7
-          if-no-files-found: error
-
-
-      - name: Validate Defence Gold POC
-        run: |
-          python - <<'PY'
-          import pandas as pd
-
-          silver = pd.read_parquet(
-              "data/silver/industry/defence/defence_enriched.parquet"
-          )
-          gold = pd.read_parquet(
-              "data/gold/defence/defence_classified.parquet"
-          )
-
-          assert len(gold) == len(silver), "Gold row count changed"
-          assert gold["CN ID"].is_unique, "Duplicate contract IDs"
-
-          silver_value = pd.to_numeric(
-              silver["Value"], errors="coerce"
-          ).fillna(0).sum()
-
-          gold_value = pd.to_numeric(
-              gold["Value"], errors="coerce"
-          ).fillna(0).sum()
-
-          assert abs(silver_value - gold_value) < 0.01, (
-              "Gold changed total Defence value"
-          )
-
-          required = [
-              "service_offering",
-              "is_addressable",
-              "supplier_group",
-              "defence_domain",
-              "ReinventionPartner",
-              "ReinventionEngine",
-          ]
-
-          missing = [c for c in required if c not in gold.columns]
-          assert not missing, f"Missing Gold columns: {missing}"
-
-          assert gold["is_addressable"].notna().all()
-          assert gold["service_offering"].notna().all()
-
-          addressable = gold[
-              gold["is_addressable"].astype(bool)
-          ]
-
-          print()
-          print("ATLAS DEFENCE GOLD - POC VALIDATION")
-          print("=" * 55)
-          print(f"Total contracts: {len(gold):,}")
-          print(f"Total Defence value: A${gold_value/1e9:,.3f}B")
-          print(
-              f"Addressable contracts: "
-              f"{len(addressable):,}"
-          )
-          print(
-              f"Addressable TAM: "
-              f"A${addressable['Value'].sum()/1e9:,.3f}B"
-          )
-
-          acc = addressable[
-              addressable["is_accenture"].astype(bool)
-          ]
-
-          print(f"Accenture contracts: {len(acc):,}")
-          print(f"Accenture wins: A${acc['Value'].sum()/1e9:,.3f}B")
-
-          print()
-          print("ADDRESSABLE SERVICE OFFERINGS")
-          print("=" * 55)
-
-          summary = (
-              addressable.groupby("service_offering")["Value"]
-              .agg(["count", "sum"])
-              .sort_values("sum", ascending=False)
-          )
-
-          summary["value_bn"] = summary["sum"] / 1e9
-          print(summary[["count", "value_bn"]].to_string())
-
-          print()
-          print("DEFENCE GOLD VALIDATION: PASS")
-          PY
-
-      # ---------------------------------------------------------
-      # HEALTH SILVER INDUSTRY
-      # ---------------------------------------------------------
-
-      - name: Build Health Silver Industry
-        run: |
-          python atlas/silver/industry/health/classify.py \
-            --input data/silver/core/austender_contracts.parquet \
-            --agency-config health/config/health_agencies.txt \
-            --aliases config/health/agency_aliases.csv \
-            --output data/silver/industry/health/health_contracts.parquet
-
-      - name: Validate Health Silver Industry
-        run: |
-          python - <<'PY'
-          import pandas as pd
-
-          df = pd.read_parquet(
-              "data/silver/industry/health/health_contracts.parquet"
-          )
-
-          assert len(df) > 0, "Health dataset is empty"
-          assert df["CN ID"].is_unique, "Duplicate contract IDs"
-          assert df["supplier_group"].notna().all()
-          assert df["is_health_scope"].all()
-
-          print("Health Silver validation: PASS")
           print(f"Contracts: {len(df):,}")
           print(f"Value: A${df['Value'].sum()/1e9:,.3f}B")
           print(f"Accenture rows: {df['is_accenture'].sum():,}")
           PY
+
+      # ---------------------------------------------------------
+      # HEALTH GOLD - ORIGINAL TAMBI CLASSIFIER
+      # ---------------------------------------------------------
+
+      - name: Check Health POC classifier syntax
+        run: |
+          python -m py_compile \
+            atlas/gold/health/poc_classifier.py \
+            atlas/gold/health/classify.py
+
+      - name: Build Health Gold
+        run: |
+          python atlas/gold/health/classify.py \
+            --input data/silver/industry/health/health_contracts.parquet \
+            --output data/gold/health/health_classified.parquet \
+            --audit-dir audits/gold/health
+
+      - name: Validate Health Gold
+        run: |
+          python - <<'PYCODE'
+          import pandas as pd
+
+          silver = pd.read_parquet(
+              "data/silver/industry/health/health_contracts.parquet"
+          )
+          gold = pd.read_parquet(
+              "data/gold/health/health_classified.parquet"
+          )
+
+          assert len(gold) == len(silver), "Health row count changed"
+          assert gold["CN ID"].is_unique, "Duplicate Health CN IDs"
+          assert abs(gold["Value"].sum() - silver["Value"].sum()) < 0.01, (
+              "Health procurement value changed"
+          )
+
+          acc = gold["is_accenture"].fillna(False).astype(bool)
+          addr = gold["is_addressable"].fillna(False).astype(bool)
+
+          assert not (acc & ~addr).any(), "Accenture wins excluded from Health TAM"
+          assert not ((~addr) & gold["service_offering"].notna()).any(), (
+              "Non-addressable contract assigned Service Offering"
+          )
+
+          print("HEALTH GOLD VALIDATION: PASS")
+          print(f"Contracts: {len(gold):,}")
+          print(f"Addressable: {addr.sum():,}")
+          print(f"Addressable TAM: A${gold.loc[addr, 'Value'].sum()/1e9:,.3f}B")
+          print(f"Accenture wins: A${gold.loc[acc, 'Value'].sum()/1e9:,.3f}B")
+          print(gold.loc[addr, "service_offering"].fillna("Unresolved").value_counts().to_string())
+          PYCODE
 
       # ---------------------------------------------------------
       # RECONCILIATION
@@ -349,6 +112,8 @@ jobs:
             data/silver/industry/defence/
             data/silver/industry/health/
             data/gold/defence/
+            data/gold/health/
+            audits/gold/health/
 
       - name: Upload Defence Gold Summary
         uses: actions/upload-artifact@v4
