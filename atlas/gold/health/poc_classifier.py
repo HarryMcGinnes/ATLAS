@@ -978,6 +978,25 @@ SECONDARY_CATEGORY_RULES: list[tuple[str, str, int, str]] = [
 ]
 
 SECONDARY_DESCRIPTION_RULES: list[tuple[str, str, int, str]] = [
+    # Health QA: specific technical work that the original fallback missed.
+    # These rules only affect addressable rows with unresolved Service Offering.
+    (r"\b(?:siem|seim)\b.*\b(?:software|upgrad\w*|implement\w*)\b|"
+     r"\b(?:software|upgrad\w*|implement\w*)\b.*\b(?:siem|seim)\b",
+     "Cloud Infrastructure & Cyber", 86, "QA: SIEM security platform work"),
+    (r"\b(?:replacement|system|platform|application|solution)\b.*\bimplementation services?\b|"
+     r"\bimplementation services?\b.*\b(?:system|platform|application|solution)\b",
+     "SI & Engineering", 82, "QA: explicit system implementation"),
+    (r"\b(?:client management system|case management system|customer relationship management system|crm system)\b",
+     "SI & Engineering", 80, "QA: enterprise client/case management system"),
+    (r"\b(?:website|web portal|online portal|mobile app(?:lication)?|user interface|user experience|ui/ux)\b.*"
+     r"\b(?:design|develop\w*|implement\w*|build|upgrade|migration)\b|"
+     r"\b(?:design|develop\w*|implement\w*|build|upgrade|migration)\b.*"
+     r"\b(?:website|web portal|online portal|mobile app(?:lication)?|user interface|user experience|ui/ux)\b",
+     "SI & Engineering", 80, "QA: digital channel delivery"),
+    (r"\b(?:data analysis|data extraction|data registry|records management|digitisation|digitalisation|data governance)\b",
+     "Data, AI & Automation", 80, "QA: explicit data and records work"),
+    (r"\b(?:governance framework|risk management framework|workforce design|economic analysis)\b",
+     "Strategy, Transformation & Advisory", 78, "QA: specific advisory framework work"),
     # Managed operations / run-state signals should be checked before generic ICT.
     (r"\b(?:maintenance|support|sustainment|operations?|service management|service desk|help desk|managed services?)\b.*\b(?:ict|it|system|application|software|platform|infrastructure|technology)\b|"
      r"\b(?:ict|it|system|application|software|platform|infrastructure|technology)\b.*\b(?:maintenance|support|sustainment|operations?|service management|service desk|help desk|managed services?)\b",
@@ -1138,6 +1157,18 @@ def apply_classifier(df: pd.DataFrame) -> pd.DataFrame:
     # This improves coverage without manually assigning individual contracts.
     out = apply_secondary_service_offering(out)
 
+    # QA flags only; no automatic addressability exclusions.
+    qa_text = out[DESCRIPTION].fillna("").astype(str).str.lower()
+    qa_category = out[CATEGORY].fillna("").astype(str).str.lower()
+    out["health_policy_review"] = (
+        qa_text.str.contains(r"\b(?:ict labour hire|ict labor hire)\b", regex=True)
+        | qa_category.str.contains(r"\b(?:temporary personnel services|labour hire)\b", regex=True)
+    )
+    out["health_policy_review_reason"] = ""
+    out.loc[out["health_policy_review"], "health_policy_review_reason"] = (
+        "ICT/temporary personnel scope: await Health executive policy confirmation"
+    )
+
     out["classification_review_required"] = (
         pd.to_numeric(out["addressability_confidence"], errors="coerce").fillna(0).lt(85)
         | (
@@ -1216,6 +1247,7 @@ def export_audits(df: pd.DataFrame, audit_dir: Path) -> None:
         "description_score_breakdown", "service_offering_score_breakdown",
         "secondary_so_applied", "secondary_so_reason", "secondary_so_evidence_source",
         "accenture_addressability_override", "classification_review_required",
+        "health_policy_review", "health_policy_review_reason",
     ] if c in data.columns]
 
     data[audit_cols].sort_values(VALUE, ascending=False).to_csv(
