@@ -999,7 +999,7 @@ def build_html(annual: pd.DataFrame, summary: pd.DataFrame, output_html: Path, v
 </body>
 </html>
 """
-    output_html.write_text(html, encoding="utf-8")
+    output_html.write_text(atlas_navigation(html, "defence"), encoding="utf-8")
 
 
 def main() -> None:
@@ -1041,3 +1041,22 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+def atlas_navigation(html_text: str, industry: str) -> str:
+    """Add consistent GitHub Pages navigation without changing dashboard analytics."""
+    site = "/ATLAS/"
+    nav = f"""<nav class="atlas-nav" aria-label="ATLAS navigation">
+      <a class="atlas-brand" href="{site}">ATLAS</a>
+      <a href="{site}">Home</a>
+      <a href="{site}defence/" {'aria-current="page"' if industry == 'defence' else ''}>Defence</a>
+      <a href="{site}health/" {'aria-current="page"' if industry == 'health' else ''}>Federal Health</a>
+    </nav>"""
+    css = """<style>
+    .atlas-nav{display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding:13px max(22px,calc((100vw - 1480px)/2));background:#101018;color:white;font:600 13px Arial,Helvetica,sans-serif}
+    .atlas-nav a{color:#e9e9f1;text-decoration:none;padding:7px 9px;border-radius:7px}
+    .atlas-nav a:hover,.atlas-nav a[aria-current=page]{background:#3d2456;color:white}
+    .atlas-nav .atlas-brand{font-size:21px;font-weight:800;letter-spacing:.06em;color:white;margin-right:auto}
+    </style>"""
+    html_text=html_text.replace('</head>',css+'</head>',1)
+    html_text=html_text.replace('<body>', '<body>'+nav,1)
+    return html_text
