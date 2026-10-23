@@ -342,6 +342,37 @@ jobs:
           print(gold.loc[addr, "service_offering"].fillna("Unresolved").value_counts().to_string())
           PYCODE
 
+      - name: Export Unresolved Health CSV
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          from pathlib import Path
+
+          df = pd.read_parquet(
+              "data/gold/health/health_classified.parquet"
+          )
+
+          unresolved = df[
+              df["is_addressable"].fillna(False).astype(bool)
+              & df["service_offering"].isna()
+          ].copy()
+
+          output = Path("audits/gold/health/unresolved_health.csv")
+          output.parent.mkdir(parents=True, exist_ok=True)
+
+          unresolved.to_csv(output, index=False)
+
+          print(f"Exported {len(unresolved):,} unresolved contracts")
+          PY
+
+      - name: Upload Unresolved Health CSV
+        uses: actions/upload-artifact@v4
+        with:
+          name: health-unresolved-only
+          path: audits/gold/health/unresolved_health.csv
+          retention-days: 7
+          if-no-files-found: error
+
       # ---------------------------------------------------------
       # RECONCILIATION
       # ---------------------------------------------------------
