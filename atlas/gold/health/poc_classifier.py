@@ -690,6 +690,22 @@ def classify_addressability(row: pd.Series) -> dict[str, object]:
             "addressability_method": "Non-addressable Description gate",
         }
 
+    # Health QA: explicit digital-channel delivery. Only reach this after
+    # clinical, research, physical-goods and other hard exclusions.
+    # Generic mentions of online services or websites are not sufficient.
+    digital_delivery = any_pattern(description, [
+        r"\b(?:website|web ?portal|online portal|patient portal|mobile app(?:lication)?|crm|customer relationship management|ui/ux|user interface|user experience)\b.{0,90}\b(?:design|develop\w*|build|implement\w*|integrat\w*|migrat\w*|upgrad\w*)\b",
+        r"\b(?:design|develop\w*|build|implement\w*|integrat\w*|migrat\w*|upgrad\w*)\b.{0,90}\b(?:website|web ?portal|online portal|patient portal|mobile app(?:lication)?|crm|customer relationship management|ui/ux|user interface|user experience)\b",
+    ])
+    if digital_delivery:
+        return {
+            "is_addressable": True,
+            "addressability": "Addressable",
+            "addressability_confidence": 88,
+            "addressability_reason": f"Explicit digital-channel delivery in Description: '{digital_delivery}'.",
+            "addressability_method": "Health QA digital delivery evidence",
+        }
+
     cat_signal = any_pattern(category, ADDRESSABLE_SUBJECT_PATTERNS)
     desc_signal = any_pattern(description, ADDRESSABLE_SUBJECT_PATTERNS)
     generic_cat = any_pattern(category, GENERIC_CATEGORY_PATTERNS)
@@ -1169,8 +1185,27 @@ def apply_classifier(df: pd.DataFrame) -> pd.DataFrame:
         "ICT/temporary personnel scope: await Health executive policy confirmation"
     )
 
+    # QA-only flags: do not change the addressability decision.
+    # Broad education, community and campaign terms require manual context.
+    qa_category_text = out[CATEGORY].fillna("").astype(str)
+    qa_description_text = out[DESCRIPTION].fillna("").astype(str)
+    qa_combined = qa_category_text + " " + qa_description_text
+    out["health_addressability_qa_review"] = (
+        out["is_addressable"].fillna(False).astype(bool)
+        & qa_combined.str.contains(
+            r"\b(?:education|training|community services?|social services?|advertis(?:ing|ement)|campaigns?|graphic design)\b",
+            case=False, regex=True,
+        )
+    )
+    out["health_addressability_qa_reason"] = ""
+    out.loc[out["health_addressability_qa_review"], "health_addressability_qa_reason"] = (
+        "Review delivery context: training/community/campaign/creative work may be outside consulting and technology TAM"
+    )
+
     out["classification_review_required"] = (
-        pd.to_numeric(out["addressability_confidence"], errors="coerce").fillna(0).lt(85)
+        out["health_policy_review"]
+        | out["health_addressability_qa_review"]
+        |         pd.to_numeric(out["addressability_confidence"], errors="coerce").fillna(0).lt(85)
         | (
             out["is_addressable"].fillna(False).astype(bool)
             & (
@@ -1207,6 +1242,8 @@ def run_regression_checks() -> None:
         ({CATEGORY_TYPE: "Services", CATEGORY: "Business intelligence consulting services", DESCRIPTION: "BI delivery services"}, True, "Data, AI & Automation"),
         ({CATEGORY_TYPE: "Services", CATEGORY: "Medical science research and experimentation", DESCRIPTION: "Data analysis for clinical study"}, False, None),
         ({CATEGORY_TYPE: "Services", CATEGORY: "Computer services", DESCRIPTION: "General support arrangement"}, False, None),
+        ({CATEGORY_TYPE: "Services", CATEGORY: "Computer services", DESCRIPTION: "Design and development of patient web portal"}, True, "SI & Engineering"),
+        ({CATEGORY_TYPE: "Services", CATEGORY: "Health services", DESCRIPTION: "Website development for clinical health services"}, False, None),
     ]
 
     for payload, expected_addr, expected_so in cases:
@@ -1248,6 +1285,7 @@ def export_audits(df: pd.DataFrame, audit_dir: Path) -> None:
         "secondary_so_applied", "secondary_so_reason", "secondary_so_evidence_source",
         "accenture_addressability_override", "classification_review_required",
         "health_policy_review", "health_policy_review_reason",
+        "health_addressability_qa_review", "health_addressability_qa_reason",
     ] if c in data.columns]
 
     data[audit_cols].sort_values(VALUE, ascending=False).to_csv(
