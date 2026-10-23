@@ -85,12 +85,18 @@ footer {
   .cards { grid-template-columns:1fr; }
   .wrap { padding:40px 18px; }
 }
+
+.atlas-nav { display:flex; gap:8px; flex-wrap:wrap; margin-top:18px; }
+.atlas-nav a { color:#e5e7eb; text-decoration:none; border:1px solid #555; border-radius:8px; padding:9px 16px; font-size:14px; font-weight:700; }
+.atlas-nav a:hover,.atlas-nav a[aria-current="page"] { background:#A100FF; color:#fff; border-color:#A100FF; }
+.atlas-nav a:focus-visible,.card:focus-visible { outline:3px solid #A100FF; outline-offset:3px; }
 </style>
 </head>
 <body>
 <header>
   <div class="brand">ATLAS</div>
   <div class="tag">Accenture Total Landscape Analytics and Spend</div>
+  <nav class="atlas-nav" aria-label="ATLAS navigation"><a href="../" >Home</a><a href="./" aria-current="page">Defence</a><a href="../health/" >Federal Health</a></nav>
 </header>
 
 <main class="wrap">
