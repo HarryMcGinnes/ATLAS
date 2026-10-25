@@ -3458,7 +3458,7 @@ def build_html(df: pd.DataFrame, summary: dict[str, float | int | str], value_co
 </body>
 </html>
 """
-    output_html.write_text(atlas_agency_breakdown(atlas_navigation(html, "defence"), df, value_col), encoding="utf-8")
+    output_html.write_text(atlas_market_switch(atlas_navigation(html, "defence"), "all" if output_html.stem.endswith("_AllMarket") else "tam", "DefenceTAM.html", "DefenceTAM_AllMarket.html"), encoding="utf-8")
 
 
 
@@ -3583,6 +3583,14 @@ def main() -> None:
         args.fy_end,
     )
 
+    # Separate full-page market view: all existing contracts, no upstream reclassification.
+    all_market = df.copy()
+    all_market["is_addressable"] = True
+    all_market["capability"] = all_market["capability"].fillna("Unclassified").replace("", "Unclassified")
+    build_html(all_market, summarise(all_market, value_col), value_col,
+               output_dir / "DefenceTAM_AllMarket.html", args.top_n_suppliers,
+               args.top_n_capabilities, args.value_mode, args.fy_start, args.fy_end)
+
     print("Dashboard complete")
     print(f"Value mode: {args.value_mode} / column used: {value_col}")
     print(f"Value basis: {'Total contract value' if args.value_mode == 'total' else 'Annualised contract value / run-rate'}")
@@ -3665,6 +3673,21 @@ def atlas_agency_breakdown(html_text: str, df: pd.DataFrame, value_col: str) -> 
     document.getElementById('atlasAgencyMode').addEventListener('change',render);render();
     })();</script>""".replace('__DATA__', json.dumps(rows, ensure_ascii=False))
     return html_text.replace('</body>', panel + script + '</body>', 1)
+
+
+def atlas_market_switch(html_text: str, current: str, tam_file: str, all_file: str) -> str:
+    """One market selector for the entire generated dashboard."""
+    controls = (
+        '<div class="atlas-global-market" style="max-width:1480px;margin:18px auto 0;padding:12px 18px;'
+        'background:#fff;border:1px solid #e5e7eb;border-radius:12px;font:600 14px Arial">'
+        '<label for="atlasGlobalMarket">Market view &nbsp;</label>'
+        '<select id="atlasGlobalMarket" aria-label="Market view" style="padding:9px 12px;border-radius:8px;'
+        'border:1px solid #d0d5dd;background:#fff" onchange="location.href=this.value">'
+        f'<option value="{tam_file}" {"selected" if current == "tam" else ""}>Addressable TAM</option>'
+        f'<option value="{all_file}" {"selected" if current == "all" else ""}>All of Market</option>'
+        '</select></div>'
+    )
+    return html_text.replace('<body>', '<body>' + controls, 1)
 
 if __name__ == "__main__":
     main()
