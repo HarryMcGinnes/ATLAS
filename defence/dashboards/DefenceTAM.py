@@ -3614,9 +3614,6 @@ def main() -> None:
     print(f"Wrote: {output_dir / 'market_relevance_exclusions_audit.csv'}")
 
 
-if __name__ == "__main__":
-    main()
-
 def atlas_navigation(html_text: str, industry: str) -> str:
     """Add consistent GitHub Pages navigation without changing dashboard analytics."""
     site = "/ATLAS/"
@@ -3668,3 +3665,7 @@ def atlas_agency_breakdown(html_text: str, df: pd.DataFrame, value_col: str) -> 
     document.getElementById('atlasAgencyMode').addEventListener('change',render);render();
     })();</script>""".replace('__DATA__', json.dumps(rows, ensure_ascii=False))
     return html_text.replace('</body>', panel + script + '</body>', 1)
+
+if __name__ == "__main__":
+    main()
+
