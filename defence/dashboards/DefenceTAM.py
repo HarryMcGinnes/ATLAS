@@ -796,6 +796,8 @@ def _donut_financial_year_options(df: pd.DataFrame) -> list[tuple[str, pd.DataFr
 
     tmp = df.copy()
     tmp["_fy_start_year"] = tmp[FIN_YEAR_COL].map(_financial_year_start_year)
+    # Use real historical FYs only; malformed/future dates must not drive slicers.
+    tmp = tmp.loc[tmp["_fy_start_year"].between(2015, 2026)].copy()
     fy = (
         tmp[[FIN_YEAR_COL, "_fy_start_year"]]
         .dropna()
@@ -806,7 +808,7 @@ def _donut_financial_year_options(df: pd.DataFrame) -> list[tuple[str, pd.DataFr
     if not fy_labels:
         return [("All years", df)]
 
-    options: list[tuple[str, pd.DataFrame]] = [("All years", df)]
+    options: list[tuple[str, pd.DataFrame]] = [("All years", tmp.drop(columns=["_fy_start_year"]))]
 
     if len(fy_labels) >= 5:
         last5 = fy_labels[-5:]
@@ -1276,6 +1278,8 @@ def _annual_financial_year_options(df: pd.DataFrame) -> list[tuple[str, pd.DataF
 
     tmp = df.copy()
     tmp["_fy_start_year"] = tmp[FIN_YEAR_COL].map(_financial_year_start_year)
+    # Use real historical FYs only; malformed/future dates must not drive slicers.
+    tmp = tmp.loc[tmp["_fy_start_year"].between(2015, 2026)].copy()
     fy = (
         tmp[[FIN_YEAR_COL, "_fy_start_year"]]
         .dropna()
@@ -1286,7 +1290,7 @@ def _annual_financial_year_options(df: pd.DataFrame) -> list[tuple[str, pd.DataF
     if not fy_labels:
         return [("All years", df)]
 
-    options: list[tuple[str, pd.DataFrame]] = [("All years", df)]
+    options: list[tuple[str, pd.DataFrame]] = [("All years", tmp.drop(columns=["_fy_start_year"]))]
     if len(fy_labels) >= 5:
         last5 = fy_labels[-5:]
         options.append((
@@ -2494,6 +2498,8 @@ def _financial_year_options(df: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
 
     tmp = df.copy()
     tmp["_fy_start_year"] = tmp[FIN_YEAR_COL].map(_financial_year_start_year)
+    # Use real historical FYs only; malformed/future dates must not drive slicers.
+    tmp = tmp.loc[tmp["_fy_start_year"].between(2015, 2026)].copy()
     fy = (
         tmp[[FIN_YEAR_COL, "_fy_start_year"]]
         .dropna()
@@ -2504,7 +2510,7 @@ def _financial_year_options(df: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
     if not fy_labels:
         return [("All years", df)]
 
-    options: list[tuple[str, pd.DataFrame]] = [("All years", df)]
+    options: list[tuple[str, pd.DataFrame]] = [("All years", tmp.drop(columns=["_fy_start_year"]))]
 
     if len(fy_labels) >= 5:
         last5 = fy_labels[-5:]
