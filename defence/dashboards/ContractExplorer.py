@@ -375,8 +375,8 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
         valid = out["defence_branch_group"].notna() & out["defence_branch_group"].astype(str).str.strip().ne("")
         out.loc[valid, "_branch"] = out.loc[valid, "defence_branch_group"].astype(str)
 
-    out["_value"] = pd.to_numeric(out[value_col], errors="coerce").fillna(0).clip(lower=0)
-    out["_total_value"] = pd.to_numeric(out[VALUE_COL], errors="coerce").fillna(0).clip(lower=0)
+    out["_value"] = pd.to_numeric(out[value_col], errors="coerce").fillna(0)
+    out["_total_value"] = pd.to_numeric(out[VALUE_COL], errors="coerce").fillna(0)
 
     out[FY_COL] = clean_text(out[FY_COL], "Unknown FY") if FY_COL in out.columns else "Unknown FY"
     out["_fy_start"] = out[FY_COL].map(financial_year_start)
@@ -1355,7 +1355,7 @@ function updateLeaderboards() {{
   // the cards represent estimated annual expenditure rather than award value.
   const allRows = marketRows();
   const allFys = [...new Set(
-    allRows.map(r => Number(r.fy_start)).filter(Number.isFinite)
+    allRows.map(r => r.fy_start === null ? NaN : Number(r.fy_start)).filter(y => Number.isFinite(y) && y >= 2015 && y <= 2026)
   )].sort((a,b) => a-b);
   const selectedFys = allFys.slice(-5);
 
