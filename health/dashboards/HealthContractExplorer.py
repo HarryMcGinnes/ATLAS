@@ -270,15 +270,31 @@ select,input{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;
 .badge{{display:inline-block;border-radius:999px;padding:3px 7px;font-size:11px;font-weight:700;white-space:nowrap}} .badge-large{{background:#ECFDF3;color:var(--green)}} .badge-long{{background:#FFFAEB;color:var(--amber)}} .empty{{background:#fff;border:1px dashed #D0D5DD;border-radius:14px;padding:36px;text-align:center;color:var(--muted);margin-top:16px}} .method{{margin-top:16px;color:var(--muted);font-size:12px;line-height:1.5}}
 @media(max-width:1200px){{.kpis{{grid-template-columns:repeat(3,1fr)}}.toolbar{{grid-template-columns:repeat(2,minmax(0,1fr))}}.insight-grid{{grid-template-columns:1fr}}}} @media(max-width:650px){{.wrap{{padding:15px}}.kpis{{grid-template-columns:1fr 1fr}}.toolbar{{grid-template-columns:1fr}}}}
 
-.atlas-market{{display:flex;gap:12px;align-items:center;margin:12px 0 20px;padding:12px 16px;border:1px solid #e5e7eb;background:#fff;border-radius:12px;max-width:360px;font-size:13px;font-weight:700}}
-.atlas-market select{{flex:1;min-width:150px}}</style>
+.atlas-market{{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:20px 0 26px;padding:24px 28px;border:1px solid #e5e7eb;background:#fff;border-radius:18px;flex-wrap:wrap}}
+.atlas-market-copy h2{{font-size:22px;margin:0 0 6px;color:#101828}}
+.atlas-market-copy p{{margin:0;color:#667085;font-size:14px}}
+.atlas-market-switch{{display:flex;gap:5px;background:#f1f2f6;padding:6px;border-radius:14px}}
+.atlas-market-switch button{{border:0;background:transparent;color:#344054;padding:13px 22px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap}}
+.atlas-market-switch button[aria-pressed="true"]{{background:#A100FF;color:#fff;box-shadow:0 2px 7px rgba(70,0,130,.12)}}
+.atlas-market-switch button:focus-visible{{outline:3px solid #805ad5;outline-offset:2px}}
+#marketMode{{display:none}}
+@media(max-width:650px){{.atlas-market{{padding:17px}}.atlas-market-switch{{width:100%}}.atlas-market-switch button{{flex:1;padding:12px 8px;font-size:12px}}}}
+</style>
 </head>
 <body>
 <div class="wrap">
 <h1>Health Contract Explorer</h1>
- <div class="atlas-market"><label for="marketMode">Market view</label><select id="marketMode"><option value="tam">Addressable TAM</option><option value="all">All procurement</option></select></div>
 <p class="subtitle">Explore Accenture-addressable Health procurement by agency, supplier, service offering and contract.</p>
 <section class="executive-summary"><h2>Executive summary</h2><p>This dashboard provides an interactive view of the Accenture-addressable Health market. Select an agency to understand where TAM is concentrated, which suppliers are winning addressable work, and which individual contracts underpin that spend.</p></section>
+<section class="atlas-market" aria-label="Market selection">
+  <div class="atlas-market-copy"><h2>Explore the Federal Health Market</h2><p id="atlasMarketDescription">Showing contracts addressable to Accenture</p></div>
+  <div class="atlas-market-switch" role="group" aria-label="Choose market scope">
+    <button type="button" data-market="tam" aria-pressed="true">Accenture TAM</button>
+    <button type="button" data-market="all" aria-pressed="false">All Federal Health Market</button>
+  </div>
+  <select id="marketMode" aria-label="Market scope"><option value="tam">Accenture TAM</option><option value="all">All Federal Health Market</option></select>
+</section>
+
 
 <section class="insight-grid">
 <div class="leader-card"><h3>Largest active contracts</h3><p id="activeSubtitle">Highest-value addressable contracts active as at today within the selected agency.</p><div id="topActiveContracts"></div></div>
@@ -342,6 +358,26 @@ function render(){{const rows=filteredRows();updateContractInsights();updateKpis
 function clearAllFilters(){{document.getElementById('agencySelect').value=DEFAULT_AGENCY;document.getElementById('searchInput').value='';document.getElementById('minValueInput').value='';document.getElementById('datedOnly').checked=false;document.getElementById('capabilityFilter').innerHTML='<option value="All Service Offerings">All Service Offerings</option>';document.getElementById('supplierFilter').innerHTML='<option value="All suppliers">All suppliers</option>';refreshFilters();render()}}
 
 document.getElementById('marketMode').addEventListener('change',()=>{{clearAllFilters()}});
+
+(function() {{
+  const select = document.getElementById('marketMode');
+  const buttons = document.querySelectorAll('.atlas-market-switch button');
+  const description = document.getElementById('atlasMarketDescription');
+  function syncMarketSwitch() {{
+    buttons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.market === select.value)));
+    description.textContent = select.value === 'tam'
+      ? 'Showing contracts addressable to Accenture'
+      : 'Showing all procurement contracts in the selected market';
+  }}
+  buttons.forEach(button => button.addEventListener('click', () => {{
+    if (select.value === button.dataset.market) return;
+    select.value = button.dataset.market;
+    syncMarketSwitch();
+    select.dispatchEvent(new Event('change', {{bubbles: true}}));
+  }}));
+  select.addEventListener('change', syncMarketSwitch);
+  syncMarketSwitch();
+}})();
 document.getElementById('agencySelect').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('searchInput').addEventListener('input',()=>{{refreshFilters();render()}});document.getElementById('capabilityFilter').addEventListener('change',()=>{{refreshFilters('capability');render()}});document.getElementById('supplierFilter').addEventListener('change',()=>{{refreshFilters('supplier');render()}});document.getElementById('minValueInput').addEventListener('input',()=>{{refreshFilters();render()}});document.getElementById('datedOnly').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('clearFiltersBtn').addEventListener('click',clearAllFilters);
 refreshFilters();render();
 </script>
