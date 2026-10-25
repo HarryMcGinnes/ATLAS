@@ -483,7 +483,7 @@ function renderService(){{
 function renderSupplier(){{const d=DATA.supplier[selected('supplierRange')],r=(d.rows||[]).slice().sort((a,b)=>a.share-b.share),mx=Math.max(.1,...r.map(x=>x.share));Plotly.react('supplierChart',[{{type:'bar',orientation:'h',y:r.map(x=>x.name),x:r.map(x=>x.share),marker:{{color:r.map(x=>x.name==='Accenture'?'#A100FF':'#667785')}},text:r.map(x=>fmtPct(x.share)),textposition:'outside',cliponaxis:false,customdata:r.map(x=>[x.value_label,x.contracts]),hovertemplate:'<b>%{{y}}</b><br>Share: %{{x:.1f}}%<br>Value: %{{customdata[0]}}<br>Contracts: %{{customdata[1]}}<extra></extra>'}}],{{height:760,margin:{{l:260,r:100,t:20,b:70}},xaxis:{{title:'Share of addressable TAM (%)',range:[0,mx*1.18],ticksuffix:'%'}}}},{{responsive:true,displayModeBar:false}});}}
 [['donutRange',renderDonut],['serviceRange',renderService],['supplierRange',renderSupplier]].forEach(([n,f])=>document.querySelectorAll('input[name="'+n+'"]').forEach(x=>x.addEventListener('change',f)));renderDonut();renderService();renderSupplier();
 </script></body></html>'''
-    output.write_text(atlas_agency_breakdown(atlas_navigation(html, "health"), df, value_col), encoding="utf-8")
+    output.write_text(atlas_market_switch(atlas_agency_breakdown(atlas_navigation(html, "health"), df, value_col), "all" if output.stem.endswith("_AllMarket") else "tam", "AccentureHealthTAMOverview.html", "AccentureHealthTAMOverview_AllMarket.html"), encoding="utf-8")
 
 
 def parse_args() -> argparse.Namespace:
@@ -515,6 +515,11 @@ def main() -> None:
     pd.DataFrame([s]).to_csv(outdir/"health_market_summary.csv",index=False)
     dashboard = outdir/"AccentureHealthTAMOverview.html"
     build_html(df,value_col,dashboard)
+
+    # Entire-page All of Market variant, preserving original Gold classifications.
+    all_market = df.copy()
+    all_market["is_addressable"] = True
+    build_html(all_market, value_col, outdir / "AccentureHealthTAMOverview_AllMarket.html")
 
     print("="*72)
     print("HEALTH TAM OVERVIEW - CANONICAL DATA")
@@ -565,20 +570,35 @@ def atlas_agency_breakdown(html_text: str, df: pd.DataFrame, value_col: str) -> 
     panel = """<section class="atlas-agency-panel" style="max-width:1480px;margin:20px auto;padding:22px;background:#fff;border:1px solid #e5e7eb;border-radius:14px">
     <h2 style="font-size:20px;margin:0 0 6px">Procurement by agency</h2>
     <p style="font-size:13px;color:#667085">Ranked expenditure and share of selected market. Uses existing Gold addressability decisions.</p>
-    <label style="font-size:13px;font-weight:700">Market view <select id="atlasAgencyMode" style="max-width:230px;padding:7px;margin-left:10px"><option value="tam">Addressable TAM</option><option value="all">All procurement</option></select></label>
+    
     <div id="atlasAgencyChart" style="width:100%;min-height:400px"></div></section>"""
     script = """<script>(function(){
     const rows = __DATA__;
     function render(){
-      const mode=document.getElementById('atlasAgencyMode').value;
+      const mode=location.pathname.includes('_AllMarket')?'all':'tam';
       const sorted=rows.map(r=>({agency:r.agency,value:Number(r[mode]||0)})).filter(r=>r.value!==0).sort((a,b)=>a.value-b.value);
       const total=sorted.reduce((s,r)=>s+r.value,0);
       const height=Math.max(420,sorted.length*38+110);
       Plotly.react('atlasAgencyChart',[{type:'bar',orientation:'h',x:sorted.map(r=>r.value/1e9),y:sorted.map(r=>r.agency),marker:{color:'#7C3AED'},text:sorted.map(r=>total?((r.value/total)*100).toFixed(1)+'%':'0%'),textposition:'outside',cliponaxis:false,customdata:sorted.map(r=>r.value),hovertemplate:'<b>%{y}</b><br>A$%{customdata:,.0f}<br>%{text} of selected market<extra></extra>'}],{template:'plotly_white',height,margin:{t:25,b:60,l:300,r:100},xaxis:{title:'Contract value (A$B)'},yaxis:{automargin:true},showlegend:false},{responsive:true,displayModeBar:false});
     }
-    document.getElementById('atlasAgencyMode').addEventListener('change',render);render();
+    render();
     })();</script>""".replace('__DATA__', json.dumps(rows, ensure_ascii=False))
     return html_text.replace('</body>', panel + script + '</body>', 1)
+
+
+def atlas_market_switch(html_text: str, current: str, tam_file: str, all_file: str) -> str:
+    """One market selector for the entire generated dashboard."""
+    controls = (
+        '<div class="atlas-global-market" style="max-width:1480px;margin:18px auto 0;padding:12px 18px;'
+        'background:#fff;border:1px solid #e5e7eb;border-radius:12px;font:600 14px Arial">'
+        '<label for="atlasGlobalMarket">Market view &nbsp;</label>'
+        '<select id="atlasGlobalMarket" aria-label="Market view" style="padding:9px 12px;border-radius:8px;'
+        'border:1px solid #d0d5dd;background:#fff" onchange="location.href=this.value">'
+        f'<option value="{tam_file}" {"selected" if current == "tam" else ""}>Addressable TAM</option>'
+        f'<option value="{all_file}" {"selected" if current == "all" else ""}>All of Market</option>'
+        '</select></div>'
+    )
+    return html_text.replace('<body>', '<body>' + controls, 1)
 
 if __name__ == "__main__":
     main()
