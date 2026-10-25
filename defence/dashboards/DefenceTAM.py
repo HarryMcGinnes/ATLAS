@@ -3458,7 +3458,7 @@ def build_html(df: pd.DataFrame, summary: dict[str, float | int | str], value_co
 </body>
 </html>
 """
-    output_html.write_text(atlas_market_switch(atlas_navigation(html, "defence"), "all" if output_html.stem.endswith("_AllMarket") else "tam", "DefenceTAM.html", "DefenceTAM_AllMarket.html"), encoding="utf-8")
+    output_html.write_text(atlas_navigation(html, "defence"), encoding="utf-8")
 
 
 
@@ -3583,13 +3583,6 @@ def main() -> None:
         args.fy_end,
     )
 
-    # Separate full-page market view: all existing contracts, no upstream reclassification.
-    all_market = df.copy()
-    all_market["is_addressable"] = True
-    all_market["capability"] = all_market["capability"].fillna("Unclassified").replace("", "Unclassified")
-    build_html(all_market, summarise(all_market, value_col), value_col,
-               output_dir / "DefenceTAM_AllMarket.html", args.top_n_suppliers,
-               args.top_n_capabilities, args.value_mode, args.fy_start, args.fy_end)
 
     print("Dashboard complete")
     print(f"Value mode: {args.value_mode} / column used: {value_col}")
