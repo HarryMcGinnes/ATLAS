@@ -665,6 +665,32 @@ def parse_as_at(value: str | None) -> pd.Timestamp:
     return pd.Timestamp.now(tz="UTC").normalize()
 
 
+
+def _latest_contract_revisions(frame: pd.DataFrame, id_column: str = "CN ID") -> pd.DataFrame:
+    """One latest amendment per base CN for timeline display only."""
+    if id_column not in frame.columns or frame.empty:
+        return frame
+    result = frame.copy()
+    ids = result[id_column].fillna("").astype(str).str.strip().str.upper()
+    result["_timeline_base_cn"] = ids.str.replace(r"-A\d+$", "", regex=True)
+    result["_timeline_revision"] = pd.to_numeric(
+        ids.str.extract(r"-A(\d+)$", expand=False), errors="coerce"
+    ).fillna(0)
+    # A dated latest revision wins ties; original input order is final tie-breaker.
+    date_candidates = ["Publish Date", "Amendment Date", "Last Updated", "Execution Date"]
+    date_column = next((c for c in date_candidates if c in result.columns), None)
+    result["_timeline_date"] = (
+        pd.to_datetime(result[date_column], errors="coerce", dayfirst=True, utc=True)
+        if date_column else pd.NaT
+    )
+    result["_timeline_order"] = range(len(result))
+    result = (result.sort_values(
+        ["_timeline_base_cn", "_timeline_revision", "_timeline_date", "_timeline_order"],
+        kind="stable", na_position="first"
+    ).drop_duplicates("_timeline_base_cn", keep="last"))
+    return result.drop(columns=["_timeline_base_cn", "_timeline_revision",
+                                "_timeline_date", "_timeline_order"])
+
 def add_current_contract_value_columns(df: pd.DataFrame, base_value_col: str, as_at: pd.Timestamp) -> tuple[pd.DataFrame, dict[str, object]]:
     """Keep only contracts active as at a date and add current-value measures.
 
@@ -680,7 +706,7 @@ def add_current_contract_value_columns(df: pd.DataFrame, base_value_col: str, as
     Value Per Year is used only as a fallback when dates are missing/invalid, and it
     is also capped at the total contract value for display and TAM calculations.
     """
-    out = df.copy()
+    out = _latest_contract_revisions(df)
     start_col = first_existing_col(out, START_DATE_CANDIDATES)
     end_col = first_existing_end_col(out, END_DATE_CANDIDATES)
     if end_col is None:
