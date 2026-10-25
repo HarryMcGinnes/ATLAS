@@ -200,6 +200,7 @@ def build_payload(df: pd.DataFrame) -> dict[str, object]:
             "description": safe_str(row.get(DESCRIPTION_COL)),
             "supplier": safe_str(row.get(SUPPLIER_GROUP_COL), "Unknown supplier"),
             "capability": safe_str(row.get(CAPABILITY_COL), "Unclassified"),
+            "is_addressable": bool(row.get("is_addressable", False)),
             "value": float(row.get("_value", 0) or 0),
             "total_value": float(row.get("_total_value", 0) or 0),
             "start_date": fmt_date(row.get("_start")),
