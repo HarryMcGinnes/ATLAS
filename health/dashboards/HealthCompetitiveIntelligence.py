@@ -775,9 +775,6 @@ def main() -> None:
     print(f"Wrote: {dashboard_path}")
 
 
-if __name__ == "__main__":
-    main()
-
 def atlas_navigation(html_text: str, industry: str) -> str:
     """Add consistent GitHub Pages navigation without changing dashboard analytics."""
     site = "/ATLAS/"
@@ -796,3 +793,7 @@ def atlas_navigation(html_text: str, industry: str) -> str:
     html_text=html_text.replace('</head>',css+'</head>',1)
     html_text=html_text.replace('<body>', '<body>'+nav,1)
     return html_text
+
+if __name__ == "__main__":
+    main()
+
