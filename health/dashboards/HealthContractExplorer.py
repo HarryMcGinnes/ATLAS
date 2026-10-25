@@ -169,8 +169,8 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
     out[CAPABILITY_COL] = clean_text(out[CAPABILITY_COL], "Unclassified")
     out[FY_COL] = clean_text(out[FY_COL], "Unknown FY") if FY_COL in out.columns else "Unknown FY"
 
-    out["_value"] = pd.to_numeric(out[value_col], errors="coerce").fillna(0).clip(lower=0)
-    out["_total_value"] = pd.to_numeric(out[VALUE_COL], errors="coerce").fillna(0).clip(lower=0)
+    out["_value"] = pd.to_numeric(out[value_col], errors="coerce").fillna(0)
+    out["_total_value"] = pd.to_numeric(out[VALUE_COL], errors="coerce").fillna(0)
     out["_fy_start"] = out[FY_COL].map(financial_year_start)
 
     start_col = first_existing(out, START_DATE_CANDIDATES)
