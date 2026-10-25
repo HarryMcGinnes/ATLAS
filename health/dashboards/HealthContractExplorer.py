@@ -269,8 +269,8 @@ select,input{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;
 .badge{{display:inline-block;border-radius:999px;padding:3px 7px;font-size:11px;font-weight:700;white-space:nowrap}} .badge-large{{background:#ECFDF3;color:var(--green)}} .badge-long{{background:#FFFAEB;color:var(--amber)}} .empty{{background:#fff;border:1px dashed #D0D5DD;border-radius:14px;padding:36px;text-align:center;color:var(--muted);margin-top:16px}} .method{{margin-top:16px;color:var(--muted);font-size:12px;line-height:1.5}}
 @media(max-width:1200px){{.kpis{{grid-template-columns:repeat(3,1fr)}}.toolbar{{grid-template-columns:repeat(2,minmax(0,1fr))}}.insight-grid{{grid-template-columns:1fr}}}} @media(max-width:650px){{.wrap{{padding:15px}}.kpis{{grid-template-columns:1fr 1fr}}.toolbar{{grid-template-columns:1fr}}}}
 
-.atlas-market{display:flex;gap:12px;align-items:center;margin:12px 0 20px;padding:12px 16px;border:1px solid #e5e7eb;background:#fff;border-radius:12px;max-width:360px;font-size:13px;font-weight:700}.atlas-market select{flex:1;min-width:150px}
-</style>
+.atlas-market{{display:flex;gap:12px;align-items:center;margin:12px 0 20px;padding:12px 16px;border:1px solid #e5e7eb;background:#fff;border-radius:12px;max-width:360px;font-size:13px;font-weight:700}}
+.atlas-market select{{flex:1;min-width:150px}}</style>
 </head>
 <body>
 <div class="wrap">
