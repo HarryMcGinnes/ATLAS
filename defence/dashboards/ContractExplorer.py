@@ -337,9 +337,10 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
     # Match Dashboard 1 exactly: TAM is defined by is_addressable only.
     # is_market_relevant is retained as an audit field but is not used as an
     # additional dashboard filter.
-    out = out[out["is_addressable"]].copy()
+    # Retain both market scopes; the dashboard toggle filters the client-side records.
+    # out = out[out["is_addressable"]].copy()
     if out.empty:
-        raise SystemExit("No addressable contracts were found.")
+        raise SystemExit("No Defence contracts were found.")
 
     out[AGENCY_COL] = clean_text(out[AGENCY_COL], "Unknown agency")
     out[DIVISION_COL] = clean_text(out[DIVISION_COL], "Unspecified division")
@@ -429,6 +430,7 @@ def build_payload(df: pd.DataFrame) -> dict[str, object]:
     records: list[dict[str, object]] = []
     for _, row in df.iterrows():
         record = {
+            "is_addressable": bool(row.get("is_addressable", False)),
             "agency": safe_str(row.get(AGENCY_COL), "Unknown agency"),
             "division": safe_str(row.get("_division"), "Unspecified division"),
             "division_original": safe_str(row.get("_division_original")),
@@ -874,11 +876,14 @@ tbody tr:hover {{ background:#FCFCFD; }}
   .kpis {{ grid-template-columns:1fr 1fr; }}
   .toolbar {{ grid-template-columns:1fr; }}
 }}
-</style>
+
+.atlas-market{{display:flex;gap:12px;align-items:center;margin:12px 0 20px;padding:12px 16px;border:1px solid #e5e7eb;background:#fff;border-radius:12px;max-width:360px;font-size:13px;font-weight:700}}
+.atlas-market select{{flex:1;min-width:150px}}</style>
 </head>
 <body>
 <div class="wrap">
   <h1>Procurement Exploration</h1>
+  <div class="atlas-market"><label for="marketMode">Market view</label><select id="marketMode"><option value="tam">Addressable TAM</option><option value="all">All procurement</option></select></div>
   
 
   <section class="executive-summary">
@@ -936,7 +941,7 @@ tbody tr:hover {{ background:#FCFCFD; }}
   </section>
 
   <section class="kpis">
-    <div class="kpi"><div class="kpi-label">Selected TAM</div><div class="kpi-value" id="kpiTam">-</div><div class="kpi-sub">{value_basis}</div></div>
+    <div class="kpi"><div class="kpi-label">Selected market</div><div class="kpi-value" id="kpiTam">-</div><div class="kpi-sub">{value_basis}</div></div>
     <div class="kpi"><div class="kpi-label">Contracts</div><div class="kpi-value" id="kpiContracts">-</div><div class="kpi-sub">Distinct contracts</div></div>
     <div class="kpi"><div class="kpi-label">Average value</div><div class="kpi-value" id="kpiAvgValue">-</div><div class="kpi-sub" id="kpiMedianValue">-</div></div>
     <div class="kpi"><div class="kpi-label">Average length</div><div class="kpi-value" id="kpiAvgLength">-</div><div class="kpi-sub" id="kpiMedianLength">-</div></div>
@@ -1063,13 +1068,18 @@ function branchesFor(agency, division = 'All divisions') {{
   );
 }}
 
+function marketRows() {{
+  const mode = document.getElementById("marketMode").value;
+  return DATA.records.filter(r => mode === "all" || r.is_addressable);
+}}
+
 function organisationRows() {{
   const agency = document.getElementById('agencySelect').value;
   const division = document.getElementById('divisionSelect').value;
   const branch = document.getElementById('branchSelect').value;
   const domain = document.getElementById('domainSelect').value;
 
-  return DATA.records.filter(r =>
+  return marketRows().filter(r =>
     (agency === ALL_AGENCIES || r.agency === agency) &&
     (division === 'All divisions' || r.division === division) &&
     (branch === 'All branches' || r.branch === branch) &&
@@ -1218,7 +1228,7 @@ function populateDomains(preserveDomain = true) {{
   const agency = document.getElementById('agencySelect').value;
   const division = document.getElementById('divisionSelect').value || 'All divisions';
   const branch = document.getElementById('branchSelect').value || 'All branches';
-  const values = uniqueSorted(DATA.records.filter(r =>
+  const values = uniqueSorted(marketRows().filter(r =>
     (agency === ALL_AGENCIES || r.agency === agency) &&
     (division === 'All divisions' || r.division === division) &&
     (branch === 'All branches' || r.branch === branch)
@@ -1327,7 +1337,7 @@ function updateLeaderboards() {{
   // Executive insight cards use the full canonical TAM dataset and ignore page
   // filters. Contract ceilings are spread evenly over their dated duration so
   // the cards represent estimated annual expenditure rather than award value.
-  const allRows = DATA.records || [];
+  const allRows = marketRows();
   const allFys = [...new Set(
     allRows.map(r => Number(r.fy_start)).filter(Number.isFinite)
   )].sort((a,b) => a-b);
@@ -1560,7 +1570,7 @@ function clearAllFilters() {{
   );
 
   const domainSelect = document.getElementById('domainSelect');
-  setOptions(domainSelect, uniqueSorted(DATA.records.map(r => r.domain)), ALL_DOMAINS, null, false);
+  setOptions(domainSelect, uniqueSorted(marketRows().map(r => r.domain)), ALL_DOMAINS, null, false);
 
   document.getElementById('capabilityFilter').innerHTML =
     '<option value="All Service Offerings">All Service Offerings</option>';
@@ -1651,6 +1661,7 @@ function render() {{
 }}
 
 document.getElementById('agencySelect').value = DEFAULT_AGENCY;
+document.getElementById('marketMode').addEventListener('change', () => {{ clearAllFilters(); updateLeaderboards(); }});
 document.getElementById('agencySelect').addEventListener(
   'change',
   () => refreshOrganisationFilters('agency')
@@ -1753,7 +1764,7 @@ refreshOrganisationFilters('agency');
 </body>
 </html>"""
 
-    output_path.write_text(html, encoding="utf-8")
+    output_path.write_text(atlas_navigation(html, "defence"), encoding="utf-8")
 
 
 def html_escape(value: object) -> str:
@@ -1812,5 +1823,25 @@ def main() -> None:
     print(f"Wrote: {output_dir / 'branch_consolidation_audit.csv'}")
 
 
+def atlas_navigation(html_text: str, industry: str) -> str:
+    """Add consistent GitHub Pages navigation without changing dashboard analytics."""
+    site = "/ATLAS/"
+    nav = f"""<nav class="atlas-nav" aria-label="ATLAS navigation">
+      <a class="atlas-brand" href="{site}">ATLAS</a>
+      <a href="{site}">Home</a>
+      <a href="{site}defence/" {'aria-current="page"' if industry == 'defence' else ''}>Defence</a>
+      <a href="{site}health/" {'aria-current="page"' if industry == 'health' else ''}>Federal Health</a>
+    </nav>"""
+    css = """<style>
+    .atlas-nav{display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding:13px max(22px,calc((100vw - 1480px)/2));background:#101018;color:white;font:600 13px Arial,Helvetica,sans-serif}
+    .atlas-nav a{color:#e9e9f1;text-decoration:none;padding:7px 9px;border-radius:7px}
+    .atlas-nav a:hover,.atlas-nav a[aria-current=page]{background:#3d2456;color:white}
+    .atlas-nav .atlas-brand{font-size:21px;font-weight:800;letter-spacing:.06em;color:white;margin-right:auto}
+    </style>"""
+    html_text=html_text.replace('</head>',css+'</head>',1)
+    html_text=html_text.replace('<body>', '<body>'+nav,1)
+    return html_text
+
 if __name__ == "__main__":
     main()
+

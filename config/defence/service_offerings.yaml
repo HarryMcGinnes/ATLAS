@@ -1,0 +1,462 @@
+service_offerings:
+
+  - id: STA
+    name: "Strategy, Transformation & Advisory"
+
+    rules:
+      Description:
+        - pattern: '\b(?:strategic advisory|business advisory|strategy consulting)\b'
+          weight: 40
+          reason: "Explicit strategy or advisory services"
+
+        - pattern: '\b(?:business transformation|operating model|organisational design|process improvement|change management)\b'
+          weight: 40
+          reason: "Explicit transformation or change services"
+
+        - pattern: '\b(?:business case|feasibility study|options analysis|concept assessment)\b'
+          weight: 36
+          reason: "Business case or feasibility work"
+
+        - pattern: '\b(?:pmo|project management office|program management office|portfolio management)\b'
+          weight: 34
+          reason: "PMO or portfolio management"
+
+        - pattern: '\b(?:project management services|program management services|project support services)\b'
+          weight: 28
+          reason: "Project or program management services"
+
+        - pattern: '\b(?:consulting services|professional services|management services)\b'
+          weight: 16
+          reason: "Generic professional or consulting services"
+
+      Category:
+        - pattern: '\bmanagement advisory\b'
+          weight: 30
+          reason: "Management advisory category"
+
+        - pattern: '\bstrategic planning consultation\b'
+          weight: 30
+          reason: "Strategic planning category"
+
+        - pattern: '\bfeasibility studies?\b'
+          weight: 28
+          reason: "Feasibility study category"
+
+        - pattern: '\bproject administration or planning\b'
+          weight: 25
+          reason: "Project administration category"
+
+        - pattern: '\bproject management\b'
+          weight: 24
+          reason: "Project management category"
+
+        - pattern: '\bmanagement support services?\b'
+          weight: 10
+          reason: "Generic management support category"
+
+        - pattern: '\bconsulting services?\b'
+          weight: 18
+          reason: "Consulting services category"
+
+      Organisation:
+        - pattern: '\b(?:transformation|strategy|reform|enterprise change|portfolio management)\b'
+          weight: 15
+          reason: "Strategy or transformation organisation"
+
+        - pattern: '\b(?:program office|project office|portfolio office)\b'
+          weight: 12
+          reason: "Program or project organisation"
+
+      Supplier:
+        - pattern: '\b(?:accenture|deloitte|kpmg|pwc|pricewaterhousecoopers|ernst and young|ey)\b'
+          weight: 6
+          reason: "Consulting supplier context"
+
+      Domain: []
+
+
+  - id: SIE
+    name: "SI & Engineering"
+
+    rules:
+      Description:
+        - pattern: '\b(?:systems? integration services?|platform integration|application integration)\b'
+          weight: 40
+          reason: "Explicit systems or platform integration"
+
+        - pattern: '\b(?:software development|application development|software engineering)\b'
+          weight: 40
+          reason: "Explicit software or application development"
+
+        - pattern: '\b(?:devops|devsecops|digital engineering|model based systems engineering|mbse)\b'
+          weight: 36
+          reason: "Digital or model-based engineering"
+
+        - pattern: '\b(?:systems? engineering|requirements engineering)\b'
+          weight: 32
+          reason: "Systems engineering"
+
+        - pattern: '\b(?:solution architecture|enterprise architecture|technical architecture|ict architecture)\b'
+          weight: 32
+          reason: "Technology architecture"
+
+        - pattern: '\b(?:erp implementation|sap implementation|platform implementation|application implementation)\b'
+          weight: 38
+          reason: "Enterprise platform implementation"
+
+        - pattern: '^(?:ict services?|information technology services?|digital technology services?)$'
+          weight: 28
+          reason: "Explicit general ICT services"
+
+        - pattern: '\b(?:integration and development services|software developer services)\b'
+          weight: 38
+          reason: "Integration or development services"
+
+      Category:
+        - pattern: '\b(?:software development|application development|systems? integration)\b'
+          weight: 30
+          reason: "Development or systems integration category"
+
+        - pattern: '\bsoftware or hardware engineering\b'
+          weight: 27
+          reason: "Software or hardware engineering category"
+
+        - pattern: '\benterprise software\b'
+          weight: 28
+          reason: "Enterprise software category"
+
+        - pattern: '\bapplication implementation\b'
+          weight: 24
+          reason: "Application implementation category"
+
+        - pattern: '\binformation technology services?\b'
+          weight: 18
+          reason: "Information technology services category"
+
+        - pattern: '\bcomputer services?\b'
+          weight: 12
+          reason: "Generic computer services category"
+
+        - pattern: '\bprofessional engineering services?\b'
+          weight: 8
+          reason: "Generic professional engineering category"
+
+      Organisation:
+        - pattern: '\b(?:ddg|ciog|ictdd|enterprise architecture|solution delivery|applications?|engineering)\b'
+          weight: 12
+          reason: "Digital delivery or engineering organisation"
+
+        - pattern: '\b(?:erp|enterprise resource planning)\b'
+          weight: 15
+          reason: "ERP organisation"
+
+      Supplier:
+        - pattern: '\b(?:ibm|fujitsu|leidos|dxc|capgemini|unisys|sap|oracle)\b'
+          weight: 4
+          reason: "Technology services supplier context"
+
+        - pattern: '\bsap\b'
+          weight: 7
+          reason: "Enterprise platform supplier context"
+
+      Domain: []
+
+
+  - id: DAA
+    name: "Data, AI & Automation"
+
+    rules:
+      Description:
+        - pattern: '\b(?:data engineering|data migration|data integration|data governance|data quality|data remediation)\b'
+          weight: 40
+          reason: "Explicit data engineering or management"
+
+        - pattern: '\b(?:data platform|data warehouse|data lake|data services)\b'
+          weight: 38
+          reason: "Data platform or data services"
+
+        - pattern: '\b(?:analytics|business intelligence|power bi|tableau|databricks|snowflake)\b'
+          weight: 38
+          reason: "Analytics or business intelligence"
+
+        - pattern: '\b(?:artificial intelligence|machine learning|generative ai|genai)\b'
+          weight: 40
+          reason: "Artificial intelligence"
+
+        - pattern: '\b(?:automation|robotic process automation|rpa)\b'
+          weight: 36
+          reason: "Automation"
+
+        - pattern: '\bdata support services?\b'
+          weight: 32
+          reason: "Explicit data support services"
+
+      Category:
+        - pattern: '\b(?:data management|data services|data processing)\b'
+          weight: 30
+          reason: "Data management or processing category"
+
+        - pattern: '\b(?:analytics|business intelligence)\b'
+          weight: 30
+          reason: "Analytics or BI category"
+
+        - pattern: '\bstatistical services?\b'
+          weight: 24
+          reason: "Statistical services category"
+
+        - pattern: '\b(?:artificial intelligence|machine learning)\b'
+          weight: 30
+          reason: "AI or machine learning category"
+
+        - pattern: '\bdatabase\b'
+          weight: 24
+          reason: "Database category"
+
+      Organisation:
+        - pattern: '\b(?:data|analytics|artificial intelligence|ai centre|automation|information management)\b'
+          weight: 15
+          reason: "Data, analytics or AI organisation"
+
+      Supplier:
+        - pattern: '\b(?:databricks|snowflake|tableau|informatica|alteryx|palantir)\b'
+          weight: 10
+          reason: "Data platform supplier context"
+
+      Domain: []
+
+
+  - id: CIC
+    name: "Cloud Infrastructure & Cyber"
+
+    rules:
+      Description:
+        - pattern: '\b(?:cloud services?|cloud migration|cloud hosting|cloud infrastructure)\b'
+          weight: 40
+          reason: "Explicit cloud services or infrastructure"
+
+        - pattern: '\b(?:aws|amazon web services|azure|google cloud|gcp)\b'
+          weight: 36
+          reason: "Cloud platform"
+
+        - pattern: '\b(?:cybersecurity|cyber security|security operations|zero trust|siem|security operations centre|security operations center)\b'
+          weight: 40
+          reason: "Explicit cybersecurity services"
+
+        - pattern: '\b(?:identity and access management|iam|irap)\b'
+          weight: 38
+          reason: "Identity or security assurance"
+
+        - pattern: '\b(?:network architecture|network engineering|network infrastructure|network implementation)\b'
+          weight: 34
+          reason: "Network infrastructure"
+
+        - pattern: '\b(?:data centre hosting|data center hosting|infrastructure hosting|hosting services?)\b'
+          weight: 36
+          reason: "Infrastructure hosting"
+
+        - pattern: '\b(?:ict cloud support services?|cloud support services?)\b'
+          weight: 40
+          reason: "Explicit cloud support"
+
+        - pattern: '\b(?:ict security uplift|ict security support|cyber support services?)\b'
+          weight: 38
+          reason: "ICT or cyber security support"
+
+      Category:
+        - pattern: '\b(?:cloud computing|cloud infrastructure)\b'
+          weight: 30
+          reason: "Cloud computing category"
+
+        - pattern: '\bhosting services?\b'
+          weight: 28
+          reason: "Hosting category"
+
+        - pattern: '\b(?:cyber security|cybersecurity|information security)\b'
+          weight: 30
+          reason: "Cybersecurity category"
+
+        - pattern: '\bnetwork services?\b'
+          weight: 25
+          reason: "Network services category"
+
+        - pattern: '\btelecommunications services?\b'
+          weight: 22
+          reason: "Telecommunications services category"
+
+      Organisation:
+        - pattern: '\b(?:cyber|sigint|security operations|information security)\b'
+          weight: 15
+          reason: "Cyber or security organisation"
+
+        - pattern: '\b(?:ddg|ciog|ictdd|cloud|infrastructure|hosting|network)\b'
+          weight: 12
+          reason: "Digital infrastructure organisation"
+
+      Supplier:
+        - pattern: '\b(?:amazon web services|aws)\b'
+          weight: 10
+          reason: "AWS supplier context"
+
+        - pattern: '\bmicrosoft\b'
+          weight: 6
+          reason: "Microsoft supplier context"
+
+        - pattern: '\b(?:telstra|optus)\b'
+          weight: 5
+          reason: "Network supplier context"
+
+      Domain:
+        - pattern: '^cyber$'
+          weight: 5
+          reason: "Cyber Defence domain"
+
+
+  - id: MSO
+    name: "Managed Services & Operations"
+
+    rules:
+      Description:
+        - pattern: '\b(?:managed services?|application managed services?)\b'
+          weight: 40
+          reason: "Explicit managed services"
+
+        - pattern: '\b(?:ict support|it support|technology support|ict management and support services)\b'
+          weight: 38
+          reason: "ICT or technology support"
+
+        - pattern: '\b(?:application sustainment|systems? sustainment|software sustainment)\b'
+          weight: 38
+          reason: "Application or system sustainment"
+
+        - pattern: '\b(?:ict operations|it operations|systems? administration)\b'
+          weight: 36
+          reason: "Technology operations"
+
+        - pattern: '\b(?:service desk|help desk|end user support|desktop support)\b'
+          weight: 40
+          reason: "Service desk or end-user support"
+
+        - pattern: '\b(?:application support|system support|software support)\b'
+          weight: 36
+          reason: "Application or system support"
+
+        - pattern: '\b(?:software maintenance|application maintenance|system maintenance)\b'
+          weight: 36
+          reason: "Software or application maintenance"
+
+        - pattern: '\b(?:software licen[cs]es?|licen[cs]e renewal|software subscription|annual subscription)\b'
+          weight: 34
+          reason: "Software licensing or subscription"
+
+        - pattern: '\b(?:centralised processing services|centralized processing services)\b'
+          weight: 36
+          reason: "Central processing services"
+
+      Category:
+        - pattern: '\bsoftware maintenance and support\b'
+          weight: 30
+          reason: "Software maintenance and support category"
+
+        - pattern: '\bmaintenance or support fees\b'
+          weight: 27
+          reason: "Maintenance or support category"
+
+        - pattern: '\bsystem administrators?\b'
+          weight: 28
+          reason: "System administration category"
+
+        - pattern: '\bservice management\b'
+          weight: 27
+          reason: "Service management category"
+
+        - pattern: '\bworkflow management\b'
+          weight: 25
+          reason: "Workflow management category"
+
+        - pattern: '\bcustomer relationship management\b'
+          weight: 24
+          reason: "CRM category"
+
+        - pattern: '\blearning management\b'
+          weight: 22
+          reason: "Learning management category"
+
+      Organisation:
+        - pattern: '\b(?:service operations|ict operations|application support|service management|sustainment)\b'
+          weight: 15
+          reason: "Technology operations organisation"
+
+        - pattern: '\b(?:ddg|ciog|ictdd|erp)\b'
+          weight: 10
+          reason: "Digital organisation context"
+
+      Supplier:
+        - pattern: '\b(?:fujitsu|dxc|unisys|kinetic it|atos|eviden)\b'
+          weight: 5
+          reason: "Managed technology services supplier context"
+
+      Domain: []
+
+
+goods_guardrail:
+
+  physical_patterns:
+    - '\bcomponents?\b'
+    - '\bequipment\b'
+    - '\baccessories\b'
+    - '\bdevices?\b'
+    - '\bparts?\b'
+    - '\bassembl(?:y|ies)\b'
+    - '\bsubassembl(?:y|ies)\b'
+    - '\bhardware\b'
+    - '\bmachinery\b'
+    - '\bvehicles?\b'
+    - '\bwatercraft\b'
+    - '\baircraft\b'
+    - '\bweapons?\b'
+    - '\bmissiles?\b'
+    - '\bmunitions?\b'
+    - '\bammunition\b'
+    - '\bexplosives?\b'
+    - '\bcommunications devices?\b'
+    - '\bcomputer equipment\b'
+    - '\bservers?\b'
+    - '\bradar\b'
+    - '\bsonar\b'
+
+  digital_patterns:
+    - '\bsoftware licen[cs]e\b'
+    - '\bsoftware subscription\b'
+    - '\bsoftware development\b'
+    - '\bapplication development\b'
+    - '\bsystems? integration\b'
+    - '\bcloud services?\b'
+    - '\bcloud subscription\b'
+    - '\bsaas\b'
+    - '\bdata platform\b'
+    - '\bdata engineering\b'
+    - '\bdata analytics\b'
+    - '\bcybersecurity\b'
+    - '\bcyber security\b'
+    - '\bapplication implementation\b'
+
+
+classification:
+  scale: 100
+
+  source_caps:
+    Description: 40
+    Category: 30
+    Organisation: 15
+    Supplier: 10
+    Domain: 5
+
+  grades:
+    A: 80
+    B: 65
+    C: 50
+
+  minimum_clear_margin: 10
+  allow_unclassified: true
+  record_confidence: true
+  record_evidence: true

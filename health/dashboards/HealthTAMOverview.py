@@ -483,7 +483,7 @@ function renderService(){{
 function renderSupplier(){{const d=DATA.supplier[selected('supplierRange')],r=(d.rows||[]).slice().sort((a,b)=>a.share-b.share),mx=Math.max(.1,...r.map(x=>x.share));Plotly.react('supplierChart',[{{type:'bar',orientation:'h',y:r.map(x=>x.name),x:r.map(x=>x.share),marker:{{color:r.map(x=>x.name==='Accenture'?'#A100FF':'#667785')}},text:r.map(x=>fmtPct(x.share)),textposition:'outside',cliponaxis:false,customdata:r.map(x=>[x.value_label,x.contracts]),hovertemplate:'<b>%{{y}}</b><br>Share: %{{x:.1f}}%<br>Value: %{{customdata[0]}}<br>Contracts: %{{customdata[1]}}<extra></extra>'}}],{{height:760,margin:{{l:260,r:100,t:20,b:70}},xaxis:{{title:'Share of addressable TAM (%)',range:[0,mx*1.18],ticksuffix:'%'}}}},{{responsive:true,displayModeBar:false}});}}
 [['donutRange',renderDonut],['serviceRange',renderService],['supplierRange',renderSupplier]].forEach(([n,f])=>document.querySelectorAll('input[name="'+n+'"]').forEach(x=>x.addEventListener('change',f)));renderDonut();renderService();renderSupplier();
 </script></body></html>'''
-    output.write_text(html, encoding="utf-8")
+    output.write_text(atlas_agency_breakdown(atlas_navigation(html, "health"), df, value_col), encoding="utf-8")
 
 
 def parse_args() -> argparse.Namespace:
@@ -528,5 +528,58 @@ def main() -> None:
     print("="*72)
 
 
+def atlas_navigation(html_text: str, industry: str) -> str:
+    """Add consistent GitHub Pages navigation without changing dashboard analytics."""
+    site = "/ATLAS/"
+    nav = f"""<nav class="atlas-nav" aria-label="ATLAS navigation">
+      <a class="atlas-brand" href="{site}">ATLAS</a>
+      <a href="{site}">Home</a>
+      <a href="{site}defence/" {'aria-current="page"' if industry == 'defence' else ''}>Defence</a>
+      <a href="{site}health/" {'aria-current="page"' if industry == 'health' else ''}>Federal Health</a>
+    </nav>"""
+    css = """<style>
+    .atlas-nav{display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding:13px max(22px,calc((100vw - 1480px)/2));background:#101018;color:white;font:600 13px Arial,Helvetica,sans-serif}
+    .atlas-nav a{color:#e9e9f1;text-decoration:none;padding:7px 9px;border-radius:7px}
+    .atlas-nav a:hover,.atlas-nav a[aria-current=page]{background:#3d2456;color:white}
+    .atlas-nav .atlas-brand{font-size:21px;font-weight:800;letter-spacing:.06em;color:white;margin-right:auto}
+    </style>"""
+    html_text=html_text.replace('</head>',css+'</head>',1)
+    html_text=html_text.replace('<body>', '<body>'+nav,1)
+    return html_text
+
+
+def atlas_agency_breakdown(html_text: str, df: pd.DataFrame, value_col: str) -> str:
+    """Add ranked agency spending, with TAM and All Market views."""
+    if "Agency" not in df.columns or "is_addressable" not in df.columns:
+        return html_text
+    data = df.copy()
+    flag = data["is_addressable"]
+    if not pd.api.types.is_bool_dtype(flag):
+        flag = flag.fillna(False).astype(str).str.lower().isin({"true", "1", "yes"})
+    data["_atlas_addr"] = flag.fillna(False)
+    data[value_col] = pd.to_numeric(data[value_col], errors="coerce").fillna(0)
+    all_values = data.groupby("Agency", dropna=False)[value_col].sum()
+    tam_values = data[data["_atlas_addr"]].groupby("Agency", dropna=False)[value_col].sum()
+    agencies = sorted(set(all_values.index) | set(tam_values.index), key=str)
+    rows = [{"agency": str(a), "all": float(all_values.get(a, 0)), "tam": float(tam_values.get(a, 0))} for a in agencies]
+    panel = """<section class="atlas-agency-panel" style="max-width:1480px;margin:20px auto;padding:22px;background:#fff;border:1px solid #e5e7eb;border-radius:14px">
+    <h2 style="font-size:20px;margin:0 0 6px">Procurement by agency</h2>
+    <p style="font-size:13px;color:#667085">Ranked expenditure and share of selected market. Uses existing Gold addressability decisions.</p>
+    <label style="font-size:13px;font-weight:700">Market view <select id="atlasAgencyMode" style="max-width:230px;padding:7px;margin-left:10px"><option value="tam">Addressable TAM</option><option value="all">All procurement</option></select></label>
+    <div id="atlasAgencyChart" style="width:100%;min-height:400px"></div></section>"""
+    script = """<script>(function(){
+    const rows = __DATA__;
+    function render(){
+      const mode=document.getElementById('atlasAgencyMode').value;
+      const sorted=rows.map(r=>({agency:r.agency,value:Number(r[mode]||0)})).filter(r=>r.value!==0).sort((a,b)=>a.value-b.value);
+      const total=sorted.reduce((s,r)=>s+r.value,0);
+      const height=Math.max(420,sorted.length*38+110);
+      Plotly.react('atlasAgencyChart',[{type:'bar',orientation:'h',x:sorted.map(r=>r.value/1e9),y:sorted.map(r=>r.agency),marker:{color:'#7C3AED'},text:sorted.map(r=>total?((r.value/total)*100).toFixed(1)+'%':'0%'),textposition:'outside',cliponaxis:false,customdata:sorted.map(r=>r.value),hovertemplate:'<b>%{y}</b><br>A$%{customdata:,.0f}<br>%{text} of selected market<extra></extra>'}],{template:'plotly_white',height,margin:{t:25,b:60,l:300,r:100},xaxis:{title:'Contract value (A$B)'},yaxis:{automargin:true},showlegend:false},{responsive:true,displayModeBar:false});
+    }
+    document.getElementById('atlasAgencyMode').addEventListener('change',render);render();
+    })();</script>""".replace('__DATA__', json.dumps(rows, ensure_ascii=False))
+    return html_text.replace('</body>', panel + script + '</body>', 1)
+
 if __name__ == "__main__":
     main()
+

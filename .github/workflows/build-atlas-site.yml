@@ -46,6 +46,8 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}
 
       # ============================================================
       # PYTHON
@@ -77,29 +79,52 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ github.event.workflow_run.id }}
 
-      - name: Download latest successful data artifact
+      - name: Download latest valid data artifact
         if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
         run: |
-          RUN_ID=$(gh run list \
+          set -euo pipefail
+          echo "Searching successful Refresh ATLAS Data runs on $BRANCH"
+          RUN_IDS=$(gh run list \
+            --repo "$REPO" \
             --workflow "refresh-atlas-data.yml" \
-            --branch main \
+            --branch "$BRANCH" \
             --status success \
-            --limit 1 \
+            --limit 30 \
             --json databaseId \
-            --jq '.[0].databaseId')
+            --jq '.[].databaseId')
 
-          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "No successful Refresh ATLAS Data workflow found."
+          if [ -z "$RUN_IDS" ]; then
+            echo "ERROR: No successful refresh runs on $BRANCH"
             exit 1
           fi
 
-          echo "Using Refresh ATLAS Data run: $RUN_ID"
+          FOUND=false
+          while IFS= read -r RUN_ID; do
+            [ -n "$RUN_ID" ] || continue
+            echo "Checking refresh run $RUN_ID"
+            ARTIFACT_COUNT=$(gh api \
+              "repos/$REPO/actions/runs/$RUN_ID/artifacts" \
+              --jq '[.artifacts[] | select(.name == "atlas-data-refresh" and .expired == false)] | length')
+            if [ "$ARTIFACT_COUNT" -gt 0 ]; then
+              echo "Downloading atlas-data-refresh from $RUN_ID"
+              gh run download "$RUN_ID" \
+                --repo "$REPO" \
+                --name atlas-data-refresh \
+                --dir .
+              FOUND=true
+              break
+            fi
+          done <<< "$RUN_IDS"
 
-          gh run download "$RUN_ID" \
-            --name atlas-data-refresh \
-            --dir .
+          if [ "$FOUND" != true ]; then
+            echo "ERROR: No unexpired atlas-data-refresh artifact in the last 30 successful $BRANCH refresh runs."
+            echo "Check the Refresh ATLAS Data workflow uploads an artifact named atlas-data-refresh."
+            exit 1
+          fi
 
       # ============================================================
       # VERIFY DATA

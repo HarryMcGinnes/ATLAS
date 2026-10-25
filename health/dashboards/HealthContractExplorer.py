@@ -129,7 +129,8 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
     # TAM-only dashboard: non-addressable Health procurement never enters the payload,
     # KPI cards, lifecycle panels, filters or contract tables.
     addressable_mask = parse_bool_series(df["is_addressable"])
-    df = df.loc[addressable_mask].copy()
+    df = df.copy()
+    df["is_addressable"] = addressable_mask
 
     # Trust canonical Health addressability; no dashboard-level reclassification.
     if df.empty:
@@ -190,6 +191,7 @@ def build_payload(df: pd.DataFrame) -> dict[str, object]:
 
     for _, row in df.iterrows():
         records.append({
+            "is_addressable": bool(row.get("is_addressable", False)),
             "agency": safe_str(row.get(AGENCY_COL), "Unknown agency"),
             "division": safe_str(row.get("_division"), "Unspecified division"),
             "financial_year": safe_str(row.get(FY_COL), "Unknown FY"),
@@ -266,11 +268,14 @@ select,input{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;
 .money{{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}} .nowrap{{white-space:nowrap}} .desc{{width:420px;min-width:340px;max-width:480px;line-height:1.4;white-space:normal;overflow-wrap:anywhere}} .supplier-accent{{color:#6B00B6;font-weight:700}}
 .badge{{display:inline-block;border-radius:999px;padding:3px 7px;font-size:11px;font-weight:700;white-space:nowrap}} .badge-large{{background:#ECFDF3;color:var(--green)}} .badge-long{{background:#FFFAEB;color:var(--amber)}} .empty{{background:#fff;border:1px dashed #D0D5DD;border-radius:14px;padding:36px;text-align:center;color:var(--muted);margin-top:16px}} .method{{margin-top:16px;color:var(--muted);font-size:12px;line-height:1.5}}
 @media(max-width:1200px){{.kpis{{grid-template-columns:repeat(3,1fr)}}.toolbar{{grid-template-columns:repeat(2,minmax(0,1fr))}}.insight-grid{{grid-template-columns:1fr}}}} @media(max-width:650px){{.wrap{{padding:15px}}.kpis{{grid-template-columns:1fr 1fr}}.toolbar{{grid-template-columns:1fr}}}}
-</style>
+
+.atlas-market{{display:flex;gap:12px;align-items:center;margin:12px 0 20px;padding:12px 16px;border:1px solid #e5e7eb;background:#fff;border-radius:12px;max-width:360px;font-size:13px;font-weight:700}}
+.atlas-market select{{flex:1;min-width:150px}}</style>
 </head>
 <body>
 <div class="wrap">
-<h1>Health TAM Exploratory Analysis</h1>
+<h1>Health Contract Explorer</h1>
+ <div class="atlas-market"><label for="marketMode">Market view</label><select id="marketMode"><option value="tam">Addressable TAM</option><option value="all">All procurement</option></select></div>
 <p class="subtitle">Explore Accenture-addressable Health procurement by agency, supplier, service offering and contract.</p>
 <section class="executive-summary"><h2>Executive summary</h2><p>This dashboard provides an interactive view of the Accenture-addressable Health market. Select an agency to understand where TAM is concentrated, which suppliers are winning addressable work, and which individual contracts underpin that spend.</p></section>
 
@@ -281,7 +286,7 @@ select,input{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;
 </section>
 
 <section class="kpis">
-<div class="kpi"><div class="kpi-label">Selected TAM</div><div class="kpi-value" id="kpiTotal">-</div><div class="kpi-sub">{value_basis}</div></div>
+<div class="kpi"><div class="kpi-label">Selected market</div><div class="kpi-value" id="kpiTotal">-</div><div class="kpi-sub">{value_basis}</div></div>
 <div class="kpi"><div class="kpi-label">Contracts</div><div class="kpi-value" id="kpiContracts">-</div><div class="kpi-sub">Matching contracts</div></div>
 <div class="kpi"><div class="kpi-label">Average value</div><div class="kpi-value" id="kpiAvgValue">-</div><div class="kpi-sub" id="kpiMedianValue">-</div></div>
 <div class="kpi"><div class="kpi-label">Average length</div><div class="kpi-value" id="kpiAvgLength">-</div><div class="kpi-sub" id="kpiMedianLength">-</div></div>
@@ -317,7 +322,8 @@ function number(v){{return Number(v||0).toLocaleString('en-AU')}}
 function duration(days){{if(days===null||days===undefined||!isFinite(Number(days)))return'n/a';const d=Number(days),y=d/365.25;if(y>=2)return y.toFixed(1)+' yrs';if(y>=1)return y.toFixed(2)+' yrs';return Math.round(d)+' days'}}
 function median(values){{const a=values.filter(v=>Number.isFinite(v)).sort((x,y)=>x-y);if(!a.length)return null;const m=Math.floor(a.length/2);return a.length%2?a[m]:(a[m-1]+a[m])/2}}
 
-function agencyRows(){{const agency=document.getElementById('agencySelect').value;return DATA.records.filter(r=>agency===ALL_AGENCIES||r.agency===agency)}}
+function marketRows(){{return DATA.records.filter(r=>document.getElementById("marketMode").value==="all"||r.is_addressable)}}
+function agencyRows(){{const agency=document.getElementById('agencySelect').value;return marketRows().filter(r=>agency===ALL_AGENCIES||r.agency===agency)}}
 function scopeRows(){{return agencyRows()}}
 function rowsForOptions(exclude){{const search=document.getElementById('searchInput').value.trim().toLowerCase();const cap=document.getElementById('capabilityFilter').value;const sup=document.getElementById('supplierFilter').value;const min=Number(document.getElementById('minValueInput').value||0);const dated=document.getElementById('datedOnly').checked;return scopeRows().filter(r=>{{const hay=[r.description,r.supplier,r.contract_id,r.category,r.procurement_method,r.capability,r.agency].join(' ').toLowerCase();return(!search||hay.includes(search))&&(exclude==='capability'||cap==='All Service Offerings'||r.capability===cap)&&(exclude==='supplier'||sup==='All suppliers'||r.supplier===sup)&&Number(r.value||0)>=min&&(!dated||(r.start_date&&r.end_date))}})}}
 function setRanked(selectId,field,allLabel,exclude){{const select=document.getElementById(selectId);const prev=select.value||allLabel;const totals=new Map();rowsForOptions(exclude).forEach(r=>totals.set(r[field],(totals.get(r[field])||0)+Number(r.value||0)));const vals=[...totals.keys()].sort((a,b)=>(totals.get(b)-totals.get(a))||String(a).localeCompare(String(b)));select.innerHTML=[allLabel,...vals].map(v=>'<option value="'+esc(v)+'">'+esc(v===allLabel?v:v+' — '+money(totals.get(v)))+'</option>').join('');select.value=[...select.options].some(o=>o.value===prev)?prev:allLabel}}
@@ -325,7 +331,7 @@ function refreshFilters(changed=null){{if(changed!=='capability')setRanked('capa
 function filteredRows(){{const search=document.getElementById('searchInput').value.trim().toLowerCase();const cap=document.getElementById('capabilityFilter').value;const sup=document.getElementById('supplierFilter').value;const min=Number(document.getElementById('minValueInput').value||0);const dated=document.getElementById('datedOnly').checked;return scopeRows().filter(r=>{{const hay=[r.description,r.supplier,r.contract_id,r.category,r.procurement_method].join(' ').toLowerCase();return(!search||hay.includes(search))&&(cap==='All Service Offerings'||r.capability===cap)&&(sup==='All suppliers'||r.supplier===sup)&&Number(r.value||0)>=min&&(!dated||(r.start_date&&r.end_date))}})}}
 
 function renderContractRows(id,rows,dateLabel){{const el=document.getElementById(id);if(!rows.length){{el.innerHTML='<div class="leader-detail">No matching contracts.</div>';return}}el.innerHTML=rows.map((r,i)=>{{const title=(r.description||r.contract_id||'Contract');const supplier=r.supplier||'Unknown supplier';const agency=r.agency||'Unknown agency';const date=r.end_date||'n/a';return '<div class="leader-row"><div class="leader-rank">'+(i+1)+'</div><div class="leader-name">'+esc(supplier)+'<div class="leader-detail">'+esc(title)+'</div><div class="leader-detail">'+esc(agency)+' · '+dateLabel+' '+esc(date)+'</div></div><div class="leader-value">'+esc(money(r.value))+'</div></div>'}}).join('')}}
-function updateContractInsights(){{const agency=document.getElementById('agencySelect').value;const rows=(DATA.records||[]).filter(r=>agency===ALL_AGENCIES||r.agency===agency);const today=new Date(AS_AT_DATE+'T00:00:00Z');const in12=new Date(today);in12.setUTCFullYear(in12.getUTCFullYear()+1);const ago12=new Date(today);ago12.setUTCFullYear(ago12.getUTCFullYear()-1);const parse=d=>d?new Date(d+'T00:00:00Z'):null;const active=rows.filter(r=>{{const s=parse(r.start_date_iso),e=parse(r.end_date_iso);return s&&e&&s<=today&&e>=today}}).sort((a,b)=>Number(b.value||0)-Number(a.value||0)).slice(0,5);const ending=rows.filter(r=>{{const s=parse(r.start_date_iso),e=parse(r.end_date_iso);return s&&e&&s<=today&&e>=today&&e<=in12}}).sort((a,b)=>Number(b.value||0)-Number(a.value||0)).slice(0,5);const completed=rows.filter(r=>{{const e=parse(r.end_date_iso);return e&&e<today&&e>=ago12}}).sort((a,b)=>Number(b.value||0)-Number(a.value||0)).slice(0,5);const scopeLabel=agency===ALL_AGENCIES?'all Health agencies':agency;document.getElementById('activeSubtitle').textContent='Highest-value addressable contracts active as at today across '+scopeLabel+'.';document.getElementById('endingSubtitle').textContent='Highest-value addressable active contracts ending within the next 12 months across '+scopeLabel+'.';document.getElementById('completedSubtitle').textContent='Highest-value addressable contracts completed within the past 12 months across '+scopeLabel+'.';renderContractRows('topActiveContracts',active,'Ends');renderContractRows('topEndingSoon',ending,'Ends');renderContractRows('topRecentlyCompleted',completed,'Ended')}}
+function updateContractInsights(){{const agency=document.getElementById('agencySelect').value;const rows=marketRows().filter(r=>agency===ALL_AGENCIES||r.agency===agency);const today=new Date(AS_AT_DATE+'T00:00:00Z');const in12=new Date(today);in12.setUTCFullYear(in12.getUTCFullYear()+1);const ago12=new Date(today);ago12.setUTCFullYear(ago12.getUTCFullYear()-1);const parse=d=>d?new Date(d+'T00:00:00Z'):null;const active=rows.filter(r=>{{const s=parse(r.start_date_iso),e=parse(r.end_date_iso);return s&&e&&s<=today&&e>=today}}).sort((a,b)=>Number(b.value||0)-Number(a.value||0)).slice(0,5);const ending=rows.filter(r=>{{const s=parse(r.start_date_iso),e=parse(r.end_date_iso);return s&&e&&s<=today&&e>=today&&e<=in12}}).sort((a,b)=>Number(b.value||0)-Number(a.value||0)).slice(0,5);const completed=rows.filter(r=>{{const e=parse(r.end_date_iso);return e&&e<today&&e>=ago12}}).sort((a,b)=>Number(b.value||0)-Number(a.value||0)).slice(0,5);const scopeLabel=agency===ALL_AGENCIES?'all Health agencies':agency;document.getElementById('activeSubtitle').textContent='Highest-value addressable contracts active as at today across '+scopeLabel+'.';document.getElementById('endingSubtitle').textContent='Highest-value addressable active contracts ending within the next 12 months across '+scopeLabel+'.';document.getElementById('completedSubtitle').textContent='Highest-value addressable contracts completed within the past 12 months across '+scopeLabel+'.';renderContractRows('topActiveContracts',active,'Ends');renderContractRows('topEndingSoon',ending,'Ends');renderContractRows('topRecentlyCompleted',completed,'Ended')}}
 function updateKpis(rows){{const vals=rows.map(r=>Number(r.value||0)),dur=rows.map(r=>Number(r.duration_days)).filter(Number.isFinite),total=vals.reduce((a,b)=>a+b,0),largest=rows.slice().sort((a,b)=>Number(b.value||0)-Number(a.value||0))[0];document.getElementById('kpiTotal').textContent=money(total);document.getElementById('kpiContracts').textContent=number(rows.length);document.getElementById('kpiAvgValue').textContent=rows.length?money(total/rows.length):'n/a';document.getElementById('kpiMedianValue').textContent=rows.length?'Median: '+money(median(vals)):'Median: n/a';document.getElementById('kpiAvgLength').textContent=dur.length?duration(dur.reduce((a,b)=>a+b,0)/dur.length):'n/a';document.getElementById('kpiMedianLength').textContent=dur.length?'Median: '+duration(median(dur)):'Median: n/a';document.getElementById('kpiSuppliers').textContent=number(new Set(rows.map(r=>r.supplier)).size);document.getElementById('kpiLargest').textContent=largest?money(largest.value):'n/a';document.getElementById('kpiLargestSub').textContent=largest?largest.supplier:'No matching contract'}}
 function rowHtml(r){{const large=Number(r.value||0)>=20000000?'<span class="badge badge-large">Large</span>':'',long=Number(r.duration_days||0)>=1826?'<span class="badge badge-long">5+ years</span>':'',sc=String(r.supplier||'').toLowerCase().includes('accenture')?'supplier-accent':'';return`<tr><td class="nowrap">${{esc(r.contract_id)}}</td><td class="desc">${{esc(r.description)}}</td><td>${{esc(r.agency)}}</td><td>${{esc(r.division)}}</td><td class="${{sc}}">${{esc(r.supplier)}}</td><td>${{esc(r.capability)}}</td><td class="money">${{money(r.value)}} ${{large}}</td><td class="nowrap">${{esc(r.start_date)}}</td><td class="nowrap">${{esc(r.end_date)}}</td><td class="nowrap">${{esc(r.duration_label)}} ${{long}}</td><td>${{esc(r.category)}}</td><td class="nowrap">${{esc(r.extensions)}}</td></tr>`}}
 function tableHtml(rows){{return`<div class="table-wrap"><table><thead><tr><th>Contract ID</th><th>Description</th><th>Agency</th><th>Division</th><th>Supplier</th><th>Service Offering</th><th class="money">Contract value</th><th>Start date</th><th>End date</th><th>Contract length</th><th>Category</th><th>Extensions</th></tr></thead><tbody>${{rows.map(rowHtml).join('')}}</tbody></table></div>`}}
@@ -334,12 +340,13 @@ function toggleYear(id){{const s=document.getElementById(id),b=s.querySelector('
 function render(){{const rows=filteredRows();updateContractInsights();updateKpis(rows);document.getElementById('summaryLine').textContent=number(rows.length)+' matching contracts · '+money(rows.reduce((s,r)=>s+Number(r.value||0),0))+' · '+VALUE_BASIS;const ongoing=[],historical=[];rows.forEach(r=>{{const active=Boolean(r.start_date_iso&&r.end_date_iso&&r.start_date_iso<=AS_AT_DATE&&r.end_date_iso>=AS_AT_DATE);(active?ongoing:historical).push(r)}});const groups=new Map();historical.forEach(r=>{{const fy=r.financial_year||'Unknown FY';if(!groups.has(fy))groups.set(fy,[]);groups.get(fy).push(r)}});const years=[...groups.keys()].sort((a,b)=>Number(groups.get(b)[0].fy_start??-Infinity)-Number(groups.get(a)[0].fy_start??-Infinity));const c=document.getElementById('yearContainer');if(!rows.length){{c.innerHTML='<div class="empty">No contracts match the selected filters.</div>';return}}YEAR_ROWS.clear();const sections=[];if(ongoing.length){{const rr=ongoing.slice().sort((a,b)=>Number(b.value||0)-Number(a.value||0));YEAR_ROWS.set('ongoing_contracts',rr);sections.push(bracket('ongoing_contracts','Ongoing contracts',rr,'active contracts'))}}years.forEach(y=>{{const rr=groups.get(y).slice().sort((a,b)=>Number(b.value||0)-Number(a.value||0));const id='year_'+String(y).replace(/[^A-Za-z0-9]/g,'_');YEAR_ROWS.set(id,rr);sections.push(bracket(id,y,rr))}});c.innerHTML=sections.join('')}}
 function clearAllFilters(){{document.getElementById('agencySelect').value=DEFAULT_AGENCY;document.getElementById('searchInput').value='';document.getElementById('minValueInput').value='';document.getElementById('datedOnly').checked=false;document.getElementById('capabilityFilter').innerHTML='<option value="All Service Offerings">All Service Offerings</option>';document.getElementById('supplierFilter').innerHTML='<option value="All suppliers">All suppliers</option>';refreshFilters();render()}}
 
+document.getElementById('marketMode').addEventListener('change',()=>{{clearAllFilters()}});
 document.getElementById('agencySelect').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('searchInput').addEventListener('input',()=>{{refreshFilters();render()}});document.getElementById('capabilityFilter').addEventListener('change',()=>{{refreshFilters('capability');render()}});document.getElementById('supplierFilter').addEventListener('change',()=>{{refreshFilters('supplier');render()}});document.getElementById('minValueInput').addEventListener('input',()=>{{refreshFilters();render()}});document.getElementById('datedOnly').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('clearFiltersBtn').addEventListener('click',clearAllFilters);
 refreshFilters();render();
 </script>
 </body></html>'''
 
-    output_path.write_text(html, encoding="utf-8")
+    output_path.write_text(atlas_navigation(html, "health"), encoding="utf-8")
 
 
 def main() -> None:
@@ -370,5 +377,25 @@ def main() -> None:
     print(f"Wrote: {output_dir / 'agency_division_procurement_audit.csv'}")
 
 
+def atlas_navigation(html_text: str, industry: str) -> str:
+    """Add consistent GitHub Pages navigation without changing dashboard analytics."""
+    site = "/ATLAS/"
+    nav = f"""<nav class="atlas-nav" aria-label="ATLAS navigation">
+      <a class="atlas-brand" href="{site}">ATLAS</a>
+      <a href="{site}">Home</a>
+      <a href="{site}defence/" {'aria-current="page"' if industry == 'defence' else ''}>Defence</a>
+      <a href="{site}health/" {'aria-current="page"' if industry == 'health' else ''}>Federal Health</a>
+    </nav>"""
+    css = """<style>
+    .atlas-nav{display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding:13px max(22px,calc((100vw - 1480px)/2));background:#101018;color:white;font:600 13px Arial,Helvetica,sans-serif}
+    .atlas-nav a{color:#e9e9f1;text-decoration:none;padding:7px 9px;border-radius:7px}
+    .atlas-nav a:hover,.atlas-nav a[aria-current=page]{background:#3d2456;color:white}
+    .atlas-nav .atlas-brand{font-size:21px;font-weight:800;letter-spacing:.06em;color:white;margin-right:auto}
+    </style>"""
+    html_text=html_text.replace('</head>',css+'</head>',1)
+    html_text=html_text.replace('<body>', '<body>'+nav,1)
+    return html_text
+
 if __name__ == "__main__":
     main()
+
