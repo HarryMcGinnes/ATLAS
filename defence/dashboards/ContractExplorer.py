@@ -877,8 +877,8 @@ tbody tr:hover {{ background:#FCFCFD; }}
   .toolbar {{ grid-template-columns:1fr; }}
 }}
 
-.atlas-market{display:flex;gap:12px;align-items:center;margin:12px 0 20px;padding:12px 16px;border:1px solid #e5e7eb;background:#fff;border-radius:12px;max-width:360px;font-size:13px;font-weight:700}.atlas-market select{flex:1;min-width:150px}
-</style>
+.atlas-market{{display:flex;gap:12px;align-items:center;margin:12px 0 20px;padding:12px 16px;border:1px solid #e5e7eb;background:#fff;border-radius:12px;max-width:360px;font-size:13px;font-weight:700}}
+.atlas-market select{{flex:1;min-width:150px}}</style>
 </head>
 <body>
 <div class="wrap">
