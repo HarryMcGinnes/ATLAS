@@ -877,13 +877,20 @@ tbody tr:hover {{ background:#FCFCFD; }}
   .toolbar {{ grid-template-columns:1fr; }}
 }}
 
-.atlas-market{{display:flex;gap:12px;align-items:center;margin:12px 0 20px;padding:12px 16px;border:1px solid #e5e7eb;background:#fff;border-radius:12px;max-width:360px;font-size:13px;font-weight:700}}
-.atlas-market select{{flex:1;min-width:150px}}</style>
+.atlas-market{{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:20px 0 26px;padding:24px 28px;border:1px solid #e5e7eb;background:#fff;border-radius:18px;flex-wrap:wrap}}
+.atlas-market-copy h2{{font-size:22px;margin:0 0 6px;color:#101828}}
+.atlas-market-copy p{{margin:0;color:#667085;font-size:14px}}
+.atlas-market-switch{{display:flex;gap:5px;background:#f1f2f6;padding:6px;border-radius:14px}}
+.atlas-market-switch button{{border:0;background:transparent;color:#344054;padding:13px 22px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap}}
+.atlas-market-switch button[aria-pressed="true"]{{background:#A100FF;color:#fff;box-shadow:0 2px 7px rgba(70,0,130,.12)}}
+.atlas-market-switch button:focus-visible{{outline:3px solid #805ad5;outline-offset:2px}}
+#marketMode{{display:none}}
+@media(max-width:650px){{.atlas-market{{padding:17px}}.atlas-market-switch{{width:100%}}.atlas-market-switch button{{flex:1;padding:12px 8px;font-size:12px}}}}
+</style>
 </head>
 <body>
 <div class="wrap">
   <h1>Procurement Exploration</h1>
-  <div class="atlas-market"><label for="marketMode">Market view</label><select id="marketMode"><option value="tam">Addressable TAM</option><option value="all">All procurement</option></select></div>
   
 
   <section class="executive-summary">
@@ -902,6 +909,15 @@ tbody tr:hover {{ background:#FCFCFD; }}
       The dashboard supports opportunity identification, account planning and procurement analysis by revealing where Defence organisations are investing, which suppliers are winning work, and how demand is distributed across Accenture's service offerings. Users can progressively filter the data to investigate individual contracts or broader procurement trends.
     </p>
   </section>
+
+<section class="atlas-market" aria-label="Market selection">
+  <div class="atlas-market-copy"><h2>Explore the Defence Market</h2><p id="atlasMarketDescription">Showing contracts addressable to Accenture</p></div>
+  <div class="atlas-market-switch" role="group" aria-label="Choose market scope">
+    <button type="button" data-market="tam" aria-pressed="true">Accenture TAM</button>
+    <button type="button" data-market="all" aria-pressed="false">All Defence Market</button>
+  </div>
+  <select id="marketMode" aria-label="Market scope"><option value="tam">Accenture TAM</option><option value="all">All Defence Market</option></select>
+</section>
 
   <section class="insight-grid">
     <div class="leader-card">
@@ -1662,6 +1678,26 @@ function render() {{
 
 document.getElementById('agencySelect').value = DEFAULT_AGENCY;
 document.getElementById('marketMode').addEventListener('change', () => {{ clearAllFilters(); updateLeaderboards(); }});
+
+(function() {{
+  const select = document.getElementById('marketMode');
+  const buttons = document.querySelectorAll('.atlas-market-switch button');
+  const description = document.getElementById('atlasMarketDescription');
+  function syncMarketSwitch() {{
+    buttons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.market === select.value)));
+    description.textContent = select.value === 'tam'
+      ? 'Showing contracts addressable to Accenture'
+      : 'Showing all procurement contracts in the selected market';
+  }}
+  buttons.forEach(button => button.addEventListener('click', () => {{
+    if (select.value === button.dataset.market) return;
+    select.value = button.dataset.market;
+    syncMarketSwitch();
+    select.dispatchEvent(new Event('change', {{bubbles: true}}));
+  }}));
+  select.addEventListener('change', syncMarketSwitch);
+  syncMarketSwitch();
+}})();
 document.getElementById('agencySelect').addEventListener(
   'change',
   () => refreshOrganisationFilters('agency')
