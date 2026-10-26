@@ -983,6 +983,21 @@ def classify_service_offering(row: pd.Series) -> dict[str, object]:
 # Existing primary classifications are never overwritten.
 
 SECONDARY_CATEGORY_RULES: list[tuple[str, str, int, str]] = [
+    # Reviewed category fallbacks. Only addressable contracts unresolved by
+    # the primary Description + Category scorer reach this stage. Specific
+    # description matches in the secondary pass take precedence.
+    (r"^computer services?$", "SI & Engineering", 70,
+     "reviewed category fallback: generic computer services"),
+    (r"^information technology consultation services?$", "Strategy, Transformation & Advisory", 74,
+     "reviewed category fallback: IT consultation"),
+    (r"^management information systems(?: mis)?$", "SI & Engineering", 76,
+     "reviewed category fallback: management information systems"),
+    (r"^data services?$", "Data, AI & Automation", 78,
+     "reviewed category fallback: data services"),
+    (r"^project administration or planning$", "Strategy, Transformation & Advisory", 76,
+     "reviewed category fallback: project administration / planning"),
+    (r"^software or hardware engineering$", "SI & Engineering", 80,
+     "reviewed category fallback: software / hardware engineering"),
     (r"\bdata services?\b|\bstatistics\b|\bdata processing or preparation services?\b|\binformation services?\b",
      "Data, AI & Automation", 80, "secondary category family: data / statistics / information services"),
     (r"\bsoftware or hardware engineering\b|\bcomputer programmers?\b|\bsoftware engineering\b",
@@ -1222,6 +1237,28 @@ def apply_classifier(df: pd.DataFrame) -> pd.DataFrame:
 # =============================================================================
 
 def run_regression_checks() -> None:
+    # Check category fallback on already-addressable, primary-unresolved rows.
+    # This does not modify or test the addressability gate.
+    fallback_cases = [
+        ("Computer services", "SI & Engineering"),
+        ("Information technology consultation services", "Strategy, Transformation & Advisory"),
+        ("Management information systems (MIS)", "SI & Engineering"),
+        ("Data services", "Data, AI & Automation"),
+        ("Project administration or planning", "Strategy, Transformation & Advisory"),
+        ("Software or hardware engineering", "SI & Engineering"),
+    ]
+    for category, expected in fallback_cases:
+        row = pd.Series({CATEGORY: category, DESCRIPTION: "", "is_addressable": True,
+                         "service_offering": pd.NA})
+        result = classify_service_offering_secondary(row)
+        if not result or result["service_offering"] != expected:
+            raise RuntimeError(f"Category fallback regression failed: {category}: {result}")
+    # Description overrides the generic Computer services fallback.
+    row = pd.Series({CATEGORY: "Computer services", DESCRIPTION: "cloud migration services",
+                     "is_addressable": True, "service_offering": pd.NA})
+    result = classify_service_offering_secondary(row)
+    if not result or result["service_offering"] != "Cloud Infrastructure & Cyber":
+        raise RuntimeError(f"Description precedence regression failed: {result}")
     cases = [
         ({CATEGORY_TYPE: "Services", CATEGORY: "Health research", DESCRIPTION: "Research project into health outcomes and data analysis"}, False, None),
         ({CATEGORY_TYPE: "Goods", CATEGORY: "Medical equipment and accessories", DESCRIPTION: "Supply of patient monitoring devices"}, False, None),
