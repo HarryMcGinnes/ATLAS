@@ -321,7 +321,24 @@ select,input{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;
 <button id="clearFiltersBtn" class="clear-btn" type="button">Clear all filters</button>
 </section>
 
-<div class="summary-line" id="summaryLine"></div><div id="yearContainer"></div>
+<div class="field" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+  <div style="min-width:220px;flex:1">
+    <label for="groupMode">Group contracts by</label>
+    <select id="groupMode">
+      <option value="status">Contract status</option>
+      <option value="start">Start financial year</option>
+      <option value="end">End financial year</option>
+    </select>
+  </div>
+  <div style="min-width:220px;flex:1">
+    <label for="fyFilter">Contracts active during FY</label>
+    <select id="fyFilter">
+      <option value="all">All financial years</option>
+    </select>
+  </div>
+</div>
+<div class="summary-line" id="summaryLine"></div>
+<div id="yearContainer"></div>
 <p class="method">The dashboard is scoped to contracts classified as Accenture-addressable within the Health portfolio. Ongoing contracts are shown once in the top bracket; remaining contracts are grouped by their recorded financial year. Supplier and Service Offering filters are ranked by addressable spend within the current agency scope.</p>
 </div>
 
@@ -332,6 +349,56 @@ const DEFAULT_AGENCY = ALL_AGENCIES;
 const VALUE_BASIS = {json.dumps(value_basis)};
 const AS_AT_DATE = new Date().toISOString().slice(0,10);
 const YEAR_ROWS = new Map();
+function fyFromDate(iso) {
+  if (!iso) return null;
+  const d = new Date(iso + 'T00:00:00Z');
+  if (isNaN(d.getTime())) return null;
+  return d.getUTCFullYear() - (d.getUTCMonth() < 6 ? 1 : 0);
+}
+
+function fyLabel(year) {
+  return year === null
+    ? 'Unknown FY'
+    : 'FY' + year + '–' + String((year + 1) % 100).padStart(2, '0');
+}
+
+function contractStatus(r) {
+  if (!r.start_date_iso || !r.end_date_iso ||
+      r.start_date_iso > r.end_date_iso) return 'Unknown Dates';
+  if (r.start_date_iso > AS_AT_DATE) return 'Upcoming contracts';
+  if (r.end_date_iso < AS_AT_DATE) return 'Completed contracts';
+  return 'Active contracts';
+}
+
+function overlapsFY(r, year) {
+  if (year === 'all') return true;
+  if (!r.start_date_iso || !r.end_date_iso ||
+      r.start_date_iso > r.end_date_iso) return false;
+
+  const y = Number(year);
+  const fyStart = y + '-07-01';
+  const fyEnd = (y + 1) + '-06-30';
+
+  return r.start_date_iso <= fyEnd && r.end_date_iso >= fyStart;
+}
+
+function populateFYFilter() {
+  const select = document.getElementById('fyFilter');
+  const years = new Set();
+
+  DATA.records.forEach(r => {
+    const start = fyFromDate(r.start_date_iso);
+    const end = fyFromDate(r.end_date_iso);
+    if (start === null || end === null || end < start) return;
+    for (let y = start; y <= end; y++) years.add(y);
+  });
+
+  select.innerHTML =
+    '<option value="all">All financial years</option>' +
+    [...years].sort((a,b) => b-a)
+      .map(y => `<option value="${y}">${fyLabel(y)}</option>`)
+      .join('');
+}
 
 function esc(v){{return String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;')}}
 function money(v){{v=Number(v||0);const s=v<0?'-':'';const a=Math.abs(v);if(a>=1e9)return s+'$'+(a/1e9).toFixed(2)+'B';if(a>=1e8)return s+'$'+(a/1e6).toFixed(0)+'M';if(a>=1e7)return s+'$'+(a/1e6).toFixed(1)+'M';if(a>=1e6)return s+'$'+(a/1e6).toFixed(2)+'M';if(a>=1e3)return s+'$'+(a/1e3).toFixed(0)+'K';return s+'$'+a.toFixed(0)}}
@@ -354,8 +421,81 @@ function rowHtml(r){{const large=Number(r.value||0)>=20000000?'<span class="badg
 function tableHtml(rows){{return`<div class="table-wrap"><table><thead><tr><th>Contract ID</th><th>Description</th><th>Agency</th><th>Division</th><th>Supplier</th><th>Service Offering</th><th class="money">Contract value</th><th>Start date</th><th>End date</th><th>Contract length</th><th>Category</th><th>Extensions</th></tr></thead><tbody>${{rows.map(rowHtml).join('')}}</tbody></table></div>`}}
 function bracket(id,title,rows,label='contracts'){{const spend=rows.reduce((s,r)=>s+Number(r.value||0),0);return`<section class="year-section" id="${{id}}"><button class="year-toggle" type="button" onclick="toggleYear('${{id}}')"><span><span class="chev">▶</span>${{esc(title)}}</span><span class="year-meta">${{number(rows.length)}} ${{label}} · ${{money(spend)}}</span></button><div class="year-body" data-loaded="false"></div></section>`}}
 function toggleYear(id){{const s=document.getElementById(id),b=s.querySelector('.year-body'),open=!s.classList.contains('open');if(open&&b.dataset.loaded!=='true'){{b.innerHTML=tableHtml(YEAR_ROWS.get(id)||[]);b.dataset.loaded='true'}}s.classList.toggle('open')}}
-function render(){{const rows=filteredRows();updateContractInsights();updateKpis(rows);document.getElementById('summaryLine').textContent=number(rows.length)+' matching contracts · '+money(rows.reduce((s,r)=>s+Number(r.value||0),0))+' · '+VALUE_BASIS;const ongoing=[],historical=[];rows.forEach(r=>{{const active=Boolean(r.start_date_iso&&r.end_date_iso&&r.start_date_iso<=AS_AT_DATE&&r.end_date_iso>=AS_AT_DATE);(active?ongoing:historical).push(r)}});const groups=new Map();historical.forEach(r=>{{const fy=r.financial_year||'Unknown FY';if(!groups.has(fy))groups.set(fy,[]);groups.get(fy).push(r)}});const years=[...groups.keys()].sort((a,b)=>Number(groups.get(b)[0].fy_start??-Infinity)-Number(groups.get(a)[0].fy_start??-Infinity));const c=document.getElementById('yearContainer');if(!rows.length){{c.innerHTML='<div class="empty">No contracts match the selected filters.</div>';return}}YEAR_ROWS.clear();const sections=[];if(ongoing.length){{const rr=ongoing.slice().sort((a,b)=>Number(b.value||0)-Number(a.value||0));YEAR_ROWS.set('ongoing_contracts',rr);sections.push(bracket('ongoing_contracts','Ongoing contracts',rr,'active contracts'))}}years.forEach(y=>{{const rr=groups.get(y).slice().sort((a,b)=>Number(b.value||0)-Number(a.value||0));const id='year_'+String(y).replace(/[^A-Za-z0-9]/g,'_');YEAR_ROWS.set(id,rr);sections.push(bracket(id,y,rr))}});c.innerHTML=sections.join('')}}
-function clearAllFilters(){{document.getElementById('agencySelect').value=DEFAULT_AGENCY;document.getElementById('searchInput').value='';document.getElementById('minValueInput').value='';document.getElementById('datedOnly').checked=false;document.getElementById('capabilityFilter').innerHTML='<option value="All Service Offerings">All Service Offerings</option>';document.getElementById('supplierFilter').innerHTML='<option value="All suppliers">All suppliers</option>';refreshFilters();render()}}
+
+function render() {{
+  const selectedFY = document.getElementById('fyFilter').value;
+  const mode = document.getElementById('groupMode').value;
+
+  const rows = filteredRows().filter(r => overlapsFY(r, selectedFY));
+  updateContractInsights();
+  updateKpis(rows);
+
+  document.getElementById('summaryLine').textContent =
+    number(rows.length) + ' matching contracts · ' +
+    money(rows.reduce((s,r) => s + Number(r.value || 0), 0)) +
+    ' · ' + VALUE_BASIS;
+
+  const container = document.getElementById('yearContainer');
+  YEAR_ROWS.clear();
+
+  if (!rows.length) {{
+    container.innerHTML =
+      '<div class="empty">No contracts match the selected filters.</div>';
+    return;
+  }}
+
+  const groups = new Map();
+
+  rows.forEach(r => {{
+    let group;
+
+    if (mode === 'status') {{
+      group = contractStatus(r);
+    }} else {{
+      const iso = mode === 'start'
+        ? r.start_date_iso
+        : r.end_date_iso;
+      group = fyLabel(fyFromDate(iso));
+    }}
+
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group).push(r);
+  }});
+
+  let keys = [...groups.keys()];
+
+  if (mode === 'status') {{
+    const order = [
+      'Active contracts',
+      'Upcoming contracts',
+      'Completed contracts',
+      'Unknown Dates'
+    ];
+    keys.sort((a,b) => order.indexOf(a) - order.indexOf(b));
+  }} else {{
+    keys.sort((a,b) => {{
+      if (a === 'Unknown FY') return 1;
+      if (b === 'Unknown FY') return -1;
+      return b.localeCompare(a);
+    }});
+  }}
+
+  const sections = [];
+
+  keys.forEach((key, index) => {{
+    const groupRows = groups.get(key)
+      .slice()
+      .sort((a,b) => Number(b.value || 0) - Number(a.value || 0));
+
+    const id = 'contract_group_' + index;
+    YEAR_ROWS.set(id, groupRows);
+    sections.push(bracket(id, key, groupRows));
+  }});
+
+  container.innerHTML = sections.join('');
+}}
+function clearAllFilters(){{document.getElementById('agencySelect').value=DEFAULT_AGENCY;document.getElementById('searchInput').value='';document.getElementById('minValueInput').value='';document.getElementById('datedOnly').checked=false;document.getElementById('groupMode').value = 'status';
+document.getElementById('fyFilter').value = 'all';document.getElementById('capabilityFilter').innerHTML='<option value="All Service Offerings">All Service Offerings</option>';document.getElementById('supplierFilter').innerHTML='<option value="All suppliers">All suppliers</option>';refreshFilters();render()}}
 
 document.getElementById('marketMode').addEventListener('change',()=>{{clearAllFilters()}});
 
@@ -379,8 +519,15 @@ document.getElementById('marketMode').addEventListener('change',()=>{{clearAllFi
   syncMarketSwitch();
 }})();
 document.getElementById('agencySelect').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('searchInput').addEventListener('input',()=>{{refreshFilters();render()}});document.getElementById('capabilityFilter').addEventListener('change',()=>{{refreshFilters('capability');render()}});document.getElementById('supplierFilter').addEventListener('change',()=>{{refreshFilters('supplier');render()}});document.getElementById('minValueInput').addEventListener('input',()=>{{refreshFilters();render()}});document.getElementById('datedOnly').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('clearFiltersBtn').addEventListener('click',clearAllFilters);
-refreshFilters();render();
-</script>
+document.getElementById('groupMode')
+  .addEventListener('change', render);
+
+document.getElementById('fyFilter')
+  .addEventListener('change', render);
+
+populateFYFilter();
+refreshFilters();
+render();</script>
 </body></html>'''
 
     output_path.write_text(atlas_navigation(html, "health"), encoding="utf-8")
