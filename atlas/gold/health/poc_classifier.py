@@ -113,6 +113,66 @@ def any_pattern(text: str, patterns: list[str]) -> str | None:
     return None
 
 
+# ============================================================
+# ARCHITECTURE / CONSULTING CLASSIFICATION HELPERS
+# ============================================================
+
+CONSTRUCTION_PATTERNS = [
+    r"\bconstruction\b",
+    r"\bbuilding works?\b",
+    r"\bbuilding design\b",
+    r"\barchitectural design\b",
+    r"\barchitectural services?\b",
+    r"\bcivil engineering\b",
+    r"\bstructural engineering\b",
+    r"\bproperty development\b",
+    r"\b(?:residential|commercial) buildings?\b",
+]
+
+DATA_ARCHITECTURE_PATTERNS = [
+    r"\bdata architecture\b",
+    r"\bdata architect(?:s|ure)?\b",
+    r"\bdata engineering\b",
+    r"\bdata engineer(?:s|ing)?\b",
+    r"\b(?:architecture|engineering)\b.{0,60}\bdata\b",
+    r"\bdata\b.{0,60}\b(?:architecture|engineering)\b",
+]
+
+GENERAL_ARCHITECTURE_PATTERNS = [
+    r"\barchitecture\b",
+    r"\barchitect(?:s)?\b",
+    r"\barchitectural\b",
+]
+
+CONSULTING_PATTERNS = [
+    r"\bconsulting\b",
+    r"\bconsultancy\b",
+    r"\bconsultants?\b",
+    r"\bconsultation services?\b",
+]
+
+
+def architecture_context(category: str, description: str) -> str | None:
+    combined = f"{category} {description}"
+
+    if any_pattern(combined, CONSTRUCTION_PATTERNS):
+        return "construction"
+
+    if any_pattern(description, DATA_ARCHITECTURE_PATTERNS):
+        return "data"
+
+    if any_pattern(description, GENERAL_ARCHITECTURE_PATTERNS):
+        return "technology"
+
+    if any_pattern(category, DATA_ARCHITECTURE_PATTERNS):
+        return "data"
+
+    if any_pattern(category, GENERAL_ARCHITECTURE_PATTERNS):
+        return "technology"
+
+    return None
+
+
 def load_data(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise SystemExit(f"Input dataset not found: {path}")
@@ -689,6 +749,22 @@ def classify_addressability(row: pd.Series) -> dict[str, object]:
             "addressability_method": "Ambiguous Goods exclusion",
         }
 
+    # Construction-related architecture is not technology TAM.
+    # The Accenture override is applied later in the pipeline.
+    arch_context = architecture_context(category, description)
+
+    if arch_context == "construction":
+        return {
+            "is_addressable": False,
+            "addressability": "Not Addressable",
+            "addressability_confidence": 96,
+            "addressability_reason": (
+                "Construction/building architecture is outside "
+                "the technology and consulting TAM."
+            ),
+            "addressability_method": "Construction architecture exclusion",
+        }
+
     # Services: hard subject exclusions first.
     hard_cat = any_pattern(category, NON_ADDRESSABLE_SERVICE_CATEGORY_PATTERNS)
     hard_desc = any_pattern(description, NON_ADDRESSABLE_DESCRIPTION_PATTERNS)
@@ -756,6 +832,39 @@ def classify_addressability(row: pd.Series) -> dict[str, object]:
             "addressability_method": "Reviewed delivery evidence",
         }
 
+
+    # Architecture is assumed to be technology-related unless
+    # construction evidence has already excluded the contract.
+    arch_context = architecture_context(category, description)
+
+    if arch_context in {"data", "technology"}:
+        return {
+            "is_addressable": True,
+            "addressability": "Addressable",
+            "addressability_confidence": 88,
+            "addressability_reason": (
+                f"Recognised {arch_context} architecture/engineering evidence."
+            ),
+            "addressability_method": "Architecture evidence",
+        }
+
+    # Consulting is addressable unless an earlier exclusion applies.
+    consulting_signal = any_pattern(
+        description, CONSULTING_PATTERNS
+    )
+
+    if consulting_signal:
+        return {
+            "is_addressable": True,
+            "addressability": "Addressable",
+            "addressability_confidence": 85,
+            "addressability_reason": (
+                f"Consulting services identified: '{consulting_signal}'."
+            ),
+            "addressability_method": "Consulting evidence",
+        }
+
+    
     cat_signal = any_pattern(category, ADDRESSABLE_SUBJECT_PATTERNS)
     desc_signal = any_pattern(description, ADDRESSABLE_SUBJECT_PATTERNS)
     generic_cat = any_pattern(category, GENERIC_CATEGORY_PATTERNS)
@@ -957,6 +1066,35 @@ def classify_service_offering(row: pd.Series) -> dict[str, object]:
     category = clean(row.get(CATEGORY, ""))
     description = clean(row.get(DESCRIPTION, ""))
 
+    # Architecture classification takes precedence over
+    # generic category scoring.
+    arch_context = architecture_context(category, description)
+
+    if arch_context in {"data", "technology"}:
+        offering = (
+            "Data, AI & Automation"
+            if arch_context == "data"
+            else "SI & Engineering"
+        )
+
+        return {
+            "service_offering": offering,
+            "Service Offering": offering,
+            "capability": offering,
+            "service_offering_confidence": 90,
+            "service_offering_confidence_band": "High",
+            "service_offering_second_choice": pd.NA,
+            "service_offering_margin": pd.NA,
+            "service_offering_method": "Architecture context rule",
+            "service_offering_evidence": (
+                f"Architecture context: {arch_context}"
+            ),
+            "category_score_breakdown": "{}",
+            "description_score_breakdown": "{}",
+            "service_offering_score_breakdown": "{}",
+        }
+
+    
     # Reviewed explicit phrases take precedence over generic category scoring.
     reviewed = [
         (r"\bbusiness design and delivery management services?\b", "Strategy, Transformation & Advisory"),
@@ -1123,7 +1261,7 @@ SECONDARY_DESCRIPTION_RULES: list[tuple[str, str, int, str]] = [
      "SI & Engineering", 82, "secondary description: technology build / implementation"),
 
     # Advisory / project delivery wording.
-    (r"\b(?:strategy|advisory|consulting|consultancy|business design|business analysis|project management|program management|programme management|delivery management|change management|transformation|pmo|assurance|review)\b",
+    (r"\b(?:strategy|advisory|consulting|consultancy|consultants?|consultation|business design|business analysis|project management|program management|programme management|delivery management|change management|transformation|pmo|assurance|review)\b",
      "Strategy, Transformation & Advisory", 78, "secondary description: advisory / transformation / project delivery"),
 ]
 
@@ -1377,6 +1515,12 @@ def run_regression_checks() -> None:
         ({CATEGORY_TYPE: "Services", CATEGORY: "Computer services", DESCRIPTION: "General support arrangement"}, False, None),
         ({CATEGORY_TYPE: "Services", CATEGORY: "Computer services", DESCRIPTION: "Design and development of patient web portal"}, True, "SI & Engineering"),
         ({CATEGORY_TYPE: "Services", CATEGORY: "Health services", DESCRIPTION: "Website development for clinical health services"}, False, None),
+        
+        ({CATEGORY_TYPE: "Services",CATEGORY: "Computer services",DESCRIPTION: "Enterprise data architecture and engineering",},True,"Data, AI & Automation",),
+        ({CATEGORY_TYPE: "Services",CATEGORY: "Professional services",DESCRIPTION: "Creation of target state architecture",},True,"SI & Engineering",),
+        ({CATEGORY_TYPE: "Services",CATEGORY: "Professional services",DESCRIPTION: "Adhoc consultancy services",},True,"Strategy, Transformation & Advisory",),
+        ({CATEGORY_TYPE: "Services",CATEGORY: "Construction services",DESCRIPTION: "Building architecture and structural design",},False,None,),
+
     ]
 
     for payload, expected_addr, expected_so in cases:
