@@ -935,6 +935,7 @@ def enforce_accenture_addressability(df: pd.DataFrame) -> pd.DataFrame:
 CATEGORY_RULES: dict[str, list[tuple[str, float, str]]] = {
     "Strategy, Transformation & Advisory": [
         (r"\bmanagement advisory\b", 14, "management advisory"),
+        (r"\bconsult(?:ing|ancy|ants?|ation)\b", 11, "consulting / consultancy"),
         (r"\bstrategic planning\b", 16, "strategic planning"),
         (r"\bproject management\b", 12, "project management"),
         (r"\bproject administration or planning\b", 12, "project administration / planning"),
@@ -979,6 +980,7 @@ CATEGORY_RULES: dict[str, list[tuple[str, float, str]]] = {
 
 DESCRIPTION_RULES: dict[str, list[tuple[str, float, str]]] = {
     "Strategy, Transformation & Advisory": [
+        (r"\bconsult(?:ing|ancy|ants?|ation)\b", 16, "consulting / consultancy"),
         (r"\b(?:strategy|strategic advisory|advisory services?|business advisory)\b", 16, "strategy / advisory"),
         (r"\b(?:business transformation|digital transformation|operating model|organisational design|process improvement|change management)\b", 16, "transformation / change"),
         (r"\b(?:business case|feasibility study|options analysis|independent review|assurance|governance review)\b", 15, "assessment / assurance"),
