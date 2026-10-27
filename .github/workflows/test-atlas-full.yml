@@ -292,6 +292,16 @@ jobs:
           print(f"Accenture rows: {df['is_accenture'].sum():,}")
           PY
 
+          
+      - name: Upload reusable Health Silver
+        uses: actions/upload-artifact@v4
+        with:
+          name: health-silver-input
+          path: data/silver/industry/health/health_contracts.parquet
+          retention-days: 30
+          if-no-files-found: error
+
+
       # ---------------------------------------------------------
       # HEALTH GOLD - ORIGINAL TAMBI CLASSIFIER
       # ---------------------------------------------------------
