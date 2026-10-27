@@ -619,6 +619,46 @@ jobs:
           )
           PY
 
+      - name: Build ATLAS Bronze
+        run: |
+          python atlas/bronze/ingest.py \
+            --baseline "$BASELINE_PATH" \
+            --monthly-dir "$MONTHLY_DIR"
+
+      - name: Build ATLAS Silver Core
+        run: |
+          python atlas/silver/core/normalise.py \
+            --bronze-dir data/bronze/austender \
+            --output data/silver/core/austender_contracts.parquet
+
+      - name: Build Health Silver Industry
+        run: |
+          python atlas/silver/industry/health/classify.py \
+            --input data/silver/core/austender_contracts.parquet \
+            --agency-config health/config/health_agencies.txt \
+            --aliases config/health/agency_aliases.csv \
+            --output data/silver/industry/health/health_contracts.parquet
+
+      - name: Verify Health Silver input
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+
+          path = Path(
+              "data/silver/industry/health/health_contracts.parquet"
+          )
+
+          assert path.is_file(), f"Missing Health Silver: {path}"
+
+          df = pd.read_parquet(path)
+
+          assert not df.empty, "Health Silver is empty"
+          assert df["CN ID"].is_unique, "Duplicate Health CN IDs"
+
+          print(f"Health Silver ready: {len(df):,} contracts")
+          PY
+
       # ============================================================
       # HEALTH GOLD -> DASHBOARD MASTER
       # ============================================================
