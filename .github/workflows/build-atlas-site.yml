@@ -172,6 +172,67 @@ jobs:
           print("============================")
           PY
 
+
+      - name: Validate Health Gold coverage
+        run: |
+          python - <<'PY'
+          import pandas as pd
+
+          path = "health/data/processed/master_health_contracts.parquet"
+          df = pd.read_parquet(path)
+
+          addr = df["is_addressable"].fillna(False).astype(bool)
+          acc = df["is_accenture"].fillna(False).astype(bool)
+
+          so_col = (
+              "service_offering"
+              if "service_offering" in df.columns
+              else "Service Offering"
+          )
+
+          valid = {
+              "Strategy, Transformation & Advisory",
+              "SI & Engineering",
+              "Data, AI & Automation",
+              "Cloud Infrastructure & Cyber",
+              "Managed Services & Operations",
+          }
+
+          unresolved = addr & ~df[so_col].isin(valid)
+          value = pd.to_numeric(df["Value"], errors="coerce").fillna(0)
+
+          tam = value[addr].sum()
+          unresolved_value = value[unresolved].sum()
+
+          count_pct = unresolved.sum() / addr.sum() * 100
+          value_pct = unresolved_value / tam * 100
+
+          print("HEALTH DASHBOARD DATA VALIDATION")
+          print("=" * 45)
+          print(f"Addressable contracts: {addr.sum():,}")
+          print(f"Addressable TAM: A${tam/1e9:.3f}B")
+          print(f"Accenture wins: A${value[acc].sum()/1e9:.3f}B")
+          print(f"Unresolved contracts: {unresolved.sum():,}")
+          print(f"Unresolved by count: {count_pct:.2f}%")
+          print(f"Unresolved by value: {value_pct:.2f}%")
+
+          assert not (acc & ~addr).any(), \
+              "Accenture contracts excluded from TAM"
+
+          assert addr.sum() > 0 and tam > 0, \
+              "Invalid Health TAM"
+
+          assert count_pct < 5, \
+              "Health classification coverage below target"
+
+          assert 0 <= value_pct < 5, \
+              "Health unresolved TAM exceeds 5%"
+
+          print("HEALTH DASHBOARD DATA: PASS")
+          PY
+
+
+
       # ============================================================
       # PREPARE SITE
       # ============================================================
