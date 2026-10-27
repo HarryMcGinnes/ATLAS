@@ -545,79 +545,9 @@ jobs:
             --output-dir "$HEALTH_PROCESSED_DIR" \
             --audit-dir "$AUDIT_ROOT/health_master"
 
-      - name: Apply latest Health Gold classifications
-        run: |
-          python atlas/gold/health/classify.py \
-            --input data/silver/industry/health/health_contracts.parquet \
-            --output data/gold/health/health_classified.parquet \
-            --audit-dir audits/gold/health
-
-          python - <<'PY'
-          import pandas as pd
-          from pathlib import Path
-
-          master_path = Path(
-              "health/data/processed/master_health_contracts.parquet"
-          )
-          gold_path = Path(
-              "data/gold/health/health_classified.parquet"
-          )
-
-          master = pd.read_parquet(master_path)
-          gold = pd.read_parquet(gold_path)
-
-          key = "CN ID"
-          fields = [
-              "is_addressable",
-              "addressability",
-              "addressability_confidence",
-              "addressability_reason",
-              "service_offering",
-              "Service Offering",
-              "service_offering_confidence",
-              "classification_review_required",
-          ]
-
-          if master[key].duplicated().any():
-              raise RuntimeError("Duplicate CN IDs in Health master")
-
-          if gold[key].duplicated().any():
-              raise RuntimeError("Duplicate CN IDs in Health Gold")
-
-          available = [c for c in fields if c in gold.columns]
-
-          master = master.drop(
-              columns=available,
-              errors="ignore"
-          )
-
-          merged = master.merge(
-              gold[[key] + available],
-              on=key,
-              how="left",
-              validate="one_to_one",
-              indicator=True,
-          )
-
-          if not merged["_merge"].eq("both").all():
-              raise RuntimeError(
-                  "Health Gold does not cover every master CN"
-              )
-
-          merged = merged.drop(columns="_merge")
-
-          if "service_offering" in merged.columns:
-              merged["Service Offering"] = merged["service_offering"]
-
-          merged.to_parquet(master_path, index=False)
-
-          print("Health master updated from Health Gold")
-          print(f"Rows: {len(merged):,}")
-          print(
-              "Addressable:",
-              int(merged["is_addressable"].sum())
-          )
-          PY
+      # ============================================================
+      # ATLAS HEALTH SILVER
+      # ============================================================
 
       - name: Build ATLAS Bronze
         run: |
@@ -638,6 +568,7 @@ jobs:
             --agency-config health/config/health_agencies.txt \
             --aliases config/health/agency_aliases.csv \
             --output data/silver/industry/health/health_contracts.parquet
+
 
       - name: Verify Health Silver input
         run: |
@@ -764,29 +695,6 @@ jobs:
           )
           PY
 
-      # ============================================================
-      # ATLAS HEALTH SILVER
-      # ============================================================
-
-      - name: Build ATLAS Bronze
-        run: |
-          python atlas/bronze/ingest.py \
-            --baseline "$BASELINE_PATH" \
-            --monthly-dir "$MONTHLY_DIR"
-
-      - name: Build ATLAS Silver Core
-        run: |
-          python atlas/silver/core/normalise.py \
-            --bronze-dir data/bronze/austender \
-            --output data/silver/core/austender_contracts.parquet
-
-      - name: Build Health Silver Industry
-        run: |
-          python atlas/silver/industry/health/classify.py \
-            --input data/silver/core/austender_contracts.parquet \
-            --agency-config health/config/health_agencies.txt \
-            --aliases config/health/agency_aliases.csv \
-            --output data/silver/industry/health/health_contracts.parquet
 
 
       # ============================================================
