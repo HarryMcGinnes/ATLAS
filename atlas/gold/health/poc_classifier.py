@@ -951,6 +951,7 @@ CATEGORY_RULES: dict[str, list[tuple[str, float, str]]] = {
         (r"\bcomputer services?\b", 7, "computer services - generic"),
     ],
     "Data, AI & Automation": [
+        (r"\bbusiness intelligence consulting services?\b", 25, "business intelligence consulting"),
         (r"\bdata management\b", 17, "data management"),
         (r"\bdatabase\b", 15, "database"),
         (r"\banalytics\b", 17, "analytics"),
