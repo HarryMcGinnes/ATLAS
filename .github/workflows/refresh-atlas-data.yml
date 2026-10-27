@@ -620,6 +620,136 @@ jobs:
           PY
 
       # ============================================================
+      # HEALTH GOLD -> DASHBOARD MASTER
+      # ============================================================
+
+      - name: Build Health Gold
+        run: |
+          python atlas/gold/health/classify.py \
+            --input data/silver/industry/health/health_contracts.parquet \
+            --output data/gold/health/health_classified.parquet \
+            --audit-dir audits/gold/health
+
+      - name: Synchronise Health Gold with dashboard master
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          from pathlib import Path
+
+          master_path = Path(
+              "health/data/processed/master_health_contracts.parquet"
+          )
+          gold_path = Path(
+              "data/gold/health/health_classified.parquet"
+          )
+
+          master = pd.read_parquet(master_path)
+          gold = pd.read_parquet(gold_path)
+
+          key = "CN ID"
+
+          if master[key].isna().any() or gold[key].isna().any():
+              raise RuntimeError("Missing Health CN IDs")
+
+          if master[key].duplicated().any():
+              raise RuntimeError("Duplicate Health master CN IDs")
+
+          if gold[key].duplicated().any():
+              raise RuntimeError("Duplicate Health Gold CN IDs")
+
+          required = [
+              "is_addressable",
+              "service_offering",
+              "is_accenture",
+              "supplier_group",
+          ]
+          missing = [c for c in required if c not in gold]
+          if missing:
+              raise RuntimeError(f"Missing Gold fields: {missing}")
+
+          # Verify identical contract populations and values.
+          old = master.set_index(key)
+          new = gold.set_index(key)
+
+          if set(old.index) != set(new.index):
+              raise RuntimeError(
+                  "Health master and Gold CN populations differ"
+              )
+
+          old_values = pd.to_numeric(
+              old["Value"], errors="coerce"
+          ).fillna(0)
+          new_values = pd.to_numeric(
+              new["Value"], errors="coerce"
+          ).fillna(0)
+
+          if not (
+              (old_values.sort_index() -
+               new_values.sort_index()).abs() < 0.01
+          ).all():
+              raise RuntimeError(
+                  "Health master and Gold contract values differ"
+              )
+
+          fields = [
+              "is_addressable",
+              "addressability",
+              "addressability_confidence",
+              "addressability_reason",
+              "service_offering",
+              "service_offering_confidence",
+              "classification_review_required",
+              "is_accenture",
+              "supplier_group",
+          ]
+
+          for field in fields:
+              if field in gold.columns:
+                  master[field] = master[key].map(new[field])
+
+          master["Service Offering"] = master["service_offering"]
+
+          # Ensure non-addressable contracts have no SO.
+          addr = master["is_addressable"].fillna(False).astype(bool)
+          master.loc[~addr, "Service Offering"] = pd.NA
+          master.loc[~addr, "service_offering"] = pd.NA
+
+          master.to_parquet(master_path, index=False)
+
+          print("Health dashboard master synchronised")
+          print(f"Contracts: {len(master):,}")
+          print(f"Addressable: {addr.sum():,}")
+          print(
+              f"TAM: A${master.loc[addr, 'Value'].sum()/1e9:.3f}B"
+          )
+          PY
+
+      # ============================================================
+      # ATLAS HEALTH SILVER
+      # ============================================================
+
+      - name: Build ATLAS Bronze
+        run: |
+          python atlas/bronze/ingest.py \
+            --baseline "$BASELINE_PATH" \
+            --monthly-dir "$MONTHLY_DIR"
+
+      - name: Build ATLAS Silver Core
+        run: |
+          python atlas/silver/core/normalise.py \
+            --bronze-dir data/bronze/austender \
+            --output data/silver/core/austender_contracts.parquet
+
+      - name: Build Health Silver Industry
+        run: |
+          python atlas/silver/industry/health/classify.py \
+            --input data/silver/core/austender_contracts.parquet \
+            --agency-config health/config/health_agencies.txt \
+            --aliases config/health/agency_aliases.csv \
+            --output data/silver/industry/health/health_contracts.parquet
+
+
+      # ============================================================
       # HEALTH MASTER VALIDATION
       # ============================================================
 
@@ -835,6 +965,10 @@ jobs:
           if-no-files-found: error
           path: |
             data/austender/combined/austender_combined.parquet
+            
+            data/gold/health/health_classified.parquet
+            audits/gold/health/health_unresolved_so_queue.csv
+
 
             defence/data/defence_contracts_raw.parquet
             defence/data/processed/**
