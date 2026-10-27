@@ -547,6 +547,25 @@ def classify_addressability(row: pd.Series) -> dict[str, object]:
     category = clean(row.get(CATEGORY, ""))
     description = clean(row.get(DESCRIPTION, ""))
 
+    # Clinical/community support is not ICT support. Require explicit technology
+    # delivery evidence in the description, not a generic support-services label.
+    clinical_support = any_pattern(description, [
+        r"\bsupport services? for (?:women|men|people|patients?|families|children)\b",
+        r"\b(?:breast cancer|patient|clinical|community|social|aged care|disability)\b.{0,65}\bsupport services?\b",
+        r"\bsupport services?\b.{0,65}\b(?:breast cancer|patients?|clinical care|community care)\b",
+    ])
+    technical_support = any_pattern(description, [
+        r"\b(?:ict|information technology|software|application|systems?|platform|cloud|cyber|network|digital|technical|technology)\b.{0,70}\b(?:support|develop|implement|integrat|migrat|design|build)\w*\b",
+        r"\b(?:support|develop|implement|integrat|migrat|design|build)\w*\b.{0,70}\b(?:ict|information technology|software|application|systems?|platform|cloud|cyber|network|digital|technical|technology)\b",
+    ])
+    if clinical_support and not technical_support:
+        return {
+            "is_addressable": False, "addressability": "Not Addressable",
+            "addressability_confidence": 99,
+            "addressability_reason": f"Clinical/community support without explicit technology delivery: '{clinical_support}'.",
+            "addressability_method": "Clinical/community support exclusion",
+        }
+
     # RESEARCH GATE: research projects are outside the Accenture TAM.
     # Apply this before generic advisory/data/technology evidence so words such as
     # project, data, analysis or management cannot pull a research project into TAM.
@@ -704,6 +723,37 @@ def classify_addressability(row: pd.Series) -> dict[str, object]:
             "addressability_confidence": 88,
             "addressability_reason": f"Explicit digital-channel delivery in Description: '{digital_delivery}'.",
             "addressability_method": "Health QA digital delivery evidence",
+        }
+
+    # Generic support services alone are not addressability evidence.
+    # They must be accompanied by explicit technical or other independent
+    # consulting/transformation evidence (the Accenture override runs later).
+    support_only = bool(re.search(r"\bsupport services?\b", f"{category} {description}"))
+    independent_evidence = any_pattern(f"{category} {description}", [
+        r"\b(?:ict|information technology|software|application|systems? integration|cloud|cyber|network|digital|technology|technical|data platform|analytics)\b",
+        r"\b(?:strategy|strategic|advisory|consult(?:ing|ancy)|transformation|project management|program(?:me)? management|business design|operating model)\b",
+    ])
+    if support_only and not independent_evidence:
+        return {
+            "is_addressable": False, "addressability": "Not Addressable",
+            "addressability_confidence": 95,
+            "addressability_reason": "Generic support services without specific consulting, transformation or IT delivery evidence.",
+            "addressability_method": "Generic support services exclusion",
+        }
+
+    # Explicit technical/advisory work should be addressable even when its
+    # description does not contain a legacy subject keyword.
+    targeted_delivery = any_pattern(description, [
+        r"\bbusiness design and delivery management services?\b",
+        r"\b(?:creation|design|development) of (?:a |the )?target state architecture\b",
+        r"\bdigital augmentation services?\b",
+    ])
+    if targeted_delivery:
+        return {
+            "is_addressable": True, "addressability": "Addressable",
+            "addressability_confidence": 92,
+            "addressability_reason": f"Explicit advisory/technical delivery: '{targeted_delivery}'.",
+            "addressability_method": "Reviewed delivery evidence",
         }
 
     cat_signal = any_pattern(category, ADDRESSABLE_SUBJECT_PATTERNS)
@@ -907,6 +957,25 @@ def classify_service_offering(row: pd.Series) -> dict[str, object]:
     category = clean(row.get(CATEGORY, ""))
     description = clean(row.get(DESCRIPTION, ""))
 
+    # Reviewed explicit phrases take precedence over generic category scoring.
+    reviewed = [
+        (r"\bbusiness design and delivery management services?\b", "Strategy, Transformation & Advisory"),
+        (r"\b(?:creation|design|development) of (?:a |the )?target state architecture\b", "SI & Engineering"),
+        (r"\bdigital augmentation services?\b", "SI & Engineering"),
+    ]
+    for pattern, offering in reviewed:
+        m = re.search(pattern, description, flags=re.I)
+        if m:
+            return {
+                "service_offering": offering, "Service Offering": offering, "capability": offering,
+                "service_offering_confidence": 90, "service_offering_confidence_band": "High",
+                "service_offering_second_choice": pd.NA, "service_offering_margin": pd.NA,
+                "service_offering_method": "Reviewed explicit Description rule",
+                "service_offering_evidence": f"Description: {m.group(0)}",
+                "category_score_breakdown": "{}", "description_score_breakdown": "{}",
+                "service_offering_score_breakdown": "{}",
+            }
+
     # Description is primary for Health; Category is supporting evidence.
     category_scores, category_evidence = collect_scores(category, CATEGORY_RULES, 1.00)
     description_scores, description_evidence = collect_scores(description, DESCRIPTION_RULES, 1.35)
@@ -983,6 +1052,21 @@ def classify_service_offering(row: pd.Series) -> dict[str, object]:
 # Existing primary classifications are never overwritten.
 
 SECONDARY_CATEGORY_RULES: list[tuple[str, str, int, str]] = [
+    # Reviewed category fallbacks. Only addressable contracts unresolved by
+    # the primary Description + Category scorer reach this stage. Specific
+    # description matches in the secondary pass take precedence.
+    (r"^computer services?$", "SI & Engineering", 70,
+     "reviewed category fallback: generic computer services"),
+    (r"^information technology consultation services?$", "Strategy, Transformation & Advisory", 74,
+     "reviewed category fallback: IT consultation"),
+    (r"^management information systems(?: mis)?$", "SI & Engineering", 76,
+     "reviewed category fallback: management information systems"),
+    (r"^data services?$", "Data, AI & Automation", 78,
+     "reviewed category fallback: data services"),
+    (r"^project administration or planning$", "Strategy, Transformation & Advisory", 76,
+     "reviewed category fallback: project administration / planning"),
+    (r"^software or hardware engineering$", "SI & Engineering", 80,
+     "reviewed category fallback: software / hardware engineering"),
     (r"\bdata services?\b|\bstatistics\b|\bdata processing or preparation services?\b|\binformation services?\b",
      "Data, AI & Automation", 80, "secondary category family: data / statistics / information services"),
     (r"\bsoftware or hardware engineering\b|\bcomputer programmers?\b|\bsoftware engineering\b",
@@ -1082,6 +1166,18 @@ def classify_service_offering_secondary(row: pd.Series) -> dict[str, object] | N
                     "evidence_source": "Description",
                 }
         return None
+
+    reviewed_description_rules = [
+        (r"\bbusiness design and delivery management services?\b", "Strategy, Transformation & Advisory", 90),
+        (r"\b(?:creation|design|development) of (?:a |the )?target state architecture\b", "SI & Engineering", 90),
+        (r"\bdigital augmentation services?\b", "SI & Engineering", 85),
+    ]
+    for pattern, offering, confidence in reviewed_description_rules:
+        match = re.search(pattern, description, flags=re.I)
+        if match:
+            return {"service_offering": offering, "confidence": confidence,
+                    "reason": f"Reviewed description rule: '{match.group(0)}'.",
+                    "evidence_source": "Description"}
 
     # Description wins in the secondary pass, mirroring the primary Health logic.
     for pattern, offering, confidence, reason in SECONDARY_DESCRIPTION_RULES:
@@ -1222,7 +1318,44 @@ def apply_classifier(df: pd.DataFrame) -> pd.DataFrame:
 # =============================================================================
 
 def run_regression_checks() -> None:
+    # Check category fallback on already-addressable, primary-unresolved rows.
+    # This does not modify or test the addressability gate.
+    fallback_cases = [
+        ("Computer services", "SI & Engineering"),
+        ("Information technology consultation services", "Strategy, Transformation & Advisory"),
+        ("Management information systems (MIS)", "SI & Engineering"),
+        ("Data services", "Data, AI & Automation"),
+        ("Project administration or planning", "Strategy, Transformation & Advisory"),
+        ("Software or hardware engineering", "SI & Engineering"),
+    ]
+    for category, expected in fallback_cases:
+        row = pd.Series({CATEGORY: category, DESCRIPTION: "", "is_addressable": True,
+                         "service_offering": pd.NA})
+        result = classify_service_offering_secondary(row)
+        if not result or result["service_offering"] != expected:
+            raise RuntimeError(f"Category fallback regression failed: {category}: {result}")
+    # Description overrides the generic Computer services fallback.
+    row = pd.Series({CATEGORY: "Computer services", DESCRIPTION: "cloud migration services",
+                     "is_addressable": True, "service_offering": pd.NA})
+    result = classify_service_offering_secondary(row)
+    if not result or result["service_offering"] != "Cloud Infrastructure & Cyber":
+        raise RuntimeError(f"Description precedence regression failed: {result}")
+    # Regression: the Accenture guarantee overrides even a clinical exclusion.
+    demo = pd.DataFrame([{
+        CATEGORY_TYPE: "Services", CATEGORY: "Community support services",
+        DESCRIPTION: "Support Services for Women with Breast Cancer",
+        SUPPLIER_NAME: "Accenture Australia Pty Ltd", "is_accenture": True,
+    }])
+    demo = apply_classifier(demo)
+    assert bool(demo.loc[0, "is_addressable"]), "Accenture override failed"
+    assert demo.loc[0, "addressability_method"] == "Observed Accenture win guarantee"
     cases = [
+        ({CATEGORY_TYPE: "Services", CATEGORY: "Community support services", DESCRIPTION: "Support Services for Women with Breast Cancer"}, False, None),
+        ({CATEGORY_TYPE: "Services", CATEGORY: "Professional services", DESCRIPTION: "Business Design and Delivery Management Services"}, True, "Strategy, Transformation & Advisory"),
+        ({CATEGORY_TYPE: "Services", CATEGORY: "Professional services", DESCRIPTION: "Creation of Target State Architecture"}, True, "SI & Engineering"),
+        ({CATEGORY_TYPE: "Services", CATEGORY: "Professional services", DESCRIPTION: "Digital Augmentation Services"}, True, "SI & Engineering"),
+        ({CATEGORY_TYPE: "Services", CATEGORY: "Professional services", DESCRIPTION: "General support services"}, False, None),
+        ({CATEGORY_TYPE: "Services", CATEGORY: "Computer services", DESCRIPTION: "Application support services"}, True, "Managed Services & Operations"),
         ({CATEGORY_TYPE: "Services", CATEGORY: "Health research", DESCRIPTION: "Research project into health outcomes and data analysis"}, False, None),
         ({CATEGORY_TYPE: "Goods", CATEGORY: "Medical equipment and accessories", DESCRIPTION: "Supply of patient monitoring devices"}, False, None),
         ({CATEGORY_TYPE: "Goods", CATEGORY: "Software", DESCRIPTION: "Annual software licence subscription"}, True, "Managed Services & Operations"),
