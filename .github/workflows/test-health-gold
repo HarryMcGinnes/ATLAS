@@ -1,0 +1,188 @@
+name: Test ATLAS Health Gold
+
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  test-health:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install pandas pyarrow pyyaml
+
+      - name: Download Health Silver input
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p data/silver/industry/health
+
+          RUN_ID=$(gh run list \
+            --workflow test-atlas-full.yml \
+            --branch main \
+            --status success \
+            --limit 30 \
+            --json databaseId \
+            --jq '.[].databaseId' | while read -r id; do
+              if gh api \
+                "repos/${GITHUB_REPOSITORY}/actions/runs/${id}/artifacts" \
+                --jq '.artifacts[] | select(.name=="health-silver-input" and .expired==false) | .id' \
+                | grep -q .; then
+                echo "$id"
+                break
+              fi
+            done)
+
+          if [ -z "$RUN_ID" ]; then
+            echo "::error::No reusable Health Silver artifact found."
+            exit 1
+          fi
+
+          gh run download "$RUN_ID" \
+            --name health-silver-input \
+            --dir data/silver/industry/health
+
+          test -f data/silver/industry/health/health_contracts.parquet
+
+      - name: Check Health classifier syntax
+        run: |
+          python -m py_compile \
+            atlas/gold/health/poc_classifier.py \
+            atlas/gold/health/classify.py
+
+      - name: Build Health Gold
+        run: |
+          python atlas/gold/health/classify.py \
+            --input data/silver/industry/health/health_contracts.parquet \
+            --output data/gold/health/health_classified.parquet \
+            --audit-dir audits/gold/health
+
+      - name: Validate Health classification
+        run: |
+          python - <<'PY'
+          import pandas as pd
+
+          silver = pd.read_parquet(
+              "data/silver/industry/health/health_contracts.parquet"
+          )
+          gold = pd.read_parquet(
+              "data/gold/health/health_classified.parquet"
+          )
+
+          assert len(gold) == len(silver)
+          assert gold["CN ID"].is_unique
+
+          assert abs(
+              gold["Value"].sum() - silver["Value"].sum()
+          ) < 0.01
+
+          addr = gold["is_addressable"].fillna(False).astype(bool)
+          acc = gold["is_accenture"].fillna(False).astype(bool)
+
+          assert not (acc & ~addr).any(), \
+              "Accenture addressability guarantee failed"
+
+          assert not (
+              (~addr) & gold["service_offering"].notna()
+          ).any()
+
+          unresolved = addr & gold["service_offering"].isna()
+
+          count_pct = (
+              unresolved.sum() / addr.sum() * 100
+              if addr.sum() else 0
+          )
+
+          tam = gold.loc[addr, "Value"].sum()
+          unresolved_value = gold.loc[unresolved, "Value"].sum()
+
+          value_pct = (
+              unresolved_value / tam * 100
+              if tam > 0 else 0
+          )
+
+          print("HEALTH GOLD VALIDATION")
+          print("=" * 50)
+          print(f"Contracts: {len(gold):,}")
+          print(f"Addressable: {addr.sum():,}")
+          print(f"TAM: A${tam/1e9:.3f}B")
+          print(f"Accenture: A${gold.loc[acc, 'Value'].sum()/1e9:.3f}B")
+          print(f"Unresolved: {unresolved.sum():,}")
+          print(f"Unresolved by count: {count_pct:.2f}%")
+          print(f"Unresolved by value: {value_pct:.2f}%")
+
+          assert count_pct < 5, "Unresolved count exceeds 5%"
+          assert 0 <= value_pct < 5, \
+              "Unresolved TAM value exceeds 5%"
+
+          print("HEALTH GOLD: PASS")
+          PY
+
+      - name: Export lightweight Health QA
+        run: |
+          mkdir -p audits/gold/health/export
+
+          python - <<'PY'
+          import pandas as pd
+          from pathlib import Path
+
+          df = pd.read_parquet(
+              "data/gold/health/health_classified.parquet"
+          )
+
+          cols = [
+              "CN ID", "Agency", "Description", "Category",
+              "Supplier Name", "supplier_group", "Value",
+              "is_accenture", "is_addressable",
+              "addressability_reason", "service_offering",
+              "service_offering_confidence",
+              "service_offering_method",
+              "service_offering_evidence"
+          ]
+
+          cols = [c for c in cols if c in df.columns]
+
+          unresolved = df[
+              df["is_addressable"].fillna(False).astype(bool)
+              & df["service_offering"].isna()
+          ]
+
+          out = Path("audits/gold/health/export")
+
+          unresolved[cols].to_csv(
+              out / "health_unresolved.csv", index=False
+          )
+
+          summary = (
+              df[df["is_addressable"].fillna(False).astype(bool)]
+              .groupby("service_offering", dropna=False)["Value"]
+              .agg(["count", "sum"])
+              .reset_index()
+          )
+
+          summary.to_csv(
+              out / "health_classification_summary.csv",
+              index=False
+          )
+          PY
+
+      - name: Upload lightweight QA
+        uses: actions/upload-artifact@v4
+        with:
+          name: health-gold-qa
+          path: audits/gold/health/export/
+          retention-days: 7
+          if-no-files-found: error
