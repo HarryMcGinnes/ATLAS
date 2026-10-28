@@ -1583,10 +1583,39 @@ def apply_service_offering_mapping(df: pd.DataFrame) -> pd.DataFrame:
             out = out.drop(columns=[col])
     combined = pd.concat([out, mapped], axis=1)
     combined["supplier_cohort"] = combined["supplier_group"].map(supplier_cohort)
-    category_context_values = [classify_category_context(r.get(CATEGORY_TYPE, ""), r.get(CATEGORY, "")) for _, r in combined.iterrows()]
-    combined["category_context"] = [x[0] for x in category_context_values]
-    combined["category_context_signal"] = [x[1] for x in category_context_values]
-    combined["category_context_reason"] = [x[2] for x in category_context_values]
+
+    # Calculate category context once per unique
+    # Category Type / Category combination.
+    unique_categories = combined[
+        [CATEGORY_TYPE, CATEGORY]
+    ].drop_duplicates()
+
+    context_lookup = {
+        (cat_type, category): classify_category_context(
+            cat_type, category
+        )
+        for cat_type, category in unique_categories.itertuples(
+            index=False, name=None
+        )
+    }
+
+    category_context_values = [
+        context_lookup[(cat_type, category)]
+        for cat_type, category in combined[
+            [CATEGORY_TYPE, CATEGORY]
+        ].itertuples(index=False, name=None)
+    ]
+
+    combined["category_context"] = [
+        x[0] for x in category_context_values
+    ]
+    combined["category_context_signal"] = [
+        x[1] for x in category_context_values
+    ]
+    combined["category_context_reason"] = [
+        x[2] for x in category_context_values
+    ]
+
 
     def cohort_effect(row: pd.Series) -> str:
         method = str(row.get("service_offering_method", ""))
