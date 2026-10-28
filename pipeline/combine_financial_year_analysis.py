@@ -712,6 +712,66 @@ def add_contract_version_metadata(
 
     return out
 
+def add_contract_family_dates(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Derive contract-family dates without modifying source dates,
+    contract values or the number of records.
+    """
+    out = df.copy()
+
+    out["cn_family_start_date"] = pd.NaT
+    out["cn_family_end_date"] = pd.NaT
+    out["cn_family_date_status"] = "review_missing_family"
+
+    roots = out["CN Root ID"].fillna("").astype(str).str.strip()
+    valid = roots.ne("")
+
+    if not valid.any():
+        return out
+
+    for root, group in out.loc[valid].groupby(
+        "CN Root ID", sort=False
+    ):
+        versions = group.sort_values(
+            ["CN Amendment Number", "Publish Date"],
+            na_position="first",
+        )
+
+        original = versions.loc[
+            versions["CN Amendment Number"].eq(0)
+        ]
+
+        if not original.empty:
+            family_start = original.iloc[-1]["Start Date"]
+            start_source = "original"
+        else:
+            family_start = versions.iloc[0]["Start Date"]
+            start_source = "inferred"
+
+        latest = versions.iloc[-1]
+        family_end = latest["End Date"]
+
+        if pd.isna(family_start):
+            status = "review_missing_start"
+        elif pd.isna(family_end):
+            status = "review_missing_latest_end"
+        elif family_end < family_start:
+            status = "review_invalid_family_period"
+        elif start_source == "inferred":
+            status = "review_original_missing"
+        else:
+            status = "valid"
+
+        idx = group.index
+
+        out.loc[idx, "cn_family_start_date"] = family_start
+        out.loc[idx, "cn_family_end_date"] = family_end
+        out.loc[idx, "cn_family_date_status"] = status
+
+    return out
+
 
 # =============================================================================
 # SHARED SUPPLIER NORMALISATION
