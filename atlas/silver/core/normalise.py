@@ -75,9 +75,71 @@ def main():
     combined = legacy.deduplicate_exact_cn_versions(
         combined, audit_dir
     )
-    combined = legacy.add_contract_version_metadata(combined)
-    combined = legacy.add_supplier_identity(combined, audit_dir)
+combined = legacy.add_contract_version_metadata(combined)
+
+# Enrich each CN with its original family start and latest
+# recorded amendment end, preserving source dates.
+combined = legacy.add_contract_family_dates(combined)
+
+combined = legacy.add_supplier_identity(combined, audit_dir)
     combined = legacy.add_derived_fields(combined)
+
+    # ============================================================
+    # CONTRACT FAMILY DATE AUDIT
+    # ============================================================
+
+    audit_columns = [
+        "CN ID",
+        "CN Root ID",
+        "CN Amendment Number",
+        "cn_version_count",
+        "is_latest_cn_version",
+        "Start Date",
+        "End Date",
+        "cn_family_start_date",
+        "cn_family_end_date",
+        "cn_family_date_status",
+        "Value",
+    ]
+
+    audit = combined.loc[
+        combined["cn_version_count"].gt(1),
+        audit_columns,
+    ].copy()
+
+    audit["original_period_invalid"] = (
+        audit["Start Date"].notna()
+        & audit["End Date"].notna()
+        & (audit["Start Date"] > audit["End Date"])
+    )
+
+    audit["family_period_valid"] = (
+        audit["cn_family_date_status"].eq("valid")
+    )
+
+    audit = audit.sort_values(
+        ["CN Root ID", "CN Amendment Number"]
+    )
+
+    audit_path = audit_dir / "contract_family_date_audit.csv"
+    audit.to_csv(audit_path, index=False)
+
+    print("\nCONTRACT FAMILY DATE AUDIT")
+    print("=" * 50)
+    print(f"Amendment-family records: {len(audit):,}")
+    print(
+        "Original periods invalid:",
+        int(audit["original_period_invalid"].sum()),
+    )
+    print(
+        "Records in valid families:",
+        int(audit["family_period_valid"].sum()),
+    )
+    print(
+        "Records requiring family-date review:",
+        int((~audit["family_period_valid"]).sum()),
+    )
+    print(f"Audit: {audit_path}")
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
