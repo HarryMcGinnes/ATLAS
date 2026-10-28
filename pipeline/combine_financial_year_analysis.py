@@ -411,8 +411,8 @@ def normalise_source(
         .astype("string")
         .fillna("")
         .map(clean_text)
+        .astype("string")
     )
-
     for column in date_columns:
         out[column] = pd.to_datetime(
             out[column],
