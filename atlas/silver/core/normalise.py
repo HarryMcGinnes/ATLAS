@@ -72,16 +72,19 @@ def main():
         raise RuntimeError("No Bronze inputs")
 
     combined = pd.concat(frames, ignore_index=True, sort=False)
+
     combined = legacy.deduplicate_exact_cn_versions(
         combined, audit_dir
     )
-combined = legacy.add_contract_version_metadata(combined)
 
-# Enrich each CN with its original family start and latest
-# recorded amendment end, preserving source dates.
-combined = legacy.add_contract_family_dates(combined)
+    combined = legacy.add_contract_version_metadata(combined)
 
-combined = legacy.add_supplier_identity(combined, audit_dir)
+    # Enrich contract families with original start
+    # and latest amendment end dates.
+    combined = legacy.add_contract_family_dates(combined)
+
+    combined = legacy.add_supplier_identity(combined, audit_dir)
+
     combined = legacy.add_derived_fields(combined)
 
     # ============================================================
