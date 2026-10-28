@@ -994,13 +994,49 @@ tbody tr:hover {{ background:#FCFCFD; }}
     <button id="clearFiltersBtn" class="clear-btn" type="button">Clear all filters</button>
   </section>
 
-  <div class="summary-line" id="summaryLine"></div>
-  <div id="yearContainer"></div>
+<div class="field" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+  <div style="min-width:220px;flex:1">
+    <label for="groupMode">Group contracts by</label>
+    <select id="groupMode">
+      <option value="status">Contract status</option>
+      <option value="start">Start financial year</option>
+      <option value="end">End financial year</option>
+    </select>
+  </div>
+  <div style="min-width:220px;flex:1">
+    <label for="fyFilter">Contracts active during FY</label>
+    <select id="fyFilter">
+      <option value="all">All financial years</option>
+    </select>
+  </div>
+</div>
 
-  <p class="method">
-    The Procuring Entity column is displayed as <b>Division &gt; Branch</b>; missing organisation levels are shown as <b>(blank)</b>. Contracts active as at the page-open date appear only in the top <b>Ongoing contracts</b> bracket. They are excluded from the financial-year brackets so no contract is listed twice. All remaining contracts are grouped by their recorded financial year. The default agency scope includes Department of Defence, Australian Signals Directorate and Australian Submarine Agency. Division and branch aliases are consolidated before display.
-    All filters cascade across the dashboard. Agency, division and branch filters now work bidirectionally: selecting a division reduces the branch list, while selecting a branch reduces the division list to only divisions that contain that branch. Service Offerings and suppliers are re-ranked by total spend in the current scope whenever agency, division, branch, search, minimum value, dated-contract, capability or supplier filters change. The abbreviation <b>DDG</b> is treated as <b>Defence Digital Group</b>; branch values such as <b>DDG - ICTDD</b> are used as supporting validation, so historical DDG records are no longer labelled unresolved.
-  </p>
+<div class="summary-line" id="summaryLine"></div>
+<div id="yearContainer"></div>
+
+<p class="method">
+  Contracts are grouped by lifecycle status by default:
+  Active, Upcoming, Completed or Unknown Dates.
+
+  Users can alternatively group contracts by their start
+  financial year or end financial year.
+
+  The Financial Year filter identifies contracts whose
+  recorded start and end dates overlap the selected
+  Australian financial year (1 July to 30 June).
+
+  Each contract appears once in the selected grouping,
+  and the full recorded contract value is retained.
+
+  Financial-year spending leaderboards use estimated
+  expenditure allocated across contract duration,
+  rather than attributing the entire contract value
+  to a single financial year.
+
+  Division and branch aliases remain consolidated.
+  Historical organisational identifiers are retained
+  for audit purposes.
+</p>
 </div>
 
 <script>
@@ -1011,6 +1047,84 @@ const DEFAULT_AGENCY = {json.dumps(default_agency)};
 const VALUE_BASIS = {json.dumps(value_basis)};
 const AS_AT_DATE = new Date().toISOString().slice(0,10);
 const YEAR_ROWS = new Map();
+
+function fyFromDate(iso) {{
+  if (!iso) return null;
+
+  const d = new Date(iso + 'T00:00:00Z');
+  if (isNaN(d.getTime())) return null;
+
+  return d.getUTCFullYear() -
+    (d.getUTCMonth() < 6 ? 1 : 0);
+}}
+
+function fyLabel(year) {{
+  return year === null
+    ? 'Unknown FY'
+    : 'FY' + year + '–' +
+      String((year + 1) % 100).padStart(2, '0');
+}}
+
+function contractStatus(r) {{
+  if (
+    !r.start_date_iso ||
+    !r.end_date_iso ||
+    r.start_date_iso > r.end_date_iso
+  ) return 'Unknown Dates';
+
+  if (r.start_date_iso > AS_AT_DATE)
+    return 'Upcoming contracts';
+
+  if (r.end_date_iso < AS_AT_DATE)
+    return 'Completed contracts';
+
+  return 'Active contracts';
+}}
+
+function overlapsFY(r, year) {{
+  if (year === 'all') return true;
+
+  if (
+    !r.start_date_iso ||
+    !r.end_date_iso ||
+    r.start_date_iso > r.end_date_iso
+  ) return false;
+
+  const y = Number(year);
+  const fyStart = y + '-07-01';
+  const fyEnd = (y + 1) + '-06-30';
+
+  return r.start_date_iso <= fyEnd &&
+         r.end_date_iso >= fyStart;
+}}
+
+function populateFYFilter() {{
+  const select = document.getElementById('fyFilter');
+  const years = new Set();
+
+  DATA.records.forEach(r => {{
+    const start = fyFromDate(r.start_date_iso);
+    const end = fyFromDate(r.end_date_iso);
+
+    if (
+      start === null ||
+      end === null ||
+      end < start
+    ) return;
+
+    for (let y = start; y <= end; y++)
+      years.add(y);
+  }});
+
+  select.innerHTML =
+    '<option value="all">All financial years</option>' +
+    [...years]
+      .sort((a,b) => b-a)
+      .map(y =>
+        `<option value="${{y}}">${{fyLabel(y)}}</option>`
+      )
+      .join('');
+}}
 
 function esc(value) {{
   return String(value ?? '')
@@ -1354,10 +1468,18 @@ function updateLeaderboards() {{
   // filters. Contract ceilings are spread evenly over their dated duration so
   // the cards represent estimated annual expenditure rather than award value.
   const allRows = marketRows();
-  const allFys = [...new Set(
-    allRows.map(r => r.fy_start === null ? NaN : Number(r.fy_start)).filter(y => Number.isFinite(y) && y >= 2015 && y <= 2026)
-  )].sort((a,b) => a-b);
-  const selectedFys = allFys.slice(-5);
+
+const today = new Date(AS_AT_DATE + 'T00:00:00Z');
+
+const currentFY = today.getUTCFullYear() -
+  (today.getUTCMonth() < 6 ? 1 : 0);
+
+// Last five completed Australian financial years.
+const selectedFys = Array.from(
+  {{length: 5}},
+  (_, i) => currentFY - 5 + i
+);
+
 
   // A division is considered currently active when it has a new award in either
   // of the latest two available FYs. Historical DDG CTO records are already
@@ -1365,7 +1487,7 @@ function updateLeaderboards() {{
   const activeFyWindow = selectedFys.slice(-2);
   const activeDivisions = new Set(
     allRows
-      .filter(r => activeFyWindow.includes(Number(r.fy_start)))
+      .filter(r => activeFyWindow.some(fy => overlapsFY(r, String(fy))))
       .map(r => entityName(r))
       .filter(Boolean)
   );
@@ -1564,6 +1686,8 @@ function clearAllFilters() {{
   document.getElementById('searchInput').value = '';
   document.getElementById('minValueInput').value = '';
   document.getElementById('datedOnly').checked = false;
+  document.getElementById('groupMode').value = 'status';
+  document.getElementById('fyFilter').value = 'all';
 
   document.getElementById('agencySelect').value = DEFAULT_AGENCY;
 
@@ -1599,82 +1723,95 @@ function clearAllFilters() {{
   render();
 }}
 
+
 function render() {{
-  const rows = filteredRows();
+  const selectedFY = document.getElementById('fyFilter').value;
+  const mode = document.getElementById('groupMode').value;
+
+  const rows = filteredRows()
+    .filter(r => overlapsFY(r, selectedFY));
+
   updateKpis(rows);
 
   document.getElementById('summaryLine').textContent =
     number(rows.length) + ' matching contracts · ' +
-    money(rows.reduce((s,r) => s + Number(r.value || 0), 0)) +
-    ' · ' + VALUE_BASIS;
-
-  const ongoingRows = [];
-  const historicalRows = [];
-
-  rows.forEach(r => {{
-    const isOngoing = Boolean(
-      r.start_date_iso &&
-      r.end_date_iso &&
-      r.start_date_iso <= AS_AT_DATE &&
-      r.end_date_iso >= AS_AT_DATE
-    );
-
-    if (isOngoing) {{
-      ongoingRows.push(r);
-    }} else {{
-      historicalRows.push(r);
-    }}
-  }});
-
-  const groups = new Map();
-  historicalRows.forEach(r => {{
-    const fy = r.financial_year || 'Unknown FY';
-    if (!groups.has(fy)) groups.set(fy, []);
-    groups.get(fy).push(r);
-  }});
-
-  const years = [...groups.keys()].sort((a,b) => {{
-    const ra = groups.get(a)[0];
-    const rb = groups.get(b)[0];
-    const fa = ra.fy_start === null ? -Infinity : Number(ra.fy_start);
-    const fb = rb.fy_start === null ? -Infinity : Number(rb.fy_start);
-    return fb - fa;
-  }});
+    money(rows.reduce(
+      (s,r) => s + Number(r.value || 0), 0
+    )) + ' · ' + VALUE_BASIS;
 
   const container = document.getElementById('yearContainer');
+  YEAR_ROWS.clear();
+
   if (!rows.length) {{
-    container.innerHTML = '<div class="empty">No contracts match the selected filters.</div>';
+    container.innerHTML =
+      '<div class="empty">No contracts match the selected filters.</div>';
     return;
   }}
 
-  YEAR_ROWS.clear();
-  const sections = [];
+  const groups = new Map();
 
-  if (ongoingRows.length) {{
-    const ongoingId = 'ongoing_contracts';
-    const sortedOngoing = ongoingRows
-      .slice()
-      .sort((a,b) => Number(b.value||0)-Number(a.value||0));
-    YEAR_ROWS.set(ongoingId, sortedOngoing);
-    sections.push(contractBracket(
-      ongoingId,
-      'Ongoing contracts',
-      sortedOngoing,
-      'active contracts'
-    ));
+  rows.forEach(r => {{
+    let group;
+
+    if (mode === 'status') {{
+      group = contractStatus(r);
+    }} else {{
+      const iso = mode === 'start'
+        ? r.start_date_iso
+        : r.end_date_iso;
+
+      group = fyLabel(fyFromDate(iso));
+    }}
+
+    if (!groups.has(group))
+      groups.set(group, []);
+
+    groups.get(group).push(r);
+  }});
+
+  let keys = [...groups.keys()];
+
+  if (mode === 'status') {{
+    const order = [
+      'Active contracts',
+      'Upcoming contracts',
+      'Completed contracts',
+      'Unknown Dates'
+    ];
+
+    keys.sort(
+      (a,b) => order.indexOf(a) - order.indexOf(b)
+    );
+  }} else {{
+    keys.sort((a,b) => {{
+      if (a === 'Unknown FY') return 1;
+      if (b === 'Unknown FY') return -1;
+      return b.localeCompare(a);
+    }});
   }}
 
-  years.forEach(year => {{
-    const yearRows = groups.get(year)
+  const sections = [];
+
+  keys.forEach((key, index) => {{
+    const groupRows = groups.get(key)
       .slice()
-      .sort((a,b) => Number(b.value||0)-Number(a.value||0));
-    const id = 'year_' + String(year).replace(/[^A-Za-z0-9]/g,'_');
-    YEAR_ROWS.set(id, yearRows);
-    sections.push(contractBracket(id, year, yearRows));
+      .sort(
+        (a,b) => Number(b.value || 0) -
+                 Number(a.value || 0)
+      );
+
+    const id = 'contract_group_' + index;
+
+    YEAR_ROWS.set(id, groupRows);
+
+    sections.push(
+      contractBracket(id, key, groupRows)
+    );
   }});
 
   container.innerHTML = sections.join('');
 }}
+
 
 document.getElementById('agencySelect').value = DEFAULT_AGENCY;
 document.getElementById('marketMode').addEventListener('change', () => {{ clearAllFilters(); updateLeaderboards(); }});
@@ -1738,8 +1875,18 @@ document.getElementById('datedOnly').addEventListener('change', () => {{
 }});
 document.getElementById('clearFiltersBtn').addEventListener('click', clearAllFilters);
 
+
+document.getElementById('groupMode')
+  .addEventListener('change', render);
+
+document.getElementById('fyFilter')
+  .addEventListener('change', render);
+
+populateFYFilter();
+
 updateLeaderboards();
 refreshOrganisationFilters('agency');
+
 </script>
 
 <div id="execTooltip" class="exec-tooltip" role="tooltip" aria-hidden="true"></div>
