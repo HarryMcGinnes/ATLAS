@@ -408,8 +408,8 @@ def normalise_source(
 
         out[column] = (
             out[column]
+            .astype("string")
             .fillna("")
-            .astype(str)
             .map(clean_text)
         )
 
@@ -643,15 +643,14 @@ def deduplicate_exact_cn_versions(
         sort=False,
     )
 
-    current.drop(
-        columns=[
-            "_ingest_order",
-            "_source_priority",
-            "_exact_cn_id",
-        ],
-        errors="ignore",
-        inplace=True,
-    )
+        current = current.drop(
+            columns=[
+                "_ingest_order",
+                "_source_priority",
+                "_exact_cn_id",
+            ],
+            errors="ignore",
+        )
 
     return current
 
