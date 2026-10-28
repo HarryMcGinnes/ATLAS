@@ -1495,6 +1495,10 @@ def main() -> None:
     # Write Silver parquet
     # -------------------------------------------------------------------------
 
+    # Normalise object-typed columns before Parquet export.
+    for col in combined.select_dtypes(include=["object"]).columns:
+        combined[col] = combined[col].astype("string")
+
     combined.to_parquet(
         output_path,
         index=False,
