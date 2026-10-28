@@ -146,6 +146,16 @@ def main():
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
+
+    # Convert mixed-type object columns to consistent strings.
+    mixed_columns = [
+        col for col in combined.columns
+        if combined[col].dtype == "object"
+    ]
+
+    for col in mixed_columns:
+        combined[col] = combined[col].astype("string")
+
     combined.to_parquet(output, index=False)
 
     print(f"Silver Core complete: {len(combined):,} rows")
