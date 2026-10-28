@@ -406,12 +406,12 @@ def normalise_source(
         if column in date_columns or column == VALUE:
             continue
 
-        out[column] = (
-            out[column]
-            .astype("string")
-            .fillna("")
-            .map(clean_text)
-        )
+    out[column] = (
+        out[column]
+        .astype("string")
+        .fillna("")
+        .map(clean_text)
+    )
 
     for column in date_columns:
         out[column] = pd.to_datetime(
@@ -643,14 +643,14 @@ def deduplicate_exact_cn_versions(
         sort=False,
     )
 
-        current = current.drop(
-            columns=[
-                "_ingest_order",
-                "_source_priority",
-                "_exact_cn_id",
-            ],
-            errors="ignore",
-        )
+    current = current.drop(
+        columns=[
+            "_ingest_order",
+            "_source_priority",
+            "_exact_cn_id",
+        ],
+        errors="ignore",
+    )
 
     return current
 
