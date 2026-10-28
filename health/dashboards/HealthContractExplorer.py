@@ -349,28 +349,28 @@ const DEFAULT_AGENCY = ALL_AGENCIES;
 const VALUE_BASIS = {json.dumps(value_basis)};
 const AS_AT_DATE = new Date().toISOString().slice(0,10);
 const YEAR_ROWS = new Map();
-function fyFromDate(iso) {
+function fyFromDate(iso) {{
   if (!iso) return null;
   const d = new Date(iso + 'T00:00:00Z');
   if (isNaN(d.getTime())) return null;
   return d.getUTCFullYear() - (d.getUTCMonth() < 6 ? 1 : 0);
-}
+}}
 
-function fyLabel(year) {
+function fyLabel(year) {{
   return year === null
     ? 'Unknown FY'
     : 'FY' + year + '–' + String((year + 1) % 100).padStart(2, '0');
-}
+}}
 
-function contractStatus(r) {
+function contractStatus(r) {{
   if (!r.start_date_iso || !r.end_date_iso ||
       r.start_date_iso > r.end_date_iso) return 'Unknown Dates';
   if (r.start_date_iso > AS_AT_DATE) return 'Upcoming contracts';
   if (r.end_date_iso < AS_AT_DATE) return 'Completed contracts';
   return 'Active contracts';
-}
+}}
 
-function overlapsFY(r, year) {
+function overlapsFY(r, year) {{
   if (year === 'all') return true;
   if (!r.start_date_iso || !r.end_date_iso ||
       r.start_date_iso > r.end_date_iso) return false;
@@ -380,25 +380,25 @@ function overlapsFY(r, year) {
   const fyEnd = (y + 1) + '-06-30';
 
   return r.start_date_iso <= fyEnd && r.end_date_iso >= fyStart;
-}
+}}
 
-function populateFYFilter() {
+function populateFYFilter() {{
   const select = document.getElementById('fyFilter');
   const years = new Set();
 
-  DATA.records.forEach(r => {
+  DATA.records.forEach(r => {{
     const start = fyFromDate(r.start_date_iso);
     const end = fyFromDate(r.end_date_iso);
     if (start === null || end === null || end < start) return;
     for (let y = start; y <= end; y++) years.add(y);
-  });
+  }});
 
   select.innerHTML =
     '<option value="all">All financial years</option>' +
     [...years].sort((a,b) => b-a)
-      .map(y => `<option value="${y}">${fyLabel(y)}</option>`)
+      .map(y => `<option value="${{y}}">${{fyLabel(y)}}</option>`)
       .join('');
-}
+}}
 
 function esc(v){{return String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;')}}
 function money(v){{v=Number(v||0);const s=v<0?'-':'';const a=Math.abs(v);if(a>=1e9)return s+'$'+(a/1e9).toFixed(2)+'B';if(a>=1e8)return s+'$'+(a/1e6).toFixed(0)+'M';if(a>=1e7)return s+'$'+(a/1e6).toFixed(1)+'M';if(a>=1e6)return s+'$'+(a/1e6).toFixed(2)+'M';if(a>=1e3)return s+'$'+(a/1e3).toFixed(0)+'K';return s+'$'+a.toFixed(0)}}
