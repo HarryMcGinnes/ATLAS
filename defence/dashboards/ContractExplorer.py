@@ -1605,8 +1605,10 @@ const selectedFys = Array.from(
 
 function updateKpis(rows) {{
   const values = rows.map(r => Number(r.value || 0));
-  const durations = rows.map(r => Number(r.duration_days)).filter(Number.isFinite);
-  const total = values.reduce((a,b) => a+b,0);
+  const durations = rows
+    .filter(r => r.duration_days !== null && r.duration_days !== undefined)
+    .map(r => Number(r.duration_days))
+    .filter(Number.isFinite);  const total = values.reduce((a,b) => a+b,0);
   const largest = rows.slice().sort((a,b) => Number(b.value||0)-Number(a.value||0))[0];
 
   document.getElementById('kpiTam').textContent = money(total);
