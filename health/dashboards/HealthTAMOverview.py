@@ -302,6 +302,41 @@ def summary(df: pd.DataFrame, value_col: str) -> dict:
         "avg_accenture": acc / years,
     }
 
+def validate_health_tam_reconciliation(
+    df: pd.DataFrame,
+    value_col: str,
+) -> None:
+    """Validate Health KPI totals against All Years chart data."""
+
+    full = summary(df, value_col)
+    options = fy_options(df)
+
+    all_years = next(
+        (subset for label, subset in options if label == "All years"),
+        None,
+    )
+
+    if all_years is None:
+        raise RuntimeError("Health TAM: All years option missing")
+
+    actual = summary(all_years, value_col)
+
+    for metric in ["total", "addressable", "accenture"]:
+        expected = float(full[metric])
+        observed = float(actual[metric])
+
+        if abs(expected - observed) > 0.01:
+            raise RuntimeError(
+                f"Health TAM reconciliation failed: {metric}. "
+                f"Expected A${expected:,.2f}, "
+                f"got A${observed:,.2f}"
+            )
+
+    print("\nHEALTH TAM DASHBOARD RECONCILIATION: PASS")
+    print(f"Total procurement: A${full['total']/1e9:,.3f}B")
+    print(f"Addressable TAM: A${full['addressable']/1e9:,.3f}B")
+    print(f"Accenture wins: A${full['accenture']/1e9:,.3f}B")
+
 
 def build_payloads(df: pd.DataFrame, value_col: str) -> dict:
     donut_sets, service_sets, supplier_sets = [], [], []
@@ -503,6 +538,8 @@ def main() -> None:
     value_col = VALUE_COL if args.value_mode == "total" else ANNUALISED_VALUE_COL
     if value_col not in df.columns:
         raise SystemExit(f"Missing value column: {value_col}")
+            # REQUIRED: Validate Health TAM headline totals.
+    validate_health_tam_reconciliation(df, value_col)
 
     audit_cols = [c for c in [CN_ID_COL,AGENCY_COL,FY_COL,DESCRIPTION_COL,CATEGORY_TYPE_COL,CATEGORY_COL,SUPPLIER_COL,SUPPLIER_ABN_COL,"supplier_group",VALUE_COL,"is_addressable","addressability","addressability_reason","Service Offering"] if c in df.columns]
     df[audit_cols].sort_values(VALUE_COL,ascending=False).to_csv(outdir/"health_tam_classification_audit.csv",index=False)
