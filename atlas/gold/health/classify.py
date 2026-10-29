@@ -61,8 +61,23 @@ def main():
 
     # Health Silver already handles agency scope and suppliers.
     # Reuse the original TAMBI addressability and SO logic.
+    family_cols = {
+        "cn_family_start_date",
+        "cn_family_end_date",
+        "cn_family_date_status",
+    }
+
+    print(
+        "CN-family fields missing BEFORE classification:",
+        sorted(family_cols - set(df.columns)),
+    )
+
     df = apply_classifier(df)
 
+    print(
+        "CN-family fields missing AFTER classification:",
+        sorted(family_cols - set(df.columns)),
+    )
     # Validate population and financial totals.
     if len(df) != original_rows:
         raise RuntimeError("Health Gold changed contract count")
