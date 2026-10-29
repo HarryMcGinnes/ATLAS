@@ -556,8 +556,18 @@ function render() {{
   rows.forEach(r => {{
     let group;
 
+
     if (mode === 'status') {{
-      group = contractStatus(r);
+      const status = contractStatus(r);
+
+      if (status === 'Completed contracts') {{
+        const signedFY = fyFromDate(r.start_date_iso);
+        group = signedFY === null
+          ? 'Unknown Dates'
+          : fyLabel(signedFY);
+      }} else {{
+        group = status;
+      }}
     }} else {{
       const iso = mode === 'start'
         ? r.start_date_iso
@@ -565,27 +575,34 @@ function render() {{
       group = fyLabel(fyFromDate(iso));
     }}
 
+
     if (!groups.has(group)) groups.set(group, []);
     groups.get(group).push(r);
   }});
 
   let keys = [...groups.keys()];
 
+
   if (mode === 'status') {{
-    const order = [
-      'Active contracts',
-      'Upcoming contracts',
-      'Completed contracts',
-      'Unknown Dates'
-    ];
-    keys.sort((a,b) => order.indexOf(a) - order.indexOf(b));
-  }} else {{
     keys.sort((a,b) => {{
-      if (a === 'Unknown FY') return 1;
-      if (b === 'Unknown FY') return -1;
-      return b.localeCompare(a);
+      const priority = key => {{
+        if (key === 'Active contracts') return 0;
+        if (key === 'Upcoming contracts') return 1;
+        if (key === 'Unknown Dates') return 3;
+        return 2;
+      }};
+
+      const pa = priority(a);
+      const pb = priority(b);
+
+      if (pa !== pb) return pa - pb;
+
+      // Completed contract FY groups: newest first.
+      if (pa === 2) return b.localeCompare(a);
+
+      return a.localeCompare(b);
     }});
-  }}
+}}
 
   const sections = [];
 
