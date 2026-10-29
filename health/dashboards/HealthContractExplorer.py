@@ -126,15 +126,15 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
             "Rebuild master_output/health_portfolio_contracts.parquet with build_health_filter_v2.py first."
         )
 
-    # TAM-only dashboard: non-addressable Health procurement never enters the payload,
-    # KPI cards, lifecycle panels, filters or contract tables.
-    addressable_mask = parse_bool_series(df["is_addressable"])
+    # Preserve the complete Health market.
+    # The dashboard market switch controls addressability.
     df = df.copy()
-    df["is_addressable"] = addressable_mask
+    df["is_addressable"] = parse_bool_series(
+        df["is_addressable"]
+    )
 
-    # Trust canonical Health addressability; no dashboard-level reclassification.
     if df.empty:
-        raise SystemExit("No addressable Health contracts were found in the input dataset.")
+        raise SystemExit("No Health contracts found in the input dataset.")
 
     if SUPPLIER_GROUP_COL not in df.columns:
         if "supplier_display" in df.columns:
@@ -382,21 +382,37 @@ function overlapsFY(r, year) {{
   return r.start_date_iso <= fyEnd && r.end_date_iso >= fyStart;
 }}
 
+
 function populateFYFilter() {{
   const select = document.getElementById('fyFilter');
   const years = new Set();
 
+  // Only populate FY options within the supported reporting window.
+  // All financial years still includes every contract.
+  const MIN_FY = 2015;
+  const MAX_FY = 2026;
+
   DATA.records.forEach(r => {{
     const start = fyFromDate(r.start_date_iso);
     const end = fyFromDate(r.end_date_iso);
+
     if (start === null || end === null || end < start) return;
-    for (let y = start; y <= end; y++) years.add(y);
+
+    const first = Math.max(start, MIN_FY);
+    const last = Math.min(end, MAX_FY);
+
+    for (let y = first; y <= last; y++) {{
+      years.add(y);
+    }}
   }});
 
   select.innerHTML =
     '<option value="all">All financial years</option>' +
-    [...years].sort((a,b) => b-a)
-      .map(y => `<option value="${{y}}">${{fyLabel(y)}}</option>`)
+    [...years]
+      .sort((a, b) => b - a)
+      .map(y =>
+        `<option value="${{y}}">${{fyLabel(y)}}</option>`
+      )
       .join('');
 }}
 
