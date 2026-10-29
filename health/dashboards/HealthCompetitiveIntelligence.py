@@ -274,10 +274,15 @@ def build_model(df: pd.DataFrame, top_n_suppliers: int, as_at: pd.Timestamp) -> 
 
     # Active contracts for the first selected supplier's timeline. Unknown end dates
     # are not treated as active because the timeline needs a bounded interval.
+    # Select the latest CN amendment for timeline display only.
     timeline_source = _latest_contract_revisions(df)
+
+    # Use dates from the same DataFrame throughout.
     active = timeline_source[
-        timeline_source["_start"].notna() & df["_end"].notna() &
-        (df["_start"] <= as_at) & (df["_end"] >= as_at)
+        timeline_source["_start"].notna()
+        & timeline_source["_end"].notna()
+        & (timeline_source["_start"] <= as_at)
+        & (timeline_source["_end"] >= as_at)
     ].copy()
     active = active[active[SUPPLIER_GROUP_COL].isin(supplier_options)].copy()
     active["_start_display"] = active["_start"].dt.strftime("%Y-%m-%d")
@@ -486,8 +491,24 @@ function colour(name){{return SUPPLIER_COLOURS[name]||'#5B6B7A'}}
 function parseDate(v){{if(!v)return null;const d=new Date(v+'T00:00:00');return Number.isNaN(d.getTime())?null:d}}
 function dateLabel(v){{const d=parseDate(v);return d?d.toLocaleDateString('en-AU',{{day:'2-digit',month:'short',year:'numeric'}}):''}}
 
-function availableYears(){{return Array.from(new Map(YEARLY.filter(r=>r._fy_start!=null).map(r=>[String(r['Financial Year']),Number(r._fy_start)])).entries()).sort((a,b)=>a[1]-b[1]).map(x=>x[0])}}
-function buildPeriods(){{const y=availableYears();const first=y.length?String(y[0]).match(/(?:19|20)\\d{{2}}/):null;const last=y.length?String(y[y.length-1]).match(/(?:19|20)\\d{{2}}/g):null;const label=first&&last?'All FY ('+first[0]+'-'+last[last.length-1]+')':'All FY';const p=[{{key:'all',label:label,years:y}}];if(y.length>=5)p.push({{key:'last5',label:'Last 5 FY',years:y.slice(-5)}});if(y.length>=3)p.push({{key:'last3',label:'Last 3 FY',years:y.slice(-3)}});window.PERIODS=p;document.getElementById('periodSelect').innerHTML=p.map((r,i)=>'<option value="'+i+'">'+r.label+'</option>').join('')}}
+function availableYears(){{
+  return Array.from(
+    new Map(
+      YEARLY
+        .filter(r =>
+          r._fy_start != null &&
+          Number(r._fy_start) >= 2015 &&
+          Number(r._fy_start) <= 2026
+        )
+        .map(r => [
+          String(r['Financial Year']),
+          Number(r._fy_start)
+        ])
+    ).entries()
+  )
+  .sort((a,b) => a[1] - b[1])
+  .map(x => x[0]);
+}}function buildPeriods(){{const y=availableYears();const first=y.length?String(y[0]).match(/(?:19|20)\\d{{2}}/):null;const last=y.length?String(y[y.length-1]).match(/(?:19|20)\\d{{2}}/g):null;const label=first&&last?'All FY ('+first[0]+'-'+last[last.length-1]+')':'All FY';const p=[{{key:'all',label:label,years:y}}];if(y.length>=5)p.push({{key:'last5',label:'Last 5 FY',years:y.slice(-5)}});if(y.length>=3)p.push({{key:'last3',label:'Last 3 FY',years:y.slice(-3)}});window.PERIODS=p;document.getElementById('periodSelect').innerHTML=p.map((r,i)=>'<option value="'+i+'">'+r.label+'</option>').join('')}}
 function period(){{return window.PERIODS[Number(document.getElementById('periodSelect').value||0)]||window.PERIODS[0]}}
 function periodRows(){{const p=period();const ys=new Set(p.years);return p.key==='all'?YEARLY:YEARLY.filter(r=>ys.has(String(r['Financial Year']||'')))}}
 function periodAgencyRows(){{const p=period();const ys=new Set(p.years);return p.key==='all'?AGENCY_YEARLY:AGENCY_YEARLY.filter(r=>ys.has(String(r['Financial Year']||'')))}}
