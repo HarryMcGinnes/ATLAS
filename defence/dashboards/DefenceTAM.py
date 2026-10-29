@@ -836,6 +836,54 @@ def _donut_financial_year_options(df: pd.DataFrame) -> list[tuple[str, pd.DataFr
     return options
 
 
+def validate_defence_tam_reconciliation(
+    df: pd.DataFrame,
+    value_col: str,
+) -> None:
+    """Ensure All years reconciles to the complete Defence dataset."""
+
+    full = summarise(df, value_col)
+
+    donut_options = _donut_financial_year_options(df)
+    annual_options = _annual_financial_year_options(df)
+
+    for name, options in [
+        ("Donut", donut_options),
+        ("Annual", annual_options),
+    ]:
+        all_years = next(
+            (subset for label, subset in options if label == "All years"),
+            None,
+        )
+
+        if all_years is None:
+            raise RuntimeError(f"{name}: All years option missing")
+
+        actual = summarise(all_years, value_col)
+
+        for metric in [
+            "total",
+            "addressable",
+            "accenture_addressable",
+        ]:
+            expected_value = float(full[metric])
+            actual_value = float(actual[metric])
+
+            if abs(expected_value - actual_value) > 0.01:
+                raise RuntimeError(
+                    f"{name} reconciliation failed for {metric}: "
+                    f"expected A${expected_value:,.2f}, "
+                    f"got A${actual_value:,.2f}"
+                )
+
+    print("\nDEFENCE TAM DASHBOARD RECONCILIATION: PASS")
+    print(f"Total procurement: A${full['total']/1e9:,.3f}B")
+    print(f"Addressable TAM: A${full['addressable']/1e9:,.3f}B")
+    print(
+        f"Accenture wins: "
+        f"A${full['accenture_addressable']/1e9:,.3f}B"
+    )
+
 
 def chart_donut_overview_interactive(df: pd.DataFrame, value_col: str) -> str:
     """Render the TAM progression as one wide Plotly chart.
@@ -1281,38 +1329,54 @@ def _annual_market_dataset_for_chart(df: pd.DataFrame, value_col: str) -> dict:
     return {"rows": rows}
 
 
-def _annual_financial_year_options(df: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
-    """Only expose the three stakeholder-requested FY filters for the annual chart."""
+
+def _annual_financial_year_options(
+    df: pd.DataFrame,
+) -> list[tuple[str, pd.DataFrame]]:
+    """All years includes the full dataset; recent FYs use valid labels."""
+
     if FIN_YEAR_COL not in df.columns:
         return [("All years", df)]
 
     tmp = df.copy()
-    tmp["_fy_start_year"] = tmp[FIN_YEAR_COL].map(_financial_year_start_year)
-    # Use real historical FYs only; malformed/future dates must not drive slicers.
-    tmp = tmp.loc[tmp["_fy_start_year"].between(2015, 2026)].copy()
+    tmp["_fy_start_year"] = tmp[FIN_YEAR_COL].map(
+        _financial_year_start_year
+    )
+
+    # Only restrict the Last 5 / Last 3 FY selections.
+    valid_fys = tmp.loc[
+        tmp["_fy_start_year"].between(2015, 2026)
+    ].copy()
+
     fy = (
-        tmp[[FIN_YEAR_COL, "_fy_start_year"]]
+        valid_fys[[FIN_YEAR_COL, "_fy_start_year"]]
         .dropna()
         .drop_duplicates()
         .sort_values("_fy_start_year")
     )
-    fy_labels = fy[FIN_YEAR_COL].astype(str).tolist()
-    if not fy_labels:
-        return [("All years", df)]
 
-    options: list[tuple[str, pd.DataFrame]] = [("All years", tmp.drop(columns=["_fy_start_year"]))]
+    fy_labels = fy[FIN_YEAR_COL].astype(str).tolist()
+
+    options = [("All years", df)]
+
     if len(fy_labels) >= 5:
         last5 = fy_labels[-5:]
         options.append((
             f"Last 5 FY ({last5[0]} to {last5[-1]})",
-            tmp[tmp[FIN_YEAR_COL].astype(str).isin(last5)].drop(columns=["_fy_start_year"]),
+            valid_fys[
+                valid_fys[FIN_YEAR_COL].astype(str).isin(last5)
+            ].drop(columns=["_fy_start_year"]),
         ))
+
     if len(fy_labels) >= 3:
         last3 = fy_labels[-3:]
         options.append((
             f"Last 3 FY ({last3[0]} to {last3[-1]})",
-            tmp[tmp[FIN_YEAR_COL].astype(str).isin(last3)].drop(columns=["_fy_start_year"]),
+            valid_fys[
+                valid_fys[FIN_YEAR_COL].astype(str).isin(last3)
+            ].drop(columns=["_fy_start_year"]),
         ))
+
     return options
 
 
@@ -3558,6 +3622,10 @@ def main() -> None:
     df_all = clean_value_columns(df_all, [VALUE_COL, ANNUALISED_VALUE_COL])
     df = filter_defence_scope(df_all, include_all_agencies=args.include_all_agencies)
     df = filter_financial_year_range(df, args.fy_start, args.fy_end)
+
+    # REQUIRED: Validate All Years against the headline KPI totals.
+    validate_defence_tam_reconciliation(df, value_col)
+
     summary = summarise(df, value_col)
 
     classified_path = output_dir / "dashboard_input_snapshot.csv"
