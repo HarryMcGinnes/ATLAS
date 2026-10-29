@@ -129,7 +129,25 @@ jobs:
       # ============================================================
       # VERIFY DATA
       # ============================================================
+      - name: Check Health contract family columns
+        run: |
+          python - <<'PY'
+          import pandas as pd
 
+          path = "health/data/processed/master_health_contracts.parquet"
+          df = pd.read_parquet(path)
+
+          required = {
+              "cn_family_start_date",
+              "cn_family_end_date",
+              "cn_family_date_status",
+          }
+
+          print("Health dashboard master:", path)
+          print("Rows:", len(df))
+          print("Missing family columns:", sorted(required - set(df.columns)))
+
+          PY
       - name: Verify dashboard masters
         run: |
           python - <<'PY'
