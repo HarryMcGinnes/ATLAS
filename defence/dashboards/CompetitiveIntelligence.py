@@ -715,8 +715,57 @@ def add_current_contract_value_columns(df: pd.DataFrame, base_value_col: str, as
             "Expected something like 'Contract End Date' or 'End Date'."
         )
 
-    start = pd.to_datetime(out[start_col], errors="coerce", dayfirst=True, utc=True) if start_col else pd.NaT
-    end = pd.to_datetime(out[end_col], errors="coerce", dayfirst=True, utc=True)
+
+    start = (
+        pd.to_datetime(
+            out[start_col], errors="coerce", dayfirst=True, utc=True
+        )
+        if start_col
+        else pd.Series(pd.NaT, index=out.index, dtype="datetime64[ns, UTC]")
+    )
+
+    end = pd.to_datetime(
+        out[end_col], errors="coerce", dayfirst=True, utc=True
+    )
+
+    # Use validated CN-family dates for amended contracts.
+    family_cols = {
+        "cn_family_start_date",
+        "cn_family_end_date",
+        "cn_family_date_status",
+    }
+
+    if family_cols.issubset(out.columns):
+        valid_family = (
+            out["cn_family_date_status"]
+            .astype("string")
+            .eq("valid")
+            .fillna(False)
+        )
+
+        family_start = pd.to_datetime(
+            out["cn_family_start_date"],
+            errors="coerce",
+            dayfirst=True,
+            utc=True,
+        )
+
+        family_end = pd.to_datetime(
+            out["cn_family_end_date"],
+            errors="coerce",
+            dayfirst=True,
+            utc=True,
+        )
+
+        valid_family &= (
+            family_start.notna()
+            & family_end.notna()
+            & (family_end >= family_start)
+        )
+
+        start = start.where(~valid_family, family_start)
+        end = end.where(~valid_family, family_end)
+
 
     if start_col:
         active_start = start.isna() | (start <= as_at)
@@ -726,8 +775,8 @@ def add_current_contract_value_columns(df: pd.DataFrame, base_value_col: str, as
     active = active_start & active_end
     out = out.loc[active].copy()
 
-    start = pd.to_datetime(out[start_col], errors="coerce", dayfirst=True, utc=True) if start_col else pd.Series(pd.NaT, index=out.index, dtype="datetime64[ns, UTC]")
-    end = pd.to_datetime(out[end_col], errors="coerce", dayfirst=True, utc=True)
+    start = start.loc[out.index]
+    end = end.loc[out.index]
     base = pd.to_numeric(out[base_value_col], errors="coerce").fillna(0).clip(lower=0)
 
     # Full value of the currently-active contract.
