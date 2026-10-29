@@ -173,12 +173,65 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
     out["_total_value"] = pd.to_numeric(out[VALUE_COL], errors="coerce").fillna(0)
     out["_fy_start"] = out[FY_COL].map(financial_year_start)
 
+
     start_col = first_existing(out, START_DATE_CANDIDATES)
     end_col = first_existing(out, END_DATE_CANDIDATES)
-    out["_start"] = pd.to_datetime(out[start_col], errors="coerce", dayfirst=True) if start_col else pd.Series(pd.NaT, index=out.index)
-    out["_end"] = pd.to_datetime(out[end_col], errors="coerce", dayfirst=True) if end_col else pd.Series(pd.NaT, index=out.index)
+
+    out["_start"] = (
+        pd.to_datetime(out[start_col], errors="coerce", dayfirst=True)
+        if start_col
+        else pd.Series(pd.NaT, index=out.index)
+    )
+
+    out["_end"] = (
+        pd.to_datetime(out[end_col], errors="coerce", dayfirst=True)
+        if end_col
+        else pd.Series(pd.NaT, index=out.index)
+    )
+
+    # Use validated original-to-latest amendment family dates.
+    family_cols = {
+        "cn_family_start_date",
+        "cn_family_end_date",
+        "cn_family_date_status",
+    }
+
+    if family_cols.issubset(out.columns):
+        valid_family = (
+            out["cn_family_date_status"]
+            .astype("string")
+            .eq("valid")
+            .fillna(False)
+        )
+
+        family_start = pd.to_datetime(
+            out["cn_family_start_date"],
+            errors="coerce",
+            dayfirst=True,
+        )
+
+        family_end = pd.to_datetime(
+            out["cn_family_end_date"],
+            errors="coerce",
+            dayfirst=True,
+        )
+
+        valid_family &= (
+            family_start.notna()
+            & family_end.notna()
+            & (family_end >= family_start)
+        )
+
+        out["_start"] = out["_start"].where(
+            ~valid_family, family_start
+        )
+        out["_end"] = out["_end"].where(
+            ~valid_family, family_end
+        )
+
     duration = (out["_end"] - out["_start"]).dt.days
     out["_duration_days"] = duration.where(duration >= 0)
+
 
     if out.empty:
         raise SystemExit("No Health contracts were found.")
