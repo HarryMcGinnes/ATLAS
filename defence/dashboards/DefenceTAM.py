@@ -789,42 +789,52 @@ def add_billion_col(df: pd.DataFrame, value_col: str, out_col: str = "value_b") 
 
 
 
+
 def _donut_financial_year_options(df: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
-    """FY slicers for the overview donuts: All years, Last 5 FY, Last 3 FY."""
+    """All years includes every contract; recent FYs use valid historical labels."""
     if FIN_YEAR_COL not in df.columns:
         return [("All years", df)]
 
     tmp = df.copy()
-    tmp["_fy_start_year"] = tmp[FIN_YEAR_COL].map(_financial_year_start_year)
-    # Use real historical FYs only; malformed/future dates must not drive slicers.
-    tmp = tmp.loc[tmp["_fy_start_year"].between(2015, 2026)].copy()
+    tmp["_fy_start_year"] = tmp[FIN_YEAR_COL].map(
+        _financial_year_start_year
+    )
+
+    valid_fys = tmp.loc[
+        tmp["_fy_start_year"].between(2015, 2026)
+    ].copy()
+
     fy = (
-        tmp[[FIN_YEAR_COL, "_fy_start_year"]]
+        valid_fys[[FIN_YEAR_COL, "_fy_start_year"]]
         .dropna()
         .drop_duplicates()
         .sort_values("_fy_start_year")
     )
-    fy_labels = fy[FIN_YEAR_COL].astype(str).tolist()
-    if not fy_labels:
-        return [("All years", df)]
 
-    options: list[tuple[str, pd.DataFrame]] = [("All years", tmp.drop(columns=["_fy_start_year"]))]
+    fy_labels = fy[FIN_YEAR_COL].astype(str).tolist()
+
+    options = [("All years", df)]
 
     if len(fy_labels) >= 5:
         last5 = fy_labels[-5:]
         options.append((
             f"Last 5 FY ({last5[0]} to {last5[-1]})",
-            tmp[tmp[FIN_YEAR_COL].astype(str).isin(last5)].drop(columns=["_fy_start_year"]),
+            valid_fys[
+                valid_fys[FIN_YEAR_COL].astype(str).isin(last5)
+            ].drop(columns=["_fy_start_year"]),
         ))
 
     if len(fy_labels) >= 3:
         last3 = fy_labels[-3:]
         options.append((
             f"Last 3 FY ({last3[0]} to {last3[-1]})",
-            tmp[tmp[FIN_YEAR_COL].astype(str).isin(last3)].drop(columns=["_fy_start_year"]),
+            valid_fys[
+                valid_fys[FIN_YEAR_COL].astype(str).isin(last3)
+            ].drop(columns=["_fy_start_year"]),
         ))
 
     return options
+
 
 
 def chart_donut_overview_interactive(df: pd.DataFrame, value_col: str) -> str:
