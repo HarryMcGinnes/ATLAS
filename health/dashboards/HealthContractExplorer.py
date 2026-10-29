@@ -453,8 +453,7 @@ function updateKpis(rows) {{
     else console.warn('Missing KPI element:', id);
   }};
 
-  setText('kpiTam', money(total));
-  setText('kpiContracts', number(rows.length));
+  setText('kpiTotal', money(total));  setText('kpiContracts', number(rows.length));
   setText('kpiAvgValue',
     rows.length ? money(total / rows.length) : 'n/a');
   setText('kpiMedianValue',
