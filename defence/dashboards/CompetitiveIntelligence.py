@@ -2123,13 +2123,26 @@ function updateSupplierColours(supplier, compare) {{
     if (el) el.style.color = '#111827';
   }});
 }}
+
 function availableFinancialYears() {{
   return Array.from(new Map(
     YEARLY
-      .filter(r => r._fy_start_year !== null && r._fy_start_year !== undefined)
-      .map(r => [String(r['Financial Year']), Number(r._fy_start_year)])
-  ).entries()).sort((a, b) => a[1] - b[1]).map(x => x[0]);
+      .filter(r =>
+        r._fy_start_year !== null &&
+        r._fy_start_year !== undefined &&
+        Number.isFinite(Number(r._fy_start_year)) &&
+        Number(r._fy_start_year) >= 2015 &&
+        Number(r._fy_start_year) <= 2026
+      )
+      .map(r => [
+        String(r['Financial Year']),
+        Number(r._fy_start_year)
+      ])
+  ).entries())
+    .sort((a, b) => a[1] - b[1])
+    .map(x => x[0]);
 }}
+
 
 function buildGlobalPeriodOptions() {{
   const years = availableFinancialYears();
