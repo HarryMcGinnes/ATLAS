@@ -1098,9 +1098,14 @@ function overlapsFY(r, year) {{
          r.end_date_iso >= fyStart;
 }}
 
+
 function populateFYFilter() {{
   const select = document.getElementById('fyFilter');
   const years = new Set();
+
+  // Restrict dropdown options, not the underlying contracts.
+  const MIN_FY = 2015;
+  const MAX_FY = 2026;
 
   DATA.records.forEach(r => {{
     const start = fyFromDate(r.start_date_iso);
@@ -1112,8 +1117,12 @@ function populateFYFilter() {{
       end < start
     ) return;
 
-    for (let y = start; y <= end; y++)
+    const first = Math.max(start, MIN_FY);
+    const last = Math.min(end, MAX_FY);
+
+    for (let y = first; y <= last; y++) {{
       years.add(y);
+    }}
   }});
 
   select.innerHTML =
@@ -1125,6 +1134,7 @@ function populateFYFilter() {{
       )
       .join('');
 }}
+
 
 function esc(value) {{
   return String(value ?? '')
