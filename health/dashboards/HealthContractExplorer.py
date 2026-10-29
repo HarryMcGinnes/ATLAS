@@ -319,6 +319,36 @@ select,input{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;
 .year-toggle{{width:100%;border:0;background:#fff;padding:15px 17px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;font-size:15px;font-weight:700;color:var(--ink)}} .year-meta{{color:var(--muted);font-size:12px;font-weight:500}}
 .chev{{display:inline-block;transition:transform .18s ease;margin-right:8px}} .year-section.open .chev{{transform:rotate(90deg)}} .year-body{{display:none;border-top:1px solid var(--line)}} .year-section.open .year-body{{display:block}}
 .table-wrap{{overflow:auto;max-height:620px}} table{{width:100%;border-collapse:collapse;min-width:1250px;font-size:12px}} thead th{{position:sticky;top:0;z-index:2;background:#F9FAFB;color:#475467;text-align:left;padding:10px 9px;border-bottom:1px solid var(--line);white-space:nowrap}} tbody td{{padding:10px 9px;border-bottom:1px solid #F0F2F5;vertical-align:top}} tbody tr:hover{{background:#FCFCFD}}
+
+.pagination{{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:12px;
+  padding:12px 16px;
+  border-top:1px solid #E4E7EC;
+  font-size:12px;
+  color:#667085;
+}}
+.pagination > div{{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}}
+.pagination button{{
+  border:1px solid #D0D5DD;
+  border-radius:7px;
+  background:white;
+  padding:7px 12px;
+  font-size:12px;
+  cursor:pointer;
+}}
+.pagination button:disabled{{
+  opacity:.4;
+  cursor:not-allowed;
+}}
+
 .money{{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}} .nowrap{{white-space:nowrap}} .desc{{width:420px;min-width:340px;max-width:480px;line-height:1.4;white-space:normal;overflow-wrap:anywhere}} .supplier-accent{{color:#6B00B6;font-weight:700}}
 .badge{{display:inline-block;border-radius:999px;padding:3px 7px;font-size:11px;font-weight:700;white-space:nowrap}} .badge-large{{background:#ECFDF3;color:var(--green)}} .badge-long{{background:#FFFAEB;color:var(--amber)}} .empty{{background:#fff;border:1px dashed #D0D5DD;border-radius:14px;padding:36px;text-align:center;color:var(--muted);margin-top:16px}} .method{{margin-top:16px;color:var(--muted);font-size:12px;line-height:1.5}}
 @media(max-width:1200px){{.kpis{{grid-template-columns:repeat(3,1fr)}}.toolbar{{grid-template-columns:repeat(2,minmax(0,1fr))}}.insight-grid{{grid-template-columns:1fr}}}} @media(max-width:650px){{.wrap{{padding:15px}}.kpis{{grid-template-columns:1fr 1fr}}.toolbar{{grid-template-columns:1fr}}}}
@@ -525,9 +555,89 @@ function updateKpis(rows) {{
 
 
 function rowHtml(r){{const large=Number(r.value||0)>=20000000?'<span class="badge badge-large">Large</span>':'',long=Number(r.duration_days||0)>=1826?'<span class="badge badge-long">5+ years</span>':'',sc=String(r.supplier||'').toLowerCase().includes('accenture')?'supplier-accent':'';return`<tr><td class="nowrap">${{esc(r.contract_id)}}</td><td class="desc">${{esc(r.description)}}</td><td>${{esc(r.agency)}}</td><td>${{esc(r.division)}}</td><td class="${{sc}}">${{esc(r.supplier)}}</td><td>${{esc(r.capability)}}</td><td class="money">${{money(r.value)}} ${{large}}</td><td class="nowrap">${{esc(r.start_date)}}</td><td class="nowrap">${{esc(r.end_date)}}</td><td>${{esc(r.duration_label)}} ${{long}}</td><td>${{esc(r.category)}}</td><td class="nowrap">${{esc(r.extensions)}}</td></tr>`}}
-function tableHtml(rows){{return`<div class="table-wrap"><table><thead><tr><th>Contract ID</th><th>Description</th><th>Agency</th><th>Division</th><th>Supplier</th><th>Service Offering</th><th class="money">Contract value</th><th>Start date</th><th>End date</th><th>Contract length</th><th>Category</th><th>Extensions</th></tr></thead><tbody>${{rows.map(rowHtml).join('')}}</tbody></table></div>`}}
+
+const PAGE_SIZE = 100;
+const PAGE_STATE = new Map();
+
+function tableHtml(rows, page = 0) {{
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const currentPage = Math.max(0, Math.min(page, totalPages - 1));
+  const start = currentPage * PAGE_SIZE;
+  const visibleRows = rows.slice(start, start + PAGE_SIZE);
+
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Contract ID</th>
+            <th>Description</th>
+            <th>Agency</th>
+            <th>Division</th>
+            <th>Supplier</th>
+            <th>Service Offering</th>
+            <th class="money">Contract value</th>
+            <th>Start date</th>
+            <th>End date</th>
+            <th>Contract length</th>
+            <th>Category</th>
+            <th>Extensions</th>
+          </tr>
+        </thead>
+        <tbody>${{visibleRows.map(rowHtml).join('')}}</tbody>
+      </table>
+    </div>
+    <div class="pagination">
+      <span>
+        Showing ${{start + 1}}–${{Math.min(start + PAGE_SIZE, rows.length)}}
+        of ${{number(rows.length)}} contracts
+      </span>
+      <div>
+        <button type="button" data-page-action="prev"
+          ${{currentPage === 0 ? 'disabled' : ''}}>Previous</button>
+        <span>Page ${{currentPage + 1}} of ${{totalPages}}</span>
+        <button type="button" data-page-action="next"
+          ${{currentPage >= totalPages - 1 ? 'disabled' : ''}}>Next</button>
+      </div>
+    </div>`;
+}}
 function bracket(id,title,rows,label='contracts'){{const spend=rows.reduce((s,r)=>s+Number(r.value||0),0);return`<section class="year-section" id="${{id}}"><button class="year-toggle" type="button" onclick="toggleYear('${{id}}')"><span><span class="chev">▶</span>${{esc(title)}}</span><span class="year-meta">${{number(rows.length)}} ${{label}} · ${{money(spend)}}</span></button><div class="year-body" data-loaded="false"></div></section>`}}
-function toggleYear(id){{const s=document.getElementById(id),b=s.querySelector('.year-body'),open=!s.classList.contains('open');if(open&&b.dataset.loaded!=='true'){{b.innerHTML=tableHtml(YEAR_ROWS.get(id)||[]);b.dataset.loaded='true'}}s.classList.toggle('open')}}
+
+function renderYearPage(id) {{
+  const section = document.getElementById(id);
+  const body = section.querySelector('.year-body');
+  const rows = YEAR_ROWS.get(id) || [];
+  const page = PAGE_STATE.get(id) || 0;
+
+  body.innerHTML = tableHtml(rows, page);
+  body.dataset.loaded = 'true';
+
+  body.querySelectorAll('[data-page-action]').forEach(button => {{
+    button.addEventListener('click', () => {{
+      const direction = button.dataset.pageAction === 'next' ? 1 : -1;
+      const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+      const nextPage = Math.max(
+        0,
+        Math.min((PAGE_STATE.get(id) || 0) + direction, totalPages - 1)
+      );
+
+      PAGE_STATE.set(id, nextPage);
+      renderYearPage(id);
+    }});
+  }});
+}}
+
+function toggleYear(id) {{
+  const section = document.getElementById(id);
+  const opening = !section.classList.contains('open');
+
+  if (opening && section.querySelector('.year-body').dataset.loaded !== 'true') {{
+    PAGE_STATE.set(id, 0);
+    renderYearPage(id);
+  }}
+
+  section.classList.toggle('open');
+}}
 
 function render() {{
   const selectedFY = document.getElementById('fyFilter').value;
@@ -544,6 +654,7 @@ function render() {{
 
   const container = document.getElementById('yearContainer');
   YEAR_ROWS.clear();
+  PAGE_STATE.clear();
 
   if (!rows.length) {{
     container.innerHTML =
