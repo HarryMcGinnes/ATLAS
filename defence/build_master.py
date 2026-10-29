@@ -532,7 +532,9 @@ def load_domain_lookup(path: Path) -> dict[tuple[str, str], str]:
     if not {"division", "branch", "domain"}.issubset(lookup.columns):
         raise RuntimeError("Domain lookup must contain Division, Branch and Domain columns.")
     def key(v: object) -> str:
-        return re.sub(r"[^A-Z0-9]+", "", str(v or "").upper())
+        if pd.isna(v):
+            return ""
+        return re.sub(r"[^A-Z0-9]+", "", str(v).upper())
     result = {}
     for d, b, domain in lookup[["division", "branch", "domain"]].itertuples(index=False, name=None):
         result[(key(d), key(b))] = str(domain).strip() or "Unmapped"
