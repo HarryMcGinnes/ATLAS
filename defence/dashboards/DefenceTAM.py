@@ -2584,8 +2584,7 @@ def _financial_year_options(df: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
     if not fy_labels:
         return [("All years", df)]
 
-    options: list[tuple[str, pd.DataFrame]] = [("All years", tmp.drop(columns=["_fy_start_year"]))]
-
+    options: list[tuple[str, pd.DataFrame]] = [("All years", df)]
     if len(fy_labels) >= 5:
         last5 = fy_labels[-5:]
         options.append((f"Last 5 FY ({last5[0]} to {last5[-1]})", tmp[tmp[FIN_YEAR_COL].astype(str).isin(last5)].drop(columns=["_fy_start_year"])))
