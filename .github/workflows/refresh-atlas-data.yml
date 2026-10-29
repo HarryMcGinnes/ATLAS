@@ -672,6 +672,9 @@ jobs:
               "classification_review_required",
               "is_accenture",
               "supplier_group",
+              "cn_family_start_date",
+              "cn_family_end_date",
+              "cn_family_date_status",
           ]
 
           for field in fields:
