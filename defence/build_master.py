@@ -545,7 +545,9 @@ def add_defence_domain(df: pd.DataFrame, lookup_path: Path) -> pd.DataFrame:
     out = df.copy()
     mapping = load_domain_lookup(lookup_path)
     def key(v: object) -> str:
-        return re.sub(r"[^A-Z0-9]+", "", str(v or "").upper())
+        if pd.isna(v):
+            return ""
+        return re.sub(r"[^A-Z0-9]+", "", str(v).upper())
 
     domains = []
     sources = []
