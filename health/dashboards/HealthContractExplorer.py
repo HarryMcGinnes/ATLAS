@@ -434,7 +434,8 @@ function filteredRows(){{const search=document.getElementById('searchInput').val
 function renderContractRows(id,rows,dateLabel){{const el=document.getElementById(id);if(!rows.length){{el.innerHTML='<div class="leader-detail">No matching contracts.</div>';return}}el.innerHTML=rows.map((r,i)=>{{const title=(r.description||r.contract_id||'Contract');const supplier=r.supplier||'Unknown supplier';const agency=r.agency||'Unknown agency';const date=r.end_date||'n/a';return '<div class="leader-row"><div class="leader-rank">'+(i+1)+'</div><div class="leader-name">'+esc(supplier)+'<div class="leader-detail">'+esc(title)+'</div><div class="leader-detail">'+esc(agency)+' · '+dateLabel+' '+esc(date)+'</div></div><div class="leader-value">'+esc(money(r.value))+'</div></div>'}}).join('')}}
 function updateContractInsights(){{const agency=document.getElementById('agencySelect').value;const rows=marketRows().filter(r=>agency===ALL_AGENCIES||r.agency===agency);const today=new Date(AS_AT_DATE+'T00:00:00Z');const in12=new Date(today);in12.setUTCFullYear(in12.getUTCFullYear()+1);const ago12=new Date(today);ago12.setUTCFullYear(ago12.getUTCFullYear()-1);const parse=d=>d?new Date(d+'T00:00:00Z'):null;const active=rows.filter(r=>{{const s=parse(r.start_date_iso),e=parse(r.end_date_iso);return s&&e&&s<=today&&e>=today}}).sort((a,b)=>Number(b.value||0)-Number(a.value||0)).slice(0,5);const ending=rows.filter(r=>{{const s=parse(r.start_date_iso),e=parse(r.end_date_iso);return s&&e&&s<=today&&e>=today&&e<=in12}}).sort((a,b)=>Number(b.value||0)-Number(a.value||0)).slice(0,5);const completed=rows.filter(r=>{{const e=parse(r.end_date_iso);return e&&e<today&&e>=ago12}}).sort((a,b)=>Number(b.value||0)-Number(a.value||0)).slice(0,5);const scopeLabel=agency===ALL_AGENCIES?'all Health agencies':agency;document.getElementById('activeSubtitle').textContent='Highest-value addressable contracts active as at today across '+scopeLabel+'.';document.getElementById('endingSubtitle').textContent='Highest-value addressable active contracts ending within the next 12 months across '+scopeLabel+'.';document.getElementById('completedSubtitle').textContent='Highest-value addressable contracts completed within the past 12 months across '+scopeLabel+'.';renderContractRows('topActiveContracts',active,'Ends');renderContractRows('topEndingSoon',ending,'Ends');renderContractRows('topRecentlyCompleted',completed,'Ended')}}
 
-function updateKpis(rows){{
+
+function updateKpis(rows) {{
   const vals = rows.map(r => Number(r.value || 0));
   const dur = rows
     .filter(r => r.duration_days !== null && r.duration_days !== undefined)
@@ -446,23 +447,30 @@ function updateKpis(rows){{
     (a,b) => Number(b.value || 0) - Number(a.value || 0)
   )[0];
 
-  document.getElementById('kpiTam').textContent = money(total);
-  document.getElementById('kpiContracts').textContent = number(rows.length);
-  document.getElementById('kpiAvgValue').textContent =
-    rows.length ? money(total / rows.length) : 'n/a';
-  document.getElementById('kpiMedianValue').textContent =
-    rows.length ? 'Median: ' + money(median(vals)) : 'Median: n/a';
-  document.getElementById('kpiAvgLength').textContent =
-    dur.length ? duration(dur.reduce((a,b) => a+b, 0) / dur.length) : 'n/a';
-  document.getElementById('kpiMedianLength').textContent =
-    dur.length ? 'Median: ' + duration(median(dur)) : 'Median: n/a';
-  document.getElementById('kpiSuppliers').textContent =
-    number(new Set(rows.map(r => r.supplier)).size);
-  document.getElementById('kpiLargest').textContent =
-    largest ? money(largest.value) : 'n/a';
-  document.getElementById('kpiLargestSub').textContent =
-    largest ? largest.supplier : 'No matching contract';
+  const setText = (id, value) => {{
+    const el = document.getElementById(id);
+    if (el) el.textContent = value;
+    else console.warn('Missing KPI element:', id);
+  }};
+
+  setText('kpiTam', money(total));
+  setText('kpiContracts', number(rows.length));
+  setText('kpiAvgValue',
+    rows.length ? money(total / rows.length) : 'n/a');
+  setText('kpiMedianValue',
+    rows.length ? 'Median: ' + money(median(vals)) : 'Median: n/a');
+  setText('kpiAvgLength',
+    dur.length ? duration(dur.reduce((a,b) => a+b, 0) / dur.length) : 'n/a');
+  setText('kpiMedianLength',
+    dur.length ? 'Median: ' + duration(median(dur)) : 'Median: n/a');
+  setText('kpiSuppliers',
+    number(new Set(rows.map(r => r.supplier)).size));
+  setText('kpiLargest',
+    largest ? money(largest.value) : 'n/a');
+  setText('kpiLargestSub',
+    largest ? largest.supplier : 'No matching contract');
 }}
+
 
 function rowHtml(r){{const large=Number(r.value||0)>=20000000?'<span class="badge badge-large">Large</span>':'',long=Number(r.duration_days||0)>=1826?'<span class="badge badge-long">5+ years</span>':'',sc=String(r.supplier||'').toLowerCase().includes('accenture')?'supplier-accent':'';return`<tr><td class="nowrap">${{esc(r.contract_id)}}</td><td class="desc">${{esc(r.description)}}</td><td>${{esc(r.agency)}}</td><td>${{esc(r.division)}}</td><td class="${{sc}}">${{esc(r.supplier)}}</td><td>${{esc(r.capability)}}</td><td class="money">${{money(r.value)}} ${{large}}</td><td class="nowrap">${{esc(r.start_date)}}</td><td class="nowrap">${{esc(r.end_date)}}</td><td>${{esc(r.duration_label)}} ${{long}}</td><td>${{esc(r.category)}}</td><td class="nowrap">${{esc(r.extensions)}}</td></tr>`}}
 function tableHtml(rows){{return`<div class="table-wrap"><table><thead><tr><th>Contract ID</th><th>Description</th><th>Agency</th><th>Division</th><th>Supplier</th><th>Service Offering</th><th class="money">Contract value</th><th>Start date</th><th>End date</th><th>Contract length</th><th>Category</th><th>Extensions</th></tr></thead><tbody>${{rows.map(rowHtml).join('')}}</tbody></table></div>`}}
