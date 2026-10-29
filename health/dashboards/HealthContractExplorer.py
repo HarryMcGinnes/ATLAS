@@ -195,7 +195,15 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
         "cn_family_end_date",
         "cn_family_date_status",
     }
+    
+    missing_family_cols = family_cols - set(out.columns)
 
+    if missing_family_cols:
+        raise RuntimeError(
+            "Health Contract Explorer missing CN-family fields: "
+            + ", ".join(sorted(missing_family_cols))
+        )
+        
     if family_cols.issubset(out.columns):
         valid_family = (
             out["cn_family_date_status"]
@@ -536,8 +544,8 @@ function updateKpis(rows) {{
     else console.warn('Missing KPI element:', id);
   }};
 
-  setText('kpiTotal', money(total));  setText('kpiContracts', number(rows.length));
-  setText('kpiAvgValue',
+  setText('kpiTotal', money(total));
+  setText('kpiContracts', number(rows.length));  setText('kpiAvgValue',
     rows.length ? money(total / rows.length) : 'n/a');
   setText('kpiMedianValue',
     rows.length ? 'Median: ' + money(median(vals)) : 'Median: n/a');
@@ -642,9 +650,11 @@ function toggleYear(id) {{
 function render() {{
   const selectedFY = document.getElementById('fyFilter').value;
   const mode = document.getElementById('groupMode').value;
-
   const rows = filteredRows().filter(r => overlapsFY(r, selectedFY));
-  updateContractInsights();
+  
+updateContractInsights();
+  const marketLabel = document.getElementById('marketMode').value === 'tam'? 'addressable ': '';
+  
   updateKpis(rows);
 
   document.getElementById('summaryLine').textContent =
