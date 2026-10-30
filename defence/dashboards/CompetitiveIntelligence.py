@@ -1,5 +1,5 @@
 """
-Build a Competitive Positioning dashboard inside Accenture's Defence TAM.
+Build a Competitive Positioning dashboard for Accenture TAM and the All Defence Market.
 
 Supplier-vs-supplier baseline:
 - Accenture is always purple across all charts; comparison suppliers are orange.
@@ -8,14 +8,15 @@ Supplier-vs-supplier baseline:
 Purpose
 -------
 This dashboard answers:
-  "How does Supplier 1 compare with Supplier 2 across Accenture-addressable Defence service offerings?"
+  "How does Supplier 1 compare with Supplier 2 across the selected Defence market scope?"
 
-It uses the same market definition as the Accenture TAM dashboard:
-  1. Load AusTender data or an existing classified CSV
-  2. Filter to Defence-related records by default
-  3. Restrict market analysis to contracts classified as Accenture-addressable
-  4. Compare Supplier 1 vs Supplier 2 across service offering, market share, contracts and Defence domains
-  5. Recalculate Service Offering leaderboards for All FY, Last 5 FY, Last 3 FY and Current FY
+It uses the same canonical Defence master dataset as the Accenture TAM dashboard:
+  1. Load the canonical Defence master parquet
+  2. Retain the complete Defence scope
+  3. Generate an Accenture TAM view using is_addressable == True
+  4. Generate an All Defence Market view without excluding non-addressable contracts
+  5. Compare Supplier 1 vs Supplier 2 across service offering, market share, contracts and Defence domains
+  6. Recalculate Service Offering leaderboards for All FY, Last 5 FY and Last 3 FY
 
 Outputs
 -------
@@ -1154,18 +1155,28 @@ def prepare_competitive_model(
     df: pd.DataFrame,
     value_col: str,
     top_n_suppliers: int,
+    market_mode: str = "tam",
 ) -> dict[str, object]:
     data = remove_duplicate_columns(df)
     data = use_master_supplier_columns(data)
     data = safe_capability(data)
+    data["is_addressable"] = _parse_bool_series(data["is_addressable"])
 
-    # The canonical master parquet is the single source of truth for capability
-    # and addressability. Do not reclassify or reintroduce excluded contracts in
-    # the dashboard layer.
-    data = data.loc[_parse_bool_series(data["is_addressable"])].copy()
+    # The canonical master parquet remains authoritative. The dashboard produces
+    # two independently rendered views from the same Defence population:
+    #   tam = only rows where is_addressable == True
+    #   all = every contract in the canonical Defence scope
+    if market_mode == "tam":
+        data = data.loc[data["is_addressable"]].copy()
+        empty_message = "No addressable Defence contracts found after filters."
+    elif market_mode == "all":
+        data = data.copy()
+        empty_message = "No Defence contracts found after filters."
+    else:
+        raise ValueError(f"Unsupported market mode: {market_mode}")
 
     if data.empty:
-        raise SystemExit("No addressable Defence contracts found after filters.")
+        raise SystemExit(empty_message)
 
     if value_col not in data.columns:
         raise SystemExit(f"Selected value column is missing: {value_col}")
@@ -1182,8 +1193,12 @@ def prepare_competitive_model(
     data["_fy_start_year"] = data[FIN_YEAR_COL].map(financial_year_start_year)
 
     total_tam = float(data[value_col].sum())
-    print(f"Compare dashboard canonical TAM: ${total_tam/1e9:,.2f}B")
-    print("TAM definition: canonical master rows where is_addressable == True")
+    if market_mode == "tam":
+        print(f"Compare dashboard Accenture TAM: ${total_tam/1e9:,.2f}B")
+        print("Market definition: canonical master rows where is_addressable == True")
+    else:
+        print(f"Compare dashboard All Defence Market: ${total_tam/1e9:,.2f}B")
+        print("Market definition: every canonical Defence contract in the selected period")
     capability_total = data.groupby("capability", dropna=False)[value_col].sum().rename("capability_market").reset_index()
     supplier_total = data.groupby("supplier_group", dropna=False)[value_col].sum().rename("supplier_addressable_value").reset_index()
     supplier_total["tam_share_pct"] = supplier_total["supplier_addressable_value"] / total_tam * 100 if total_tam else 0
@@ -1361,6 +1376,7 @@ def prepare_competitive_model(
         "domain_yearly": domain_yearly,
         "supplier_options": supplier_options,
         "capabilities": capabilities,
+        "market_mode": market_mode,
     }
 
 
@@ -1443,6 +1459,7 @@ def build_html(
     value_mode: str,
     period_label: str,
     as_at_date: str,
+    market_mode: str = "tam",
 ) -> None:
     supplier_summary: pd.DataFrame = model["supplier_summary"]  # type: ignore[assignment]
     supplier_capability: pd.DataFrame = model["supplier_capability"]  # type: ignore[assignment]
@@ -1535,12 +1552,58 @@ def build_html(
     )
     supplier_colour_payload = {supplier: supplier_colour(supplier) for supplier in supplier_options}
 
+    if market_mode == "tam":
+        page_title = "Competitive Positioning inside Accenture Defence TAM"
+        market_heading = "Accenture TAM"
+        market_scope_label = "Accenture addressable TAM"
+        market_scope_lower = "Accenture addressable TAM"
+        market_value_label = "addressable market"
+        market_executive_text = (
+            "Accenture's addressable Defence market, containing contracts classified "
+            "as relevant to Accenture's service-offering portfolio"
+        )
+        market_note = (
+            "This is not whole-of-Defence supplier share. It is supplier positioning "
+            "inside Defence contracts classified as addressable to Accenture."
+        )
+    elif market_mode == "all":
+        page_title = "Competitive Positioning across All Defence Market"
+        market_heading = "All Defence Market"
+        market_scope_label = "All Defence Market"
+        market_scope_lower = "the All Defence Market"
+        market_value_label = "selected market"
+        market_executive_text = (
+            "the complete Defence procurement market in the canonical Defence dataset, "
+            "including both addressable and non-addressable contracts"
+        )
+        market_note = (
+            "This view includes all contracts in the canonical Defence scope. "
+            "Non-addressable contracts are not silently excluded."
+        )
+    else:
+        raise ValueError(f"Unsupported market mode: {market_mode}")
+
+    market_controls = (
+        '<section class="atlas-market-controls" aria-label="Market selection">'
+        '<div><h2>Explore the Defence Market</h2>'
+        '<p>Choose the procurement population. Page filters are preserved when switching views.</p></div>'
+        '<div class="atlas-market-actions">'
+        f'<a class="atlas-market-choice {"active" if market_mode == "tam" else ""}" '
+        'data-market-target="CompetitiveIntelligence.html" href="CompetitiveIntelligence.html" '
+        f'aria-current="{str(market_mode == "tam").lower()}">Accenture TAM</a>'
+        f'<a class="atlas-market-choice {"active" if market_mode == "all" else ""}" '
+        'data-market-target="CompetitiveIntelligence_AllMarket.html" href="CompetitiveIntelligence_AllMarket.html" '
+        f'aria-current="{str(market_mode == "all").lower()}">All Defence Market</a>'
+        '<button type="button" id="atlasClearFilters">Clear All Filters</button>'
+        '</div></section>'
+    )
+
     html_doc = f"""
 <!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Competitive Positioning inside Accenture Defence TAM</title>
+  <title>{page_title}</title>
   <script src="https://cdn.plot.ly/plotly-3.5.0.min.js"></script>
   <style>
     body {{ font-family: Arial, Helvetica, sans-serif; margin: 0; background: #f6f8fb; color: #1f2937; }}
@@ -1835,6 +1898,39 @@ def build_html(
       transform: translateY(-50%);
     }}
     @media (max-width: 720px) {{ .supplier-kpi-grid {{ grid-template-columns: 1fr; }} }}
+    .atlas-market-controls {{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:18px;
+      flex-wrap:wrap;
+      padding:20px 24px;
+      margin:18px 0 22px;
+      background:#ffffff;
+      border:1px solid #e5e7eb;
+      border-radius:16px;
+      box-shadow:0 1px 2px rgba(16,24,40,.04);
+    }}
+    .atlas-market-controls h2 {{ margin:0 0 5px; font-size:20px; color:#101828; }}
+    .atlas-market-controls p {{ margin:0; color:#667085; font-size:13px; }}
+    .atlas-market-actions {{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }}
+    .atlas-market-choice,
+    #atlasClearFilters {{
+      font:700 13px Arial,Helvetica,sans-serif;
+      padding:12px 15px;
+      border:1px solid #d0d5dd;
+      border-radius:9px;
+      background:#ffffff;
+      color:#344054;
+      text-decoration:none;
+      cursor:pointer;
+      white-space:nowrap;
+    }}
+    .atlas-market-choice.active {{ background:#A100FF; color:#ffffff; border-color:#A100FF; }}
+    .atlas-market-choice:hover,
+    #atlasClearFilters:hover {{ border-color:#A100FF; color:#7F00CC; }}
+    .atlas-market-choice.active:hover {{ color:#ffffff; }}
+
     @media (max-width: 1000px) {{
       .cards, .grid2, .selectors, .domain-tiles, .leaderboard-grid {{
         grid-template-columns: 1fr;
@@ -1851,13 +1947,13 @@ def build_html(
 </head>
 <body>
 <div class="wrap">
-  <h1>Competitive Positioning inside Accenture Defence TAM</h1>
+  <h1>{page_title}</h1>
   <div style="font-size:12px;color:#667085;margin-bottom:8px;">Colour version: supplier-group designated colours</div>
 
   <section class="executive-summary" aria-labelledby="executiveSummaryTitle">
       <h2 id="executiveSummaryTitle">Executive purpose</h2>
       <p>
-        This dashboard provides a direct comparison of two suppliers across <strong tabindex="0" data-tooltip="Accenture's Total Addressable Market (TAM) is the portion of Australian Defence procurement that aligns with Accenture's core service offerings. It represents the market where Accenture can realistically compete.">Accenture's addressable Defence market</strong>. It brings together market position, Service Offering strength, current contracts and Defence-domain presence so users can quickly understand where each supplier is established, where the competitive gap is widest and where future growth may be available.
+        This dashboard provides a direct comparison of two suppliers across <strong tabindex="0" data-tooltip="{html.escape(market_executive_text)}">{market_heading}</strong>. It brings together market position, Service Offering strength, current contracts and Defence-domain presence so users can quickly understand where each supplier is established, where the competitive gap is widest and where future growth may be available.
       </p>
       <ul class="question-list" aria-label="Questions this dashboard helps answer">
         <li style="--level:0">Who is better positioned overall?</li>
@@ -1866,6 +1962,8 @@ def build_html(
         <li style="--level:0">Which Defence domains are most important to the selected supplier?</li>
       </ul>
   </section>
+
+  {market_controls}
 
   <div class="selectors" id="originalSupplierSelectors">
     <div class="selector-card">
@@ -1911,8 +2009,8 @@ def build_html(
     <div class="supplier-kpi-block selected">
       <div class="supplier-kpi-title" id="selectedKpiTitle">Selected supplier</div>
       <div class="supplier-kpi-grid">
-        <div class="card" id="selectedCardValue"><div class="card-title" id="selectedKpiValueTitle">Period value</div><div class="card-value" id="selectedKpiAddressable">-</div><div class="card-subtitle" id="selectedKpiValueSubtitle">Award value inside the selected addressable TAM period</div></div>
-        <div class="card" id="selectedCardShare"><div class="card-title">Addressable TAM share</div><div class="card-value" id="selectedKpiShare">-</div><div class="card-subtitle" id="selectedKpiRank">-</div></div>
+        <div class="card" id="selectedCardValue"><div class="card-title" id="selectedKpiValueTitle">Period value</div><div class="card-value" id="selectedKpiAddressable">-</div><div class="card-subtitle" id="selectedKpiValueSubtitle">Award value inside the selected market period</div></div>
+        <div class="card" id="selectedCardShare"><div class="card-title">{market_heading} share</div><div class="card-value" id="selectedKpiShare">-</div><div class="card-subtitle" id="selectedKpiRank">-</div></div>
         <div class="card" id="selectedCardLargest"><div class="card-title">Largest Service Offering</div><div class="card-value kpi-long" id="selectedKpiLargest">-</div><div class="card-subtitle" id="selectedKpiLargestValue">-</div></div>
         <div class="card" id="selectedCardPresence"><div class="card-title">Service Offering presence</div><div class="card-value kpi-long" id="selectedKpiBreadth">-</div><div class="card-subtitle" id="selectedKpiConcentration">-</div></div>
       </div>
@@ -1920,8 +2018,8 @@ def build_html(
     <div class="supplier-kpi-block compare">
       <div class="supplier-kpi-title" id="compareKpiTitle">Comparison supplier</div>
       <div class="supplier-kpi-grid">
-        <div class="card" id="compareCardValue"><div class="card-title" id="compareKpiValueTitle">Period value</div><div class="card-value" id="compareKpiAddressable">-</div><div class="card-subtitle" id="compareKpiValueSubtitle">Award value inside the selected addressable TAM period</div></div>
-        <div class="card" id="compareCardShare"><div class="card-title">Addressable TAM share</div><div class="card-value" id="compareKpiShare">-</div><div class="card-subtitle" id="compareKpiRank">-</div></div>
+        <div class="card" id="compareCardValue"><div class="card-title" id="compareKpiValueTitle">Period value</div><div class="card-value" id="compareKpiAddressable">-</div><div class="card-subtitle" id="compareKpiValueSubtitle">Award value inside the selected market period</div></div>
+        <div class="card" id="compareCardShare"><div class="card-title">{market_heading} share</div><div class="card-value" id="compareKpiShare">-</div><div class="card-subtitle" id="compareKpiRank">-</div></div>
         <div class="card" id="compareCardLargest"><div class="card-title">Largest Service Offering</div><div class="card-value kpi-long" id="compareKpiLargest">-</div><div class="card-subtitle" id="compareKpiLargestValue">-</div></div>
         <div class="card" id="compareCardPresence"><div class="card-title">Service Offering presence</div><div class="card-value kpi-long" id="compareKpiBreadth">-</div><div class="card-subtitle" id="compareKpiConcentration">-</div></div>
       </div>
@@ -1941,7 +2039,7 @@ def build_html(
     <div class="panel panel-wide">
       <div class="chart-heading">
         <h3 class="chart-title" id="profileChartTitle">Supplier vs Supplier - Value by Service Offering</h3>
-        <p class="chart-subtitle">Comparison of Supplier 1 vs Supplier 2 across Accenture-addressable Defence service offerings.</p>
+        <p class="chart-subtitle">Comparison of Supplier 1 vs Supplier 2 across the selected {market_heading} population.</p>
       </div>
       <div id="profileChart" style="height:700px;"></div>
     </div>
@@ -2035,7 +2133,7 @@ def build_html(
   </div>
 
   <p class="note">
-    Note: this is not whole-of-Defence supplier share. It is supplier positioning inside Defence contracts that the classifier marks as relevant to Accenture's service-offering portfolio.
+    Note: {market_note}
   </p>
 </div>
 
@@ -2053,6 +2151,12 @@ const TOTAL_CAPABILITIES = {len(capabilities)};
 const DEFAULT_SUPPLIER = {json.dumps(default_supplier)};
 const DEFAULT_COMPARE = {json.dumps(default_compare)};
 const AS_AT_DATE = {json.dumps(as_at_date)};
+const MARKET_MODE = {json.dumps(market_mode)};
+const MARKET_HEADING = {json.dumps(market_heading)};
+const MARKET_SCOPE_LABEL = {json.dumps(market_scope_label)};
+const MARKET_SCOPE_LOWER = {json.dumps(market_scope_lower)};
+const MARKET_VALUE_LABEL = {json.dumps(market_value_label)};
+const FILTER_STORAGE_KEY = 'atlas-competitive-positioning-filters';
 
 function money(v) {{
   v = Number(v || 0);
@@ -2306,10 +2410,10 @@ function setSupplierKpi(prefix, supplier, roleLabel) {{
   const periodLabel = selectedGlobalPeriod().label || 'Selected period';
   document.getElementById(prefix + 'KpiTitle').textContent = roleLabel + ': ' + supplier;
   document.getElementById(prefix + 'KpiValueTitle').textContent = periodLabel + ' value';
-  document.getElementById(prefix + 'KpiValueSubtitle').textContent = 'Award value inside ' + periodLabel + ' addressable TAM';
+  document.getElementById(prefix + 'KpiValueSubtitle').textContent = 'Award value inside ' + periodLabel + ' · ' + MARKET_SCOPE_LABEL;
   document.getElementById(prefix + 'KpiAddressable').textContent = money(s.addressable_awards);
   document.getElementById(prefix + 'KpiShare').textContent = pct(s.tam_share_pct);
-  document.getElementById(prefix + 'KpiRank').textContent = s.rank_in_tam ? 'Rank #' + s.rank_in_tam + ' inside ' + periodLabel + ' addressable TAM' : 'No awards in ' + periodLabel;
+  document.getElementById(prefix + 'KpiRank').textContent = s.rank_in_tam ? 'Rank #' + s.rank_in_tam + ' inside ' + periodLabel + ' · ' + MARKET_SCOPE_LABEL : 'No awards in ' + periodLabel;
   document.getElementById(prefix + 'KpiLargest').textContent = s.largest_capability || 'n/a';
   document.getElementById(prefix + 'KpiLargestValue').textContent = money(s.largest_capability_value) + ' in ' + periodLabel;
   const capabilityCount = Number(s.capability_count || 0);
@@ -2528,7 +2632,7 @@ function updateCapabilityLeaderboards(supplier, compare) {{
 
     return '<section class="leaderboard-card">' +
       '<h4>' + escapeHtml(cap) + '</h4>' +
-      '<div class="leaderboard-market">' + money(data.marketByCap.get(cap) || 0) + ' addressable market · ' + data.range.label + '</div>' +
+      '<div class="leaderboard-market">' + money(data.marketByCap.get(cap) || 0) + ' ' + MARKET_VALUE_LABEL + ' · ' + data.range.label + '</div>' +
       rowsHtml + '</section>';
   }}).join('');
 
@@ -2599,7 +2703,7 @@ function updateDomainChart(supplier) {{
     Plotly.react('domainChart', [], {{
       title: supplier + ' value by Defence domain',
       template: 'plotly_white', height: 500,
-      annotations: [{{text: 'No addressable contracts found for the selected supplier in this period.', x: 0.5, y: 0.5, xref: 'paper', yref: 'paper', showarrow: false}}],
+      annotations: [{{text: 'No contracts found for the selected supplier in this period and market scope.', x: 0.5, y: 0.5, xref: 'paper', yref: 'paper', showarrow: false}}],
       xaxis: {{visible: false}}, yaxis: {{visible: false}}
     }}, {{responsive:true}});
     document.getElementById('domainTiles').innerHTML = '';
@@ -3211,9 +3315,6 @@ function renderAll() {{
   updateContractsTimeline(supplier);
 }}
 
-document.getElementById('supplierSelect').value = DEFAULT_SUPPLIER;
-document.getElementById('compareSelect').value = DEFAULT_COMPARE;
-
 const originalSelectors = document.getElementById('originalSupplierSelectors');
 const floatingSelectors = document.getElementById('floatingSupplierSelectors');
 const supplierSelect = document.getElementById('supplierSelect');
@@ -3222,6 +3323,52 @@ const floatingSupplierSelect = document.getElementById('floatingSupplierSelect')
 const floatingCompareSelect = document.getElementById('floatingCompareSelect');
 const periodSelect = document.getElementById('periodSelect');
 const floatingPeriodSelect = document.getElementById('floatingPeriodSelect');
+
+function hasOption(select, value) {{
+  return !!select && Array.from(select.options).some(option => option.value === value);
+}}
+
+function saveFilterState() {{
+  if (!supplierSelect || !compareSelect || !periodSelect) return;
+  const state = {{
+    supplier: supplierSelect.value,
+    compare: compareSelect.value,
+    periodIndex: Number(periodSelect.value || 0)
+  }};
+  try {{
+    localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(state));
+  }} catch (error) {{
+    console.warn('Unable to save ATLAS filter state:', error);
+  }}
+}}
+
+function restoreFilterState() {{
+  if (!supplierSelect || !compareSelect || !periodSelect) return;
+  supplierSelect.value = DEFAULT_SUPPLIER;
+  compareSelect.value = DEFAULT_COMPARE;
+  periodSelect.value = '0';
+
+  try {{
+    const saved = JSON.parse(localStorage.getItem(FILTER_STORAGE_KEY) || 'null');
+    if (saved && hasOption(supplierSelect, saved.supplier)) supplierSelect.value = saved.supplier;
+    if (saved && hasOption(compareSelect, saved.compare)) compareSelect.value = saved.compare;
+    const requestedPeriod = saved ? Number(saved.periodIndex || 0) : 0;
+    const maxIndex = Math.max(0, periodSelect.options.length - 1);
+    periodSelect.value = String(Math.min(Math.max(0, requestedPeriod), maxIndex));
+  }} catch (error) {{
+    console.warn('Unable to restore ATLAS filter state:', error);
+  }}
+  syncFloatingSelectorsFromOriginal();
+}}
+
+function clearAllPageFilters() {{
+  if (supplierSelect) supplierSelect.value = DEFAULT_SUPPLIER;
+  if (compareSelect) compareSelect.value = DEFAULT_COMPARE;
+  if (periodSelect) periodSelect.value = '0';
+  syncFloatingSelectorsFromOriginal();
+  saveFilterState();
+  renderAll();
+}}
 
 function syncFloatingSelectorsFromOriginal() {{
   if (floatingSupplierSelect && supplierSelect) {{
@@ -3253,6 +3400,7 @@ function updateFloatingSelectorVisibility() {{
 if (supplierSelect) {{
   supplierSelect.addEventListener('change', () => {{
     syncFloatingSelectorsFromOriginal();
+    saveFilterState();
     renderAll();
   }});
 }}
@@ -3260,6 +3408,7 @@ if (supplierSelect) {{
 if (compareSelect) {{
   compareSelect.addEventListener('change', () => {{
     syncFloatingSelectorsFromOriginal();
+    saveFilterState();
     renderAll();
   }});
 }}
@@ -3267,6 +3416,7 @@ if (compareSelect) {{
 if (floatingSupplierSelect) {{
   floatingSupplierSelect.addEventListener('change', () => {{
     if (supplierSelect) supplierSelect.value = floatingSupplierSelect.value;
+    saveFilterState();
     renderAll();
   }});
 }}
@@ -3274,6 +3424,7 @@ if (floatingSupplierSelect) {{
 if (floatingCompareSelect) {{
   floatingCompareSelect.addEventListener('change', () => {{
     if (compareSelect) compareSelect.value = floatingCompareSelect.value;
+    saveFilterState();
     renderAll();
   }});
 }}
@@ -3282,6 +3433,7 @@ if (floatingCompareSelect) {{
 if (periodSelect) {{
   periodSelect.addEventListener('change', () => {{
     syncFloatingSelectorsFromOriginal();
+    saveFilterState();
     renderAll();
   }});
 }}
@@ -3289,6 +3441,7 @@ if (periodSelect) {{
 if (floatingPeriodSelect) {{
   floatingPeriodSelect.addEventListener('change', () => {{
     if (periodSelect) periodSelect.value = floatingPeriodSelect.value;
+    saveFilterState();
     renderAll();
   }});
 }}
@@ -3305,8 +3458,17 @@ window.addEventListener('resize', updateFloatingSelectorVisibility);
 
 buildGlobalPeriodOptions();
 buildShareRangeControls();
-syncFloatingSelectorsFromOriginal();
+restoreFilterState();
 updateFloatingSelectorVisibility();
+
+const clearFiltersButton = document.getElementById('atlasClearFilters');
+if (clearFiltersButton) clearFiltersButton.addEventListener('click', clearAllPageFilters);
+
+document.querySelectorAll('[data-market-target]').forEach(link => {{
+  link.addEventListener('click', () => saveFilterState());
+}});
+
+saveFilterState();
 renderAll();
 </script>
 
@@ -3391,72 +3553,101 @@ def main() -> None:
     df_all = clean_value_columns(df_all, [VALUE_COL, ANNUALISED_VALUE_COL])
     df_all = filter_financial_year_range(df_all, args.fy_start, args.fy_end)
 
-    # Full selected-period Defence data drives KPIs, market totals, rankings,
-    # capability charts, leaderboards and domain analysis.
+    # The canonical Defence scope is established upstream. Build two dashboard
+    # populations from the same rows so the market selector never changes source
+    # data, supplier grouping, financial values or classification rules.
     df = filter_defence_scope(
         df_all,
         include_all_agencies=args.include_all_agencies,
     )
-    model = prepare_competitive_model(df, value_col, args.top_n_suppliers)
+    tam_model = prepare_competitive_model(
+        df, value_col, args.top_n_suppliers, market_mode="tam"
+    )
+    all_market_model = prepare_competitive_model(
+        df, value_col, args.top_n_suppliers, market_mode="all"
+    )
 
-    # Only the timeline is restricted to contracts active as at the selected date.
-    # Use the model's already-addressable, domain-mapped dataset so timeline
-    # classification is consistent with the rest of the dashboard.
     as_at = parse_as_at(args.as_at)
     timeline_value_col = current_value_col_from_mode(args.current_value_mode)
-    timeline_contracts, current_metadata = add_current_contract_value_columns(
-        model["data"],  # type: ignore[arg-type]
-        base_value_col=VALUE_COL,
-        as_at=as_at,
-    )
-    model["timeline_contracts"] = timeline_contracts
-    model["current_metadata"] = current_metadata
+
+    for model in (tam_model, all_market_model):
+        timeline_contracts, current_metadata = add_current_contract_value_columns(
+            model["data"],  # type: ignore[arg-type]
+            base_value_col=VALUE_COL,
+            as_at=as_at,
+        )
+        model["timeline_contracts"] = timeline_contracts
+        model["current_metadata"] = current_metadata
 
     export_defence_scope_audit(df_all, df, value_col, output_dir)
 
-    supplier_summary: pd.DataFrame = model["supplier_summary"]  # type: ignore[assignment]
-    supplier_capability: pd.DataFrame = model["supplier_capability"]  # type: ignore[assignment]
-    yearly: pd.DataFrame = model["supplier_capability_yearly"]  # type: ignore[assignment]
-    top_contracts: pd.DataFrame = model["top_contracts"]  # type: ignore[assignment]
-    domain_summary: pd.DataFrame = model["domain_summary"]  # type: ignore[assignment]
-    domain_yearly: pd.DataFrame = model["domain_yearly"]  # type: ignore[assignment]
+    def export_model(model: dict[str, object], suffix: str = "") -> None:
+        supplier_summary: pd.DataFrame = model["supplier_summary"]  # type: ignore[assignment]
+        supplier_capability: pd.DataFrame = model["supplier_capability"]  # type: ignore[assignment]
+        yearly: pd.DataFrame = model["supplier_capability_yearly"]  # type: ignore[assignment]
+        top_contracts: pd.DataFrame = model["top_contracts"]  # type: ignore[assignment]
+        timeline_contracts: pd.DataFrame = model["timeline_contracts"]  # type: ignore[assignment]
+        domain_summary: pd.DataFrame = model["domain_summary"]  # type: ignore[assignment]
+        domain_yearly: pd.DataFrame = model["domain_yearly"]  # type: ignore[assignment]
 
-    supplier_summary.to_csv(output_dir / "supplier_summary.csv", index=False)
-    supplier_capability.to_csv(output_dir / "supplier_capability.csv", index=False)
-    yearly.to_csv(output_dir / "supplier_capability_yearly.csv", index=False)
-    top_contracts.head(args.top_n_contracts).to_csv(output_dir / "top_contracts.csv", index=False)
-    timeline_contracts.to_csv(output_dir / "current_timeline_contracts.csv", index=False)
-    domain_summary.to_csv(output_dir / "supplier_domain_summary.csv", index=False)
-    domain_yearly.to_csv(output_dir / "supplier_domain_yearly.csv", index=False)
+        supplier_summary.to_csv(output_dir / f"supplier_summary{suffix}.csv", index=False)
+        supplier_capability.to_csv(output_dir / f"supplier_capability{suffix}.csv", index=False)
+        yearly.to_csv(output_dir / f"supplier_capability_yearly{suffix}.csv", index=False)
+        top_contracts.head(args.top_n_contracts).to_csv(
+            output_dir / f"top_contracts{suffix}.csv", index=False
+        )
+        timeline_contracts.to_csv(
+            output_dir / f"current_timeline_contracts{suffix}.csv", index=False
+        )
+        domain_summary.to_csv(
+            output_dir / f"supplier_domain_summary{suffix}.csv", index=False
+        )
+        domain_yearly.to_csv(
+            output_dir / f"supplier_domain_yearly{suffix}.csv", index=False
+        )
 
-    dashboard_path = output_dir / "CompetitiveIntelligence.html"
+    # Preserve the existing CSV filenames for the Accenture TAM view. Additional
+    # all-market files are explicit, so downstream users are never given a silent
+    # change in market definition.
+    export_model(tam_model)
+    export_model(all_market_model, "_all_market")
+
+    tam_dashboard_path = output_dir / "CompetitiveIntelligence.html"
+    all_dashboard_path = output_dir / "CompetitiveIntelligence_AllMarket.html"
+
     build_html(
-        model,
+        tam_model,
         value_col,
         timeline_value_col,
-        dashboard_path,
+        tam_dashboard_path,
         args.value_mode,
         format_fy_range_label(args.fy_start, args.fy_end),
         as_at.strftime("%Y-%m-%d"),
+        market_mode="tam",
+    )
+    build_html(
+        all_market_model,
+        value_col,
+        timeline_value_col,
+        all_dashboard_path,
+        args.value_mode,
+        format_fy_range_label(args.fy_start, args.fy_end),
+        as_at.strftime("%Y-%m-%d"),
+        market_mode="all",
     )
 
-    print("Competitive positioning dashboard complete")
+    print("Competitive positioning dashboards complete")
     print(f"Dashboard value mode: {args.value_mode} / column used: {value_col}")
     print(f"Selected period: {format_fy_range_label(args.fy_start, args.fy_end)}")
     print(f"Timeline as-at date: {as_at.strftime('%Y-%m-%d')}")
     print(f"Timeline value mode: {args.current_value_mode} / column used: {timeline_value_col}")
-    print(f"Rows after Defence filter for full dashboard: {len(df):,}")
-    print(f"Current addressable rows in timeline: {len(timeline_contracts):,}")
-    print(f"Addressable TAM in scope: {money(float(model['total_tam']))}")
-    print(f"Suppliers in comparison dropdowns: {len(model['supplier_options'])}")
-    print(f"Wrote: {dashboard_path}")
-    print(f"Wrote: {output_dir / 'supplier_summary.csv'}")
-    print(f"Wrote: {output_dir / 'supplier_capability.csv'}")
-    print(f"Wrote: {output_dir / 'supplier_capability_yearly.csv'}")
-    print(f"Wrote: {output_dir / 'top_contracts.csv'}")
-    print(f"Wrote: {output_dir / 'current_timeline_contracts.csv'}")
-    print(f"Wrote: {output_dir / 'supplier_domain_summary.csv'}")
-    print(f"Wrote: {output_dir / 'supplier_domain_yearly.csv'}")
+    print(f"Rows after Defence filter: {len(df):,}")
+    print(f"Accenture TAM rows: {len(tam_model['data']):,}")
+    print(f"All Defence Market rows: {len(all_market_model['data']):,}")
+    print(f"Accenture TAM value: {money(float(tam_model['total_tam']))}")
+    print(f"All Defence Market value: {money(float(all_market_model['total_tam']))}")
+    print(f"Wrote: {tam_dashboard_path}")
+    print(f"Wrote: {all_dashboard_path}")
 
 
 def atlas_navigation(html_text: str, industry: str) -> str:
