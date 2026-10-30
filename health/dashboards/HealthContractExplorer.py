@@ -660,9 +660,21 @@ function render() {{
 
   
 
-function clearAllFilters(){{document.getElementById('agencySelect').value=DEFAULT_AGENCY;document.getElementById('searchInput').value='';document.getElementById('minValueInput').value='';document.getElementById('datedOnly').checked=false;document.getElementById('groupMode').value = 'status';
-document.getElementById('fyFilter').value = 'all';document.getElementById('capabilityFilter').innerHTML='<option value="All Service Offerings">All Service Offerings</option>';document.getElementById('supplierFilter').innerHTML='<option value="All suppliers">All suppliers</option>';refreshFilters();render()}}
+function clearAllFilters() {{
+  document.getElementById('agencySelect').value = DEFAULT_AGENCY;
+  document.getElementById('searchInput').value = '';
+  document.getElementById('minValueInput').value = '';
+  document.getElementById('datedOnly').checked = false;
 
+  document.getElementById('capabilityFilter').innerHTML =
+    '<option value="All Service Offerings">All Service Offerings</option>';
+
+  document.getElementById('supplierFilter').innerHTML =
+    '<option value="All suppliers">All suppliers</option>';
+
+  refreshFilters();
+  render();
+}}
 document.getElementById('marketMode').addEventListener('change',()=>{{clearAllFilters()}});
 
 (function() {{
@@ -685,13 +697,7 @@ document.getElementById('marketMode').addEventListener('change',()=>{{clearAllFi
   syncMarketSwitch();
 }})();
 document.getElementById('agencySelect').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('searchInput').addEventListener('input',()=>{{refreshFilters();render()}});document.getElementById('capabilityFilter').addEventListener('change',()=>{{refreshFilters('capability');render()}});document.getElementById('supplierFilter').addEventListener('change',()=>{{refreshFilters('supplier');render()}});document.getElementById('minValueInput').addEventListener('input',()=>{{refreshFilters();render()}});document.getElementById('datedOnly').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('clearFiltersBtn').addEventListener('click',clearAllFilters);
-document.getElementById('groupMode')
-  .addEventListener('change', render);
 
-document.getElementById('fyFilter')
-  .addEventListener('change', render);
-
-populateFYFilter();
 refreshFilters();
 render();</script>
 </body></html>'''
