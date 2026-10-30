@@ -1,11 +1,11 @@
 """
-Build an Accenture-addressable capability growth dashboard from AusTender data.
+Build Defence Service Offering growth dashboards for Accenture TAM and All Market.
 
 Purpose
 -------
 This is a separate dashboard from the main TAM/market-share page. It focuses on
-one deliverable: showing whether each Accenture-addressable capability segment is
-growing or shrinking over time.
+one deliverable: showing whether each Service Offering segment is growing or
+shrinking over time in the selected Defence market population.
 
 The main visual is an interactive category selector:
 - choose a capability/category from the dropdown
@@ -15,11 +15,12 @@ The main visual is an interactive category selector:
 
 Scope
 -----
-Unless you change the code, this dashboard only analyses contracts classified as
-addressable to Accenture. That keeps the analysis focused on the market Accenture
-can realistically compete for: transformation, IT services, cyber, data, AI,
-cloud, advisory, enterprise platforms, systems integration, managed services and
-program delivery.
+The script generates two linked dashboards from the same canonical Defence master:
+- Accenture TAM: only contracts where is_addressable == True
+- All Defence Market: every contract in the canonical Defence scope
+
+The market selector is independent from page filters. Clear All Filters resets the
+Service Offering and financial-year controls without changing the selected market.
 
 Usage
 -----
@@ -29,6 +30,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import re
 from pathlib import Path
@@ -365,14 +367,51 @@ def financial_year_start_year(value: object) -> int | None:
     return int(match.group(1))
 
 
-def prepare_growth_data(df: pd.DataFrame, value_col: str, top_n: int, min_year_value: float = 0) -> tuple[pd.DataFrame, pd.DataFrame]:
+def prepare_growth_data(
+    df: pd.DataFrame,
+    value_col: str,
+    top_n: int,
+    min_year_value: float = 0,
+    market_mode: str = "tam",
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Prepare annual growth measures for one explicit market population.
+
+    ``tam`` includes only canonical rows where ``is_addressable`` is true.
+    ``all`` retains every contract in the canonical Defence scope. No supplier,
+    financial value or classification field is rebuilt in the dashboard layer.
+    """
     if FIN_YEAR_COL not in df.columns:
         raise SystemExit(f"Missing required column: {FIN_YEAR_COL}")
 
-    data = df[df["is_addressable"]].copy()
-    data["capability"] = data["capability"].fillna("Unclassified").replace("", "Unclassified")
+    data = df.copy()
+    data["is_addressable"] = _parse_bool_series(data["is_addressable"])
+    data["is_accenture"] = _parse_bool_series(data["is_accenture"])
+
+    if market_mode == "tam":
+        data = data.loc[data["is_addressable"]].copy()
+        empty_message = "No Accenture-addressable Defence contracts were found."
+    elif market_mode == "all":
+        data = data.copy()
+        empty_message = "No Defence contracts were found."
+    else:
+        raise ValueError(f"Unsupported market mode: {market_mode}")
+
+    if data.empty:
+        raise SystemExit(empty_message)
+
+    data["capability"] = (
+        data["capability"]
+        .fillna("Unclassified")
+        .astype(str)
+        .str.strip()
+        .replace("", "Unclassified")
+    )
     data["_fy_start_year"] = data[FIN_YEAR_COL].map(financial_year_start_year)
     data = data.dropna(subset=["_fy_start_year"])
+    if data.empty:
+        raise SystemExit(
+            f"No contracts in the {market_mode!r} market have a recognisable Financial Year."
+        )
     data["_fy_start_year"] = data["_fy_start_year"].astype(int)
     data[FIN_YEAR_COL] = data[FIN_YEAR_COL].astype(str)
 
@@ -383,6 +422,8 @@ def prepare_growth_data(df: pd.DataFrame, value_col: str, top_n: int, min_year_v
         .head(top_n)
         .index.tolist()
     )
+    if not top_caps:
+        raise SystemExit(f"No Service Offering groups were found for market mode: {market_mode}")
     data = data[data["capability"].isin(top_caps)].copy()
 
     annual = (
@@ -396,7 +437,8 @@ def prepare_growth_data(df: pd.DataFrame, value_col: str, top_n: int, min_year_v
     )
     annual = annual[annual["segment_value"] >= min_year_value].copy()
 
-    # Re-index every selected capability against every selected FY so zero years are visible.
+    # Re-index every selected Service Offering against every selected FY so zero
+    # years remain visible and CAGR/range comparisons use a consistent timeline.
     years = (
         data[[FIN_YEAR_COL, "_fy_start_year"]]
         .drop_duplicates()
@@ -407,15 +449,30 @@ def prepare_growth_data(df: pd.DataFrame, value_col: str, top_n: int, min_year_v
         names=["capability", FIN_YEAR_COL],
     ).to_frame(index=False)
     full_index = full_index.merge(years, on=FIN_YEAR_COL, how="left")
-    annual = full_index.merge(annual, on=["capability", FIN_YEAR_COL, "_fy_start_year"], how="left")
-    annual[["segment_value", "accenture_wins", "contracts"]] = annual[["segment_value", "accenture_wins", "contracts"]].fillna(0)
+    annual = full_index.merge(
+        annual,
+        on=["capability", FIN_YEAR_COL, "_fy_start_year"],
+        how="left",
+    )
+    annual[["segment_value", "accenture_wins", "contracts"]] = annual[
+        ["segment_value", "accenture_wins", "contracts"]
+    ].fillna(0)
     annual = annual.sort_values(["capability", "_fy_start_year"])
 
     annual["segment_value_b"] = annual["segment_value"] / 1_000_000_000
     annual["accenture_wins_b"] = annual["accenture_wins"] / 1_000_000_000
-    annual["accenture_share_pct"] = annual["accenture_wins"] / annual["segment_value"].replace(0, pd.NA) * 100
-    annual["yoy_growth_pct"] = annual.groupby("capability")["segment_value"].pct_change() * 100
-    annual.loc[annual.groupby("capability")["segment_value"].shift(1).fillna(0).eq(0), "yoy_growth_pct"] = pd.NA
+    annual["accenture_share_pct"] = (
+        annual["accenture_wins"]
+        / annual["segment_value"].replace(0, pd.NA)
+        * 100
+    )
+    annual["yoy_growth_pct"] = (
+        annual.groupby("capability")["segment_value"].pct_change() * 100
+    )
+    annual.loc[
+        annual.groupby("capability")["segment_value"].shift(1).fillna(0).eq(0),
+        "yoy_growth_pct",
+    ] = pd.NA
 
     summary_rows = []
     for cap, g in annual.groupby("capability", sort=False):
@@ -425,8 +482,22 @@ def prepare_growth_data(df: pd.DataFrame, value_col: str, top_n: int, min_year_v
         last_value = float(g["segment_value"].iloc[-1]) if not g.empty else 0
         first_year = str(nonzero[FIN_YEAR_COL].iloc[0]) if not nonzero.empty else "n/a"
         latest_year = str(g[FIN_YEAR_COL].iloc[-1]) if not g.empty else "n/a"
-        periods = max(0, int(nonzero["_fy_start_year"].iloc[-1] - nonzero["_fy_start_year"].iloc[0])) if len(nonzero) >= 2 else 0
-        cagr = ((last_value / first_value) ** (1 / periods) - 1) * 100 if first_value > 0 and last_value > 0 and periods > 0 else pd.NA
+        periods = (
+            max(
+                0,
+                int(
+                    nonzero["_fy_start_year"].iloc[-1]
+                    - nonzero["_fy_start_year"].iloc[0]
+                ),
+            )
+            if len(nonzero) >= 2
+            else 0
+        )
+        cagr = (
+            ((last_value / first_value) ** (1 / periods) - 1) * 100
+            if first_value > 0 and last_value > 0 and periods > 0
+            else pd.NA
+        )
         peak_idx = g["segment_value"].idxmax() if not g.empty else None
         peak_year = str(g.loc[peak_idx, FIN_YEAR_COL]) if peak_idx is not None else "n/a"
         peak_value = float(g.loc[peak_idx, "segment_value"]) if peak_idx is not None else 0
@@ -434,86 +505,154 @@ def prepare_growth_data(df: pd.DataFrame, value_col: str, top_n: int, min_year_v
         accenture_total = float(g["accenture_wins"].sum())
         share = accenture_total / total_value * 100 if total_value else 0
 
-        # Accenture share CAGR is calculated from Accenture's annual share of
-        # the selected capability market, not from Accenture dollar value.
+        # Accenture share CAGR is calculated from Accenture's annual share of the
+        # selected Service Offering population, not from Accenture dollar value.
         share_nonzero = g[g["segment_value"].gt(0)].copy()
         share_nonzero["_share_for_cagr"] = (
-            share_nonzero["accenture_wins"] / share_nonzero["segment_value"].replace(0, pd.NA) * 100
+            share_nonzero["accenture_wins"]
+            / share_nonzero["segment_value"].replace(0, pd.NA)
+            * 100
         )
         share_nonzero = share_nonzero.dropna(subset=["_share_for_cagr"])
         share_nonzero = share_nonzero[share_nonzero["_share_for_cagr"].gt(0)]
         if len(share_nonzero) >= 2:
             first_share = float(share_nonzero["_share_for_cagr"].iloc[0])
             last_share = float(share_nonzero["_share_for_cagr"].iloc[-1])
-            share_periods = max(0, int(share_nonzero["_fy_start_year"].iloc[-1] - share_nonzero["_fy_start_year"].iloc[0]))
-            accenture_share_cagr = ((last_share / first_share) ** (1 / share_periods) - 1) * 100 if first_share > 0 and last_share > 0 and share_periods > 0 else pd.NA
+            share_periods = max(
+                0,
+                int(
+                    share_nonzero["_fy_start_year"].iloc[-1]
+                    - share_nonzero["_fy_start_year"].iloc[0]
+                ),
+            )
+            accenture_share_cagr = (
+                ((last_share / first_share) ** (1 / share_periods) - 1) * 100
+                if first_share > 0 and last_share > 0 and share_periods > 0
+                else pd.NA
+            )
         else:
             accenture_share_cagr = pd.NA
 
-        summary_rows.append({
-            "capability": cap,
-            "total_value": total_value,
-            "latest_year": latest_year,
-            "latest_value": last_value,
-            "first_year": first_year,
-            "first_value": first_value,
-            "cagr_pct": cagr,
-            "peak_year": peak_year,
-            "peak_value": peak_value,
-            "accenture_wins": accenture_total,
-            "accenture_share_pct": share,
-            "accenture_share_cagr_pct": accenture_share_cagr,
-        })
+        summary_rows.append(
+            {
+                "capability": cap,
+                "total_value": total_value,
+                "latest_year": latest_year,
+                "latest_value": last_value,
+                "first_year": first_year,
+                "first_value": first_value,
+                "cagr_pct": cagr,
+                "peak_year": peak_year,
+                "peak_value": peak_value,
+                "accenture_wins": accenture_total,
+                "accenture_share_pct": share,
+                "accenture_share_cagr_pct": accenture_share_cagr,
+            }
+        )
 
     summary = pd.DataFrame(summary_rows).sort_values("total_value", ascending=False)
     return annual, summary
 
 
-def build_interactive_growth_chart(annual: pd.DataFrame, summary: pd.DataFrame, value_mode: str) -> str:
+def build_interactive_growth_chart(
+    annual: pd.DataFrame,
+    summary: pd.DataFrame,
+    value_mode: str,
+    market_mode: str = "tam",
+) -> str:
+    if market_mode == "tam":
+        selector_copy = (
+            "Select an Accenture-addressable Service Offering to see its annual "
+            "segment value and year-on-year movement across the financial-year history."
+        )
+        scope_annotation = (
+            "Grey = competitor-owned addressable value. Purple = Accenture wins. "
+            "Only Accenture-addressable contracts are included."
+        )
+        other_series_label = "Competitor-owned segment value"
+        other_hover_label = "Competitor-owned value"
+        accenture_series_label = "Accenture wins"
+        accenture_hover_label = "Accenture wins"
+        chart_scope_label = "annual addressable Service Offering value"
+    elif market_mode == "all":
+        selector_copy = (
+            "Select a Service Offering or classification group to see its annual value "
+            "and year-on-year movement across the complete Defence market."
+        )
+        scope_annotation = (
+            "Grey = awards to other suppliers. Purple = Accenture awards. "
+            "All contracts in the canonical Defence scope are included."
+        )
+        other_series_label = "Other-supplier segment value"
+        other_hover_label = "Other-supplier value"
+        accenture_series_label = "Accenture awards"
+        accenture_hover_label = "Accenture awards"
+        chart_scope_label = "annual All Defence Market value"
+    else:
+        raise ValueError(f"Unsupported market mode: {market_mode}")
+
     capabilities = summary["capability"].tolist()
     datasets = []
     for cap in capabilities:
         g = annual[annual["capability"].eq(cap)].sort_values("_fy_start_year")
         s = summary[summary["capability"].eq(cap)].iloc[0]
-        datasets.append({
-            "capability": cap,
-            "financial_years": g[FIN_YEAR_COL].astype(str).tolist(),
-            "values_b": g["segment_value_b"].fillna(0).round(6).tolist(),
-            "competitor_values_b": ((g["segment_value"] - g["accenture_wins"]).clip(lower=0) / 1_000_000_000).fillna(0).round(6).tolist(),
-            "accenture_wins_b": g["accenture_wins_b"].fillna(0).round(6).tolist(),
-            "values_label": g["segment_value"].map(short_money).tolist(),
-            "accenture_wins_label": g["accenture_wins"].map(short_money).tolist(),
-            "competitor_values_label": (g["segment_value"] - g["accenture_wins"]).clip(lower=0).map(short_money).tolist(),
-            "yoy": [None if pd.isna(x) else round(float(x), 2) for x in g["yoy_growth_pct"].tolist()],
-            "contracts": [int(x) for x in g["contracts"].fillna(0).tolist()],
-            "accenture_share": [None if pd.isna(x) else round(float(x), 2) for x in g["accenture_share_pct"].tolist()],
-            "summary": {
-                "total_value": short_money(s["total_value"]),
-                "latest_year": str(s["latest_year"]),
-                "latest_value": short_money(s["latest_value"]),
-                "cagr": "n/a" if pd.isna(s["cagr_pct"]) else f"{float(s['cagr_pct']):,.1f}%",
-                "peak_year": str(s["peak_year"]),
-                "peak_value": short_money(s["peak_value"]),
-                "accenture_share": f"{float(s['accenture_share_pct']):,.1f}%",
-                "accenture_share_cagr": "n/a" if pd.isna(s.get("accenture_share_cagr_pct", pd.NA)) else f"{float(s['accenture_share_cagr_pct']):,.1f}%",
-            },
-        })
+        datasets.append(
+            {
+                "capability": cap,
+                "financial_years": g[FIN_YEAR_COL].astype(str).tolist(),
+                "values_b": g["segment_value_b"].fillna(0).round(6).tolist(),
+                "competitor_values_b": (
+                    (g["segment_value"] - g["accenture_wins"]).clip(lower=0)
+                    / 1_000_000_000
+                ).fillna(0).round(6).tolist(),
+                "accenture_wins_b": g["accenture_wins_b"].fillna(0).round(6).tolist(),
+                "values_label": g["segment_value"].map(short_money).tolist(),
+                "accenture_wins_label": g["accenture_wins"].map(short_money).tolist(),
+                "competitor_values_label": (
+                    g["segment_value"] - g["accenture_wins"]
+                ).clip(lower=0).map(short_money).tolist(),
+                "yoy": [
+                    None if pd.isna(x) else round(float(x), 2)
+                    for x in g["yoy_growth_pct"].tolist()
+                ],
+                "contracts": [int(x) for x in g["contracts"].fillna(0).tolist()],
+                "accenture_share": [
+                    None if pd.isna(x) else round(float(x), 2)
+                    for x in g["accenture_share_pct"].tolist()
+                ],
+                "summary": {
+                    "total_value": short_money(s["total_value"]),
+                    "latest_year": str(s["latest_year"]),
+                    "latest_value": short_money(s["latest_value"]),
+                    "cagr": (
+                        "n/a"
+                        if pd.isna(s["cagr_pct"])
+                        else f"{float(s['cagr_pct']):,.1f}%"
+                    ),
+                    "peak_year": str(s["peak_year"]),
+                    "peak_value": short_money(s["peak_value"]),
+                    "accenture_share": f"{float(s['accenture_share_pct']):,.1f}%",
+                    "accenture_share_cagr": (
+                        "n/a"
+                        if pd.isna(s.get("accenture_share_cagr_pct", pd.NA))
+                        else f"{float(s['accenture_share_cagr_pct']):,.1f}%"
+                    ),
+                },
+            }
+        )
 
     options_html = "\n".join(
-        f'<option value="{i}">{cap}</option>' for i, cap in enumerate(capabilities)
+        f'<option value="{i}">{html.escape(str(cap))}</option>'
+        for i, cap in enumerate(capabilities)
     )
-    chart_data = json.dumps(datasets)
-    basis_label = "Total contract value" if value_mode == "total" else "Annualised contract value / run-rate"
+    chart_data = json.dumps(datasets, ensure_ascii=False)
 
     return f"""
 <div class="growth-app">
   <div class="growth-header">
     <div>
       <h2>Service Offering Growth Explorer</h2>
-      <p>
-        Select an Accenture-addressable Service Offering to see its annual segment value and YoY movement across the financial-year history.
-        Stacked bars show segment value and Accenture wins.</b>.
-      </p>
+      <p>{html.escape(selector_copy)} Stacked bars show the selected segment split between Accenture and other suppliers.</p>
     </div>
     <div class="selector-box">
       <label for="capabilitySelect">Service Offering</label>
@@ -544,10 +683,52 @@ def build_interactive_growth_chart(annual: pd.DataFrame, summary: pd.DataFrame, 
   const datasets = {chart_data};
   const select = document.getElementById('capabilitySelect');
   const chartId = 'growthChart';
+  const filterStorageKey = 'atlas-service-offering-growth-filters';
+  const scopeAnnotation = {json.dumps(scope_annotation)};
+  const otherSeriesLabel = {json.dumps(other_series_label)};
+  const otherHoverLabel = {json.dumps(other_hover_label)};
+  const accentureSeriesLabel = {json.dumps(accenture_series_label)};
+  const accentureHoverLabel = {json.dumps(accenture_hover_label)};
+  const chartScopeLabel = {json.dumps(chart_scope_label)};
 
   function rangeMode() {{
     const checked = document.querySelector('input[name="growthRange"]:checked');
     return checked ? checked.value : 'all';
+  }}
+
+  function selectedCapabilityName() {{
+    const d = datasets[Number(select.value || 0)] || datasets[0];
+    return d ? d.capability : '';
+  }}
+
+  function saveFilterState() {{
+    try {{
+      localStorage.setItem(filterStorageKey, JSON.stringify({{
+        capability: selectedCapabilityName(),
+        range: rangeMode()
+      }}));
+    }} catch (error) {{
+      console.warn('Unable to save ATLAS growth filters:', error);
+    }}
+  }}
+
+  function restoreFilterState() {{
+    select.value = '0';
+    const allYears = document.querySelector('input[name="growthRange"][value="all"]');
+    if (allYears) allYears.checked = true;
+
+    try {{
+      const saved = JSON.parse(localStorage.getItem(filterStorageKey) || 'null');
+      if (!saved) return;
+      const capabilityIndex = datasets.findIndex(d => d.capability === saved.capability);
+      if (capabilityIndex >= 0) select.value = String(capabilityIndex);
+      const requestedRange = document.querySelector(
+        'input[name="growthRange"][value="' + String(saved.range || 'all') + '"]'
+      );
+      if (requestedRange) requestedRange.checked = true;
+    }} catch (error) {{
+      console.warn('Unable to restore ATLAS growth filters:', error);
+    }}
   }}
 
   function parseFyStart(fy) {{
@@ -591,20 +772,20 @@ def build_interactive_growth_chart(annual: pd.DataFrame, summary: pd.DataFrame, 
     const rows = idx.map(i => {{
       const total = Number(d.values_b[i] || 0);
       const acc = Number(d.accenture_wins_b[i] || 0);
-      const comp = Math.max(0, Number(d.competitor_values_b[i] || 0));
+      const other = Math.max(0, Number(d.competitor_values_b[i] || 0));
       const share = total > 0 ? (acc / total * 100) : null;
       return {{
         fy: d.financial_years[i],
         fyStart: parseFyStart(d.financial_years[i]),
         totalB: total,
         accB: acc,
-        compB: comp,
+        otherB: other,
         yoy: d.yoy[i],
         contracts: d.contracts[i],
         share: share,
         totalLabel: moneyFromB(total),
         accLabel: moneyFromB(acc),
-        compLabel: moneyFromB(comp),
+        otherLabel: moneyFromB(other),
         shareLabel: share === null ? '' : pctText(share)
       }};
     }});
@@ -614,7 +795,10 @@ def build_interactive_growth_chart(annual: pd.DataFrame, summary: pd.DataFrame, 
     const latest = rows[rows.length - 1] || null;
     const peak = rows.reduce((best, r) => !best || r.totalB > best.totalB ? r : best, null);
     const capabilityCagr = cagrFromPairs(rows, 'totalB');
-    const shareRows = rows.map(r => ({{fyStart: r.fyStart, shareValue: r.share === null ? 0 : r.share}}));
+    const shareRows = rows.map(r => ({{
+      fyStart: r.fyStart,
+      shareValue: r.share === null ? 0 : r.share
+    }}));
     const shareCagr = cagrFromPairs(shareRows, 'shareValue');
     const shareTotal = totalB > 0 ? (accB / totalB * 100) : 0;
 
@@ -634,8 +818,13 @@ def build_interactive_growth_chart(annual: pd.DataFrame, summary: pd.DataFrame, 
 
   function buildBarAnnotations(fd, maxBar) {{
     const annotations = [{{
-      text: 'Grey = competitor-owned segment value. Purple = Accenture wins. Only Accenture-addressable contracts are included.',
-      x: 0, y: 1.15, xref: 'paper', yref: 'paper', showarrow: false, xanchor: 'left',
+      text: scopeAnnotation,
+      x: 0,
+      y: 1.15,
+      xref: 'paper',
+      yref: 'paper',
+      showarrow: false,
+      xanchor: 'left',
       font: {{size: 12, color: '#526070'}}
     }}];
 
@@ -643,17 +832,12 @@ def build_interactive_growth_chart(annual: pd.DataFrame, summary: pd.DataFrame, 
       const total = Number(row.totalB || 0);
       const acc = Number(row.accB || 0);
       const share = row.share;
-      const competitor = Number(row.compB || 0);
-      const tinyTotal = total < maxBar * 0.055;
+      const other = Number(row.otherB || 0);
       const hasAccenture = acc > 0.0005;
-
-      // Keep the total-value label fully inside the grey section.
-      // The fixed gap below the grey/purple boundary prevents the label
-      // from touching or clipping into even very thin purple segments.
       const labelPadding = maxBar * 0.055;
-      const greyLabelY = competitor > labelPadding * 1.8
-        ? competitor - labelPadding
-        : Math.max(competitor * 0.50, maxBar * 0.018);
+      const greyLabelY = other > labelPadding * 1.8
+        ? other - labelPadding
+        : Math.max(other * 0.50, maxBar * 0.018);
 
       annotations.push({{
         x: row.fy,
@@ -695,38 +879,57 @@ def build_interactive_growth_chart(annual: pd.DataFrame, summary: pd.DataFrame, 
     const fd = filteredDataset(d);
 
     document.getElementById('cardTotal').textContent = moneyFromB(fd.totalB);
-    document.getElementById('cardLatest').textContent = fd.latest ? (fd.latest.fy + ': ' + fd.latest.totalLabel) : 'n/a';
-    document.getElementById('cardCagr').textContent = fd.capabilityCagr === null ? 'n/a' : pctText(fd.capabilityCagr);
-    document.getElementById('cardShareCagr').textContent = fd.shareCagr === null ? 'n/a' : pctText(fd.shareCagr);
-    document.getElementById('cardPeak').textContent = fd.peak ? (fd.peak.fy + ': ' + fd.peak.totalLabel) : 'n/a';
+    document.getElementById('cardLatest').textContent = fd.latest
+      ? (fd.latest.fy + ': ' + fd.latest.totalLabel)
+      : 'n/a';
+    document.getElementById('cardCagr').textContent = fd.capabilityCagr === null
+      ? 'n/a'
+      : pctText(fd.capabilityCagr);
+    document.getElementById('cardShareCagr').textContent = fd.shareCagr === null
+      ? 'n/a'
+      : pctText(fd.shareCagr);
+    document.getElementById('cardPeak').textContent = fd.peak
+      ? (fd.peak.fy + ': ' + fd.peak.totalLabel)
+      : 'n/a';
     document.getElementById('cardShare').textContent = pctText(fd.shareTotal);
 
-    const competitorBar = {{
+    const otherBar = {{
       type: 'bar',
-      name: 'Competitor-owned segment value',
+      name: otherSeriesLabel,
       x: fd.rows.map(r => r.fy),
-      y: fd.rows.map(r => r.compB),
+      y: fd.rows.map(r => r.otherB),
       marker: {{color: '#D7DEE9'}},
       text: [],
       cliponaxis: false,
-      customdata: fd.rows.map(r => [r.totalLabel, r.compLabel, r.accLabel, r.contracts, r.share]),
-      hovertemplate: '<b>%{{x}}</b><br>Total segment value: %{{customdata[0]}}<br>Competitor-owned value: %{{customdata[1]}}<br>Accenture wins: %{{customdata[2]}}<br>Contracts: %{{customdata[3]}}<br>Accenture share: %{{customdata[4]:,.1f}}%<extra></extra>'
+      customdata: fd.rows.map(r => [
+        r.totalLabel,
+        r.otherLabel,
+        r.accLabel,
+        r.contracts,
+        r.share
+      ]),
+      hovertemplate: '<b>%{{x}}</b><br>Total segment value: %{{customdata[0]}}<br>' +
+        otherHoverLabel + ': %{{customdata[1]}}<br>' + accentureHoverLabel +
+        ': %{{customdata[2]}}<br>Contracts: %{{customdata[3]}}<br>Accenture share: ' +
+        '%{{customdata[4]:,.1f}}%<extra></extra>'
     }};
 
     const accentureBar = {{
       type: 'bar',
-      name: 'Accenture wins',
+      name: accentureSeriesLabel,
       x: fd.rows.map(r => r.fy),
       y: fd.rows.map(r => r.accB),
       marker: {{color: '#A100FF'}},
       text: [],
       cliponaxis: false,
       customdata: fd.rows.map(r => [r.accLabel, r.share, r.totalLabel]),
-      hovertemplate: '<b>%{{x}}</b><br>Accenture wins: %{{customdata[0]}}<br>Accenture share: %{{customdata[1]:,.1f}}%<br>Total segment value: %{{customdata[2]}}<extra></extra>'
+      hovertemplate: '<b>%{{x}}</b><br>' + accentureHoverLabel +
+        ': %{{customdata[0]}}<br>Accenture share: %{{customdata[1]:,.1f}}%<br>' +
+        'Total segment value: %{{customdata[2]}}<extra></extra>'
     }};
     const maxBar = Math.max(0.1, ...fd.rows.map(r => r.totalB));
     const layout = {{
-      title: d.capability + ' - annual addressable Service Offering value<br><sup>' + fd.label + '</sup>',
+      title: d.capability + ' - ' + chartScopeLabel + '<br><sup>' + fd.label + '</sup>',
       template: 'plotly_white',
       height: 670,
       margin: {{t: 95, l: 70, r: 90, b: 100}},
@@ -735,42 +938,98 @@ def build_interactive_growth_chart(annual: pd.DataFrame, summary: pd.DataFrame, 
       bargap: fd.rows.length <= 3 ? 0.48 : 0.34,
       xaxis: {{title: 'Financial year', tickangle: -35}},
       yaxis: {{title: '$B', range: [0, maxBar * 1.46], showgrid: true}},
-
       annotations: buildBarAnnotations(fd, maxBar)
     }};
 
-    Plotly.react(chartId, [competitorBar, accentureBar], layout, {{responsive:true, displayModeBar:false, staticPlot:false, scrollZoom:false, doubleClick:false}});
+    Plotly.react(
+      chartId,
+      [otherBar, accentureBar],
+      layout,
+      {{responsive:true, displayModeBar:false, staticPlot:false, scrollZoom:false, doubleClick:false}}
+    );
   }}
 
-  select.addEventListener('change', () => render(Number(select.value)));
-  document.querySelectorAll('input[name="growthRange"]').forEach(input => {{
-    input.addEventListener('change', () => render(Number(select.value)));
+  function clearAllPageFilters() {{
+    select.value = '0';
+    const allYears = document.querySelector('input[name="growthRange"][value="all"]');
+    if (allYears) allYears.checked = true;
+    saveFilterState();
+    render(0);
+  }}
+
+  select.addEventListener('change', () => {{
+    saveFilterState();
+    render(Number(select.value));
   }});
-  render(0);
+  document.querySelectorAll('input[name="growthRange"]').forEach(input => {{
+    input.addEventListener('change', () => {{
+      saveFilterState();
+      render(Number(select.value));
+    }});
+  }});
+
+  restoreFilterState();
+  window.atlasSaveServiceGrowthFilters = saveFilterState;
+  window.atlasClearServiceGrowthFilters = clearAllPageFilters;
+  saveFilterState();
+  render(Number(select.value));
 }})();
 </script>
 """
 
 
-def build_ranked_growth_table(summary: pd.DataFrame) -> str:
+def build_ranked_growth_table(
+    summary: pd.DataFrame,
+    market_mode: str = "tam",
+) -> str:
+    if market_mode == "tam":
+        description = (
+            "Use this table to identify which addressable segments are largest, "
+            "which are peaking, and which have the strongest CAGR."
+        )
+    elif market_mode == "all":
+        description = (
+            "Use this table to identify which segments in the complete Defence market "
+            "are largest, which are peaking, and which have the strongest CAGR."
+        )
+    else:
+        raise ValueError(f"Unsupported market mode: {market_mode}")
+
     table = summary.copy()
     table["Total value"] = table["total_value"].map(short_money)
     table["Latest FY value"] = table["latest_value"].map(short_money)
-    table["CAGR"] = table["cagr_pct"].map(lambda x: "n/a" if pd.isna(x) else f"{float(x):,.1f}%")
-    table["Peak FY"] = table.apply(lambda r: f"{r['peak_year']} ({short_money(r['peak_value'])})", axis=1)
-    table["Accenture share"] = table["accenture_share_pct"].map(lambda x: f"{float(x):,.1f}%")
-    show = table[["capability", "Total value", "Accenture share", "Latest FY value", "CAGR", "Peak FY"]].rename(columns={
-        "capability": "Service Offering",
-    })
+    table["CAGR"] = table["cagr_pct"].map(
+        lambda x: "n/a" if pd.isna(x) else f"{float(x):,.1f}%"
+    )
+    table["Peak FY"] = table.apply(
+        lambda r: f"{r['peak_year']} ({short_money(r['peak_value'])})",
+        axis=1,
+    )
+    table["Accenture share"] = table["accenture_share_pct"].map(
+        lambda x: f"{float(x):,.1f}%"
+    )
+    show = table[
+        [
+            "capability",
+            "Total value",
+            "Accenture share",
+            "Latest FY value",
+            "CAGR",
+            "Peak FY",
+        ]
+    ].rename(columns={"capability": "Service Offering"})
+
     rows = []
     for _, row in show.iterrows():
-        cells = "".join(f"<td>{row[col]}</td>" for col in show.columns)
+        cells = "".join(
+            f"<td>{html.escape(str(row[col]))}</td>" for col in show.columns
+        )
         rows.append(f"<tr>{cells}</tr>")
-    header = "".join(f"<th>{col}</th>" for col in show.columns)
+    header = "".join(f"<th>{html.escape(str(col))}</th>" for col in show.columns)
     return f"""
 <div class="table-panel">
   <h3>Ranked growth summary</h3>
-  <p>Use this table to identify which addressable segments are largest, which are peaking, and which have the strongest CAGR.</p>
+  <p>{html.escape(description)}</p>
   <div class="table-scroll">
     <table class="summary-table">
       <thead><tr>{header}</tr></thead>
@@ -781,26 +1040,103 @@ def build_ranked_growth_table(summary: pd.DataFrame) -> str:
 """
 
 
-def build_html(annual: pd.DataFrame, summary: pd.DataFrame, output_html: Path, value_mode: str) -> None:
+def build_html(
+    annual: pd.DataFrame,
+    summary: pd.DataFrame,
+    output_html: Path,
+    value_mode: str,
+    market_mode: str = "tam",
+) -> None:
+    if market_mode == "tam":
+        page_title = "Accenture Defence Service Offering Growth Explorer"
+        market_heading = "Accenture TAM"
+        market_summary = (
+            "Accenture-addressable Defence procurement, using only contracts where "
+            "the canonical is_addressable field is true."
+        )
+        headline_scope = "Across selected addressable Service Offerings"
+        executive_subject = "Accenture-addressable service offerings"
+        executive_tooltip = (
+            "The Defence procurement segments classified as relevant to Accenture's "
+            "consulting, technology, engineering, cloud, cyber, data and managed-services capabilities."
+        )
+        results_statement = (
+            "Results exclude non-addressable Defence spend and use the selected value basis."
+        )
+        market_note = (
+            "This view includes only contracts classified as addressable to Accenture."
+        )
+    elif market_mode == "all":
+        page_title = "All Defence Market Service Offering Growth Explorer"
+        market_heading = "All Defence Market"
+        market_summary = (
+            "The complete canonical Defence procurement population, including both "
+            "addressable and non-addressable contracts."
+        )
+        headline_scope = "Across selected All Defence Market segments"
+        executive_subject = "Defence Service Offering and classification segments"
+        executive_tooltip = (
+            "The complete set of Service Offering and classification labels retained "
+            "in the canonical Defence master, including non-addressable and unresolved spend."
+        )
+        results_statement = (
+            "Results include all Defence contracts in scope and use the selected value basis."
+        )
+        market_note = (
+            "This view includes non-addressable contracts; they are not silently excluded."
+        )
+    else:
+        raise ValueError(f"Unsupported market mode: {market_mode}")
+
     total_value = float(summary["total_value"].sum()) if not summary.empty else 0
     latest_total = float(summary["latest_value"].sum()) if not summary.empty else 0
     top_cap = summary.iloc[0]["capability"] if not summary.empty else "n/a"
     top_cap_value = float(summary.iloc[0]["total_value"]) if not summary.empty else 0.0
 
-    fastest = summary.dropna(subset=["cagr_pct"]).sort_values("cagr_pct", ascending=False).head(1)
+    fastest = (
+        summary.dropna(subset=["cagr_pct"])
+        .sort_values("cagr_pct", ascending=False)
+        .head(1)
+    )
     fastest_label = fastest.iloc[0]["capability"] if not fastest.empty else "n/a"
     fastest_cagr = float(fastest.iloc[0]["cagr_pct"]) if not fastest.empty else None
     fastest_cagr_label = f"{fastest_cagr:,.1f}%" if fastest_cagr is not None else "n/a"
-    basis_label = "Total contract value" if value_mode == "total" else "Annualised contract value / run-rate"
-    years = annual[FIN_YEAR_COL].dropna().astype(str).unique().tolist()
+    basis_label = (
+        "Total contract value"
+        if value_mode == "total"
+        else "Annualised contract value / run-rate"
+    )
+    years = (
+        annual[[FIN_YEAR_COL, "_fy_start_year"]]
+        .drop_duplicates()
+        .sort_values("_fy_start_year")[FIN_YEAR_COL]
+        .astype(str)
+        .tolist()
+    )
     period = f"{years[0]} to {years[-1]}" if years else "n/a"
 
-    html = f"""
+    market_controls = (
+        '<section class="atlas-market-controls" aria-label="Market selection">'
+        '<div><h2>Explore the Defence Market</h2>'
+        '<p>Choose the procurement population. Page filters are preserved when switching views.</p></div>'
+        '<div class="atlas-market-actions">'
+        f'<a class="atlas-market-choice {"active" if market_mode == "tam" else ""}" '
+        'data-market-target="ServiceOfferingGrowth.html" href="ServiceOfferingGrowth.html" '
+        f'aria-current="{str(market_mode == "tam").lower()}">Accenture TAM</a>'
+        f'<a class="atlas-market-choice {"active" if market_mode == "all" else ""}" '
+        'data-market-target="ServiceOfferingGrowth_AllMarket.html" href="ServiceOfferingGrowth_AllMarket.html" '
+        f'aria-current="{str(market_mode == "all").lower()}">All Defence Market</a>'
+        '<button type="button" id="atlasClearFilters">Clear All Filters</button>'
+        '</div></section>'
+    )
+
+    html_doc = f"""
 <!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Accenture Defence Service Offering Growth Explorer</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{html.escape(page_title)}</title>
   <script src="https://cdn.plot.ly/plotly-3.5.0.min.js"></script>
   <style>
     body {{ font-family: Arial, Helvetica, sans-serif; margin: 0; background: #f6f8fb; color: #1f2937; }}
@@ -808,167 +1144,203 @@ def build_html(annual: pd.DataFrame, summary: pd.DataFrame, output_html: Path, v
     h1 {{ margin:0 0 8px 0; font-size:30px; }}
     .subtitle {{ margin:0 0 20px 0; color:#526070; font-size:15px; line-height:1.45; }}
     .executive-summary {{
-  background:#ffffff;
-  border:1px solid #e5e7eb;
-  border-left:5px solid #A100FF;
-  border-radius:14px;
-  padding:18px 20px;
-  margin:0 0 18px 0;
-  box-shadow:0 1px 2px rgba(0,0,0,0.04);
-}}
-.executive-summary h2 {{ margin:0 0 9px 0; font-size:20px; color:#111827; }}
-.executive-summary p {{ margin:0 0 10px 0; color:#475467; line-height:1.55; }}
-.executive-summary p:last-child {{ margin-bottom:0; }}
-
+      background:#ffffff;
+      border:1px solid #e5e7eb;
+      border-left:5px solid #A100FF;
+      border-radius:14px;
+      padding:18px 20px;
+      margin:0 0 18px 0;
+      box-shadow:0 1px 2px rgba(0,0,0,0.04);
+    }}
+    .executive-summary h2 {{ margin:0 0 9px 0; font-size:20px; color:#111827; }}
+    .executive-summary p {{ margin:0 0 10px 0; color:#475467; line-height:1.55; }}
+    .executive-summary p:last-child {{ margin-bottom:0; }}
     .executive-summary strong[data-tooltip] {{
-      color: #111827;
-      border-bottom: 1px dotted #667085;
-      cursor: help;
-      outline: none;
+      color:#111827;
+      border-bottom:1px dotted #667085;
+      cursor:help;
+      outline:none;
     }}
     .exec-tooltip {{
-      position: fixed;
-      left: 0;
-      top: 0;
-      max-width: min(360px, calc(100vw - 24px));
-      padding: 10px 12px;
-      border-radius: 9px;
-      background: #101828;
-      color: #ffffff;
-      font-size: 12px;
-      font-weight: 400;
-      line-height: 1.4;
-      text-align: left;
-      white-space: normal;
-      box-shadow: 0 8px 24px rgba(16,24,40,.22);
-      opacity: 0;
-      visibility: hidden;
-      pointer-events: none;
-      z-index: 2147483647;
-      transition: opacity .12s ease;
+      position:fixed;
+      left:0;
+      top:0;
+      max-width:min(360px, calc(100vw - 24px));
+      padding:10px 12px;
+      border-radius:9px;
+      background:#101828;
+      color:#ffffff;
+      font-size:12px;
+      font-weight:400;
+      line-height:1.4;
+      text-align:left;
+      white-space:normal;
+      box-shadow:0 8px 24px rgba(16,24,40,.22);
+      opacity:0;
+      visibility:hidden;
+      pointer-events:none;
+      z-index:2147483647;
+      transition:opacity .12s ease;
     }}
-    .exec-tooltip.is-visible {{
-      opacity: 1;
-      visibility: visible;
+    .exec-tooltip.is-visible {{ opacity:1; visibility:visible; }}
+    .atlas-market-controls {{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:18px;
+      flex-wrap:wrap;
+      padding:20px 24px;
+      margin:18px 0 22px;
+      background:#ffffff;
+      border:1px solid #e5e7eb;
+      border-radius:16px;
+      box-shadow:0 1px 2px rgba(16,24,40,.04);
     }}
-    .cards {{ display: grid; grid-template-columns: repeat(5, minmax(190px, 1fr)); gap: 14px; margin: 18px 0 22px 0; }}
-    .card {{ background: #ffffff; border: 1px solid #e5e7eb; border-radius: 14px; padding: 17px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); min-width: 0; overflow: hidden; }}
-    .card-title {{ font-size: clamp(11px, 0.9vw, 13px); text-transform: uppercase; letter-spacing: .04em; color: #667085; margin-bottom: 8px; line-height: 1.25; }}
-    .card-value {{ font-size: clamp(20px, 1.8vw, 28px); font-weight: 700; color: #111827; margin-bottom: 5px; line-height: 1.08; overflow-wrap: anywhere; }}
-    .card-subtitle {{ font-size: clamp(11px, 0.9vw, 13px); color: #667085; line-height: 1.3; overflow-wrap: anywhere; }}
-    .card-subtitle b {{ color: #667085; font-weight: 400; font-family: inherit; }}
-    .panel {{ background: #ffffff; border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); margin-bottom: 18px; }}
-    .growth-header {{ display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; }}
-    .growth-header h2 {{ margin: 0 0 6px 0; font-size: 22px; }}
-    .growth-header p {{ margin: 0; color: #526070; line-height: 1.45; }}
-    .selector-box {{ min-width: 320px; }}
-    .selector-box label {{ display: block; font-size: 13px; color: #667085; margin-bottom: 6px; }}
-    .selector-box select {{ width: 100%; border: 1px solid #d0d5dd; border-radius: 10px; padding: 10px 12px; font-size: 14px; background: #fff; }}
-    .mini-cards {{ display: grid; grid-template-columns: repeat(6, minmax(140px, 1fr)); gap: 10px; margin: 16px 0 8px 0; }}
-    .mini-card {{ background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px; }}
-    .mini-card span {{ display: block; font-size: 12px; color: #667085; margin-bottom: 6px; }}
-    .mini-card b {{ font-size: 18px; color: #111827; }}
-    .accenture-mini-card {{ border-color: #d9b8ff; background: #fbf7ff; }}
-    .accenture-mini-card b {{ color: #A100FF; }}
-    .range-controls {{ display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 6px 0; }}
-    .range-pill {{ display: inline-flex; align-items: center; gap: 6px; border: 1px solid #d0d5dd; border-radius: 999px; padding: 7px 12px; background: #ffffff; font-size: 12px; cursor: pointer; white-space: nowrap; }}
-    .range-pill:has(input:checked) {{ background: #eef2ff; border-color: #636efa; color: #243b9f; font-weight: 600; }}
-    .table-panel h3 {{ margin: 0 0 4px 0; font-size: 18px; }}
-    .table-panel p {{ margin: 0 0 12px 0; color: #526070; font-size: 13px; }}
-    .table-scroll {{ max-height: 520px; overflow: auto; border: 1px solid #e5e7eb; border-radius: 10px; }}
-    .summary-table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
-    .summary-table th {{ position: sticky; top: 0; background: #f2f4f7; text-align: left; padding: 9px; border-bottom: 1px solid #e5e7eb; }}
-    .summary-table td {{ padding: 8px 9px; border-bottom: 1px solid #eef2f7; }}
-    .summary-table tr:hover {{ background: #fafafa; }}
-    .note {{ color: #526070; font-size: 13px; line-height: 1.45; margin-top: 14px; }}
-    @media (max-width: 1000px) {{ .cards, .mini-cards {{ grid-template-columns: 1fr; }} .growth-header {{ flex-direction: column; }} .selector-box {{ width: 100%; }} }}
+    .atlas-market-controls h2 {{ margin:0 0 5px; font-size:20px; color:#101828; }}
+    .atlas-market-controls p {{ margin:0; color:#667085; font-size:13px; }}
+    .atlas-market-actions {{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }}
+    .atlas-market-choice,
+    #atlasClearFilters {{
+      font:700 13px Arial,Helvetica,sans-serif;
+      padding:12px 15px;
+      border:1px solid #d0d5dd;
+      border-radius:9px;
+      background:#ffffff;
+      color:#344054;
+      text-decoration:none;
+      cursor:pointer;
+      white-space:nowrap;
+    }}
+    .atlas-market-choice.active {{ background:#A100FF; color:#ffffff; border-color:#A100FF; }}
+    .atlas-market-choice:hover,
+    #atlasClearFilters:hover {{ border-color:#A100FF; color:#7F00CC; }}
+    .atlas-market-choice.active:hover {{ color:#ffffff; }}
+    .cards {{ display:grid; grid-template-columns:repeat(5,minmax(190px,1fr)); gap:14px; margin:18px 0 22px 0; }}
+    .card {{ background:#ffffff; border:1px solid #e5e7eb; border-radius:14px; padding:17px; box-shadow:0 1px 2px rgba(0,0,0,0.04); min-width:0; overflow:hidden; }}
+    .card-title {{ font-size:clamp(11px,.9vw,13px); text-transform:uppercase; letter-spacing:.04em; color:#667085; margin-bottom:8px; line-height:1.25; }}
+    .card-value {{ font-size:clamp(20px,1.8vw,28px); font-weight:700; color:#111827; margin-bottom:5px; line-height:1.08; overflow-wrap:anywhere; }}
+    .card-subtitle {{ font-size:clamp(11px,.9vw,13px); color:#667085; line-height:1.3; overflow-wrap:anywhere; }}
+    .card-subtitle b {{ color:#667085; font-weight:400; font-family:inherit; }}
+    .panel {{ background:#ffffff; border:1px solid #e5e7eb; border-radius:14px; padding:18px; box-shadow:0 1px 2px rgba(0,0,0,0.04); margin-bottom:18px; }}
+    .growth-header {{ display:flex; justify-content:space-between; gap:18px; align-items:flex-start; }}
+    .growth-header h2 {{ margin:0 0 6px 0; font-size:22px; }}
+    .growth-header p {{ margin:0; color:#526070; line-height:1.45; }}
+    .selector-box {{ min-width:320px; }}
+    .selector-box label {{ display:block; font-size:13px; color:#667085; margin-bottom:6px; }}
+    .selector-box select {{ width:100%; border:1px solid #d0d5dd; border-radius:10px; padding:10px 12px; font-size:14px; background:#fff; }}
+    .mini-cards {{ display:grid; grid-template-columns:repeat(6,minmax(140px,1fr)); gap:10px; margin:16px 0 8px 0; }}
+    .mini-card {{ background:#f8fafc; border:1px solid #e5e7eb; border-radius:12px; padding:12px; }}
+    .mini-card span {{ display:block; font-size:12px; color:#667085; margin-bottom:6px; }}
+    .mini-card b {{ font-size:18px; color:#111827; }}
+    .accenture-mini-card {{ border-color:#d9b8ff; background:#fbf7ff; }}
+    .accenture-mini-card b {{ color:#A100FF; }}
+    .range-controls {{ display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 6px 0; }}
+    .range-pill {{ display:inline-flex; align-items:center; gap:6px; border:1px solid #d0d5dd; border-radius:999px; padding:7px 12px; background:#ffffff; font-size:12px; cursor:pointer; white-space:nowrap; }}
+    .range-pill:has(input:checked) {{ background:#eef2ff; border-color:#636efa; color:#243b9f; font-weight:600; }}
+    .table-panel h3 {{ margin:0 0 4px 0; font-size:18px; }}
+    .table-panel p {{ margin:0 0 12px 0; color:#526070; font-size:13px; }}
+    .table-scroll {{ max-height:520px; overflow:auto; border:1px solid #e5e7eb; border-radius:10px; }}
+    .summary-table {{ border-collapse:collapse; width:100%; font-size:13px; }}
+    .summary-table th {{ position:sticky; top:0; background:#f2f4f7; text-align:left; padding:9px; border-bottom:1px solid #e5e7eb; }}
+    .summary-table td {{ padding:8px 9px; border-bottom:1px solid #eef2f7; }}
+    .summary-table tr:hover {{ background:#fafafa; }}
+    .note {{ color:#526070; font-size:13px; line-height:1.45; margin-top:14px; }}
+    @media (max-width:1000px) {{
+      .cards,.mini-cards {{ grid-template-columns:1fr; }}
+      .growth-header {{ flex-direction:column; }}
+      .selector-box {{ width:100%; min-width:0; }}
+    }}
   </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Accenture Defence Service Offering Growth Explorer</h1>
-  <p class="subtitle">
-     </p>
+  <h1>{html.escape(page_title)}</h1>
+  <p class="subtitle">{html.escape(market_summary)}</p>
 
   <section class="executive-summary" aria-labelledby="executiveSummaryTitle">
     <h2 id="executiveSummaryTitle">Executive Summary</h2>
     <p>
       This dashboard provides an executive view of how
-      <strong tabindex="0" data-tooltip="The Defence procurement segments classified as relevant to Accenture's consulting, technology, engineering, cloud, cyber, data and managed-services capabilities.">Accenture-addressable service offerings</strong>
-      have evolved over the AusTender history. It highlights which service-offering areas are growing, contracting, peaking or becoming more volatile, helping identify where future demand may be emerging.
+      <strong tabindex="0" data-tooltip="{html.escape(executive_tooltip, quote=True)}">{html.escape(executive_subject)}</strong>
+      have evolved over the AusTender history. It highlights which areas are growing, contracting, peaking or becoming more volatile, helping identify where future demand may be emerging.
     </p>
     <p>
-      The <strong tabindex="0" data-tooltip="Headline measures covering the selected period, total addressable value, latest financial-year value, the largest service offering and the fastest-growing service offering.">Headline KPI cards</strong>
-      summarise the scale and direction of the market. The largest-service-offering card shows the highest-value segment across the selected period, while the fastest-growing card identifies the service offering with the strongest compound annual growth rate.
+      The headline KPI cards summarise the scale and direction of the selected market. The largest-segment card shows the highest-value group across the selected period, while the fastest-growing card identifies the group with the strongest compound annual growth rate.
     </p>
     <p>
-      The <strong tabindex="0" data-tooltip="An interactive financial-year chart where grey bars show competitor-owned addressable value, purple bars show Accenture wins and the line shows year-on-year segment growth.">Service Offering Growth Explorer</strong>
-      allows each service offering to be analysed individually. Use the Service Offering selector and financial-year controls to compare long-term performance with the latest, last 3 and last 5 Financial Year periods.
+      Use the Service Offering selector and financial-year controls to compare long-term performance with the latest, last 3 and last 5 financial-year periods. Purple represents Accenture awards and grey represents awards to other suppliers.
     </p>
-    <p>
-      Together, these views support capability investment decisions, strategic workforce planning, go-to-market prioritisation and identification of Defence service-offering areas experiencing sustained growth.
-      Results use Total Contract Value and exclude non-addressable Defence spend.
-    </p>
+    <p>{html.escape(results_statement)}</p>
   </section>
 
+  {market_controls}
+
   <div class="cards">
-    <div class="card"><div class="card-title">Selected period</div><div class="card-value">{period}</div><div class="card-subtitle">Financial years detected</div></div>
-    <div class="card"><div class="card-title">Top-N segment total</div><div class="card-value">{short_money(total_value)}</div><div class="card-subtitle">Across selected Service Offerings</div></div>
-    <div class="card"><div class="card-title">Latest FY total</div><div class="card-value">{short_money(latest_total)}</div><div class="card-subtitle">Sum of latest year values</div></div>
-    <div class="card"><div class="card-title">Largest Service Offering</div><div class="card-value">{short_money(top_cap_value)}</div><div class="card-subtitle"><b>{top_cap}</b></div></div>
-    <div class="card"><div class="card-title">Fastest growing</div><div class="card-value">{fastest_cagr_label}</div><div class="card-subtitle"><b>{fastest_label}</b></div></div>
+    <div class="card"><div class="card-title">Selected period</div><div class="card-value">{html.escape(period)}</div><div class="card-subtitle">Financial years detected</div></div>
+    <div class="card"><div class="card-title">Top-N segment total</div><div class="card-value">{short_money(total_value)}</div><div class="card-subtitle">{html.escape(headline_scope)}</div></div>
+    <div class="card"><div class="card-title">Latest FY total</div><div class="card-value">{short_money(latest_total)}</div><div class="card-subtitle">Sum of latest-year values</div></div>
+    <div class="card"><div class="card-title">Largest Service Offering</div><div class="card-value">{short_money(top_cap_value)}</div><div class="card-subtitle"><b>{html.escape(str(top_cap))}</b></div></div>
+    <div class="card"><div class="card-title">Fastest growing</div><div class="card-value">{fastest_cagr_label}</div><div class="card-subtitle"><b>{html.escape(str(fastest_label))}</b></div></div>
   </div>
 
   <div class="panel">
-    {build_interactive_growth_chart(annual, summary, value_mode)}
+    {build_interactive_growth_chart(annual, summary, value_mode, market_mode)}
   </div>
   <div class="panel">
-    {build_ranked_growth_table(summary)}
+    {build_ranked_growth_table(summary, market_mode)}
   </div>
 
   <p class="note">
-    Note: YoY growth is blank where the prior-year value is zero. Use <code>--value-mode annualised</code> for run-rate style forecasting, or the default total value mode for award-flow analysis.
+    Note: YoY growth is blank where the prior-year value is zero. {html.escape(market_note)} Use <code>--value-mode annualised</code> for run-rate style forecasting, or the default total value mode for award-flow analysis. Current value basis: {html.escape(basis_label)}.
   </p>
 </div>
 
 <div id="execTooltip" class="exec-tooltip" role="tooltip" aria-hidden="true"></div>
 <script>
 (function() {{
+  const clearButton = document.getElementById('atlasClearFilters');
+  if (clearButton) {{
+    clearButton.addEventListener('click', () => {{
+      if (typeof window.atlasClearServiceGrowthFilters === 'function') {{
+        window.atlasClearServiceGrowthFilters();
+      }}
+    }});
+  }}
+
+  document.querySelectorAll('[data-market-target]').forEach(link => {{
+    link.addEventListener('click', () => {{
+      if (typeof window.atlasSaveServiceGrowthFilters === 'function') {{
+        window.atlasSaveServiceGrowthFilters();
+      }}
+    }});
+  }});
+
   const tooltip = document.getElementById('execTooltip');
   if (!tooltip) return;
-
   let activeTarget = null;
 
   function placeTooltip(target) {{
     if (!activeTarget || activeTarget !== target) return;
-
     const rect = target.getBoundingClientRect();
     const tipRect = tooltip.getBoundingClientRect();
     const gap = 10;
     const edge = 12;
-
     let left = rect.left + (rect.width / 2) - (tipRect.width / 2);
     left = Math.max(edge, Math.min(left, window.innerWidth - tipRect.width - edge));
-
     let top = rect.top - tipRect.height - gap;
-    if (top < edge) {{
-      top = rect.bottom + gap;
-    }}
+    if (top < edge) top = rect.bottom + gap;
     top = Math.max(edge, Math.min(top, window.innerHeight - tipRect.height - edge));
-
     tooltip.style.left = Math.round(left) + 'px';
     tooltip.style.top = Math.round(top) + 'px';
   }}
 
   function showTooltip(target) {{
-    const text = target.getAttribute('data-tooltip');
-    if (!text) return;
-
+    const value = target.getAttribute('data-tooltip');
+    if (!value) return;
     activeTarget = target;
-    tooltip.textContent = text;
+    tooltip.textContent = value;
     tooltip.classList.add('is-visible');
     tooltip.setAttribute('aria-hidden', 'false');
-
     requestAnimationFrame(() => placeTooltip(target));
   }}
 
@@ -985,11 +1357,9 @@ def build_html(annual: pd.DataFrame, summary: pd.DataFrame, output_html: Path, v
     target.addEventListener('focus', () => showTooltip(target));
     target.addEventListener('blur', () => hideTooltip(target));
   }});
-
   window.addEventListener('scroll', () => {{
     if (activeTarget) placeTooltip(activeTarget);
-  }}, {{ passive: true }});
-
+  }}, {{ passive:true }});
   window.addEventListener('resize', () => {{
     if (activeTarget) placeTooltip(activeTarget);
   }});
@@ -999,7 +1369,7 @@ def build_html(annual: pd.DataFrame, summary: pd.DataFrame, output_html: Path, v
 </body>
 </html>
 """
-    output_html.write_text(atlas_navigation(html, "defence"), encoding="utf-8")
+    output_html.write_text(atlas_navigation(html_doc, "defence"), encoding="utf-8")
 
 
 def main() -> None:
@@ -1010,33 +1380,100 @@ def main() -> None:
     df_all = load_or_classify(args)
     value_col = get_value_col(df_all, args.value_mode)
     df_all = clean_value_columns(df_all, [VALUE_COL, ANNUALISED_VALUE_COL])
-    df = filter_defence_scope(df_all, include_all_agencies=args.include_all_agencies)
-    annual, summary = prepare_growth_data(df, value_col, args.top_n_capabilities, args.min_year_value)
+    df = filter_defence_scope(
+        df_all,
+        include_all_agencies=args.include_all_agencies,
+    )
 
-    annual_path = output_dir / "capability_growth_by_year.csv"
-    summary_path = output_dir / "capability_growth_summary.csv"
-    dashboard_path = output_dir / "ServiceOfferingGrowth.html"
+    tam_annual, tam_summary = prepare_growth_data(
+        df,
+        value_col,
+        args.top_n_capabilities,
+        args.min_year_value,
+        market_mode="tam",
+    )
+    all_annual, all_summary = prepare_growth_data(
+        df,
+        value_col,
+        args.top_n_capabilities,
+        args.min_year_value,
+        market_mode="all",
+    )
+
+    tam_annual_path = output_dir / "capability_growth_by_year.csv"
+    tam_summary_path = output_dir / "capability_growth_summary.csv"
+    all_annual_path = output_dir / "capability_growth_by_year_all_market.csv"
+    all_summary_path = output_dir / "capability_growth_summary_all_market.csv"
+    tam_dashboard_path = output_dir / "ServiceOfferingGrowth.html"
+    all_dashboard_path = output_dir / "ServiceOfferingGrowth_AllMarket.html"
 
     export_defence_scope_audit(df_all, df, value_col, output_dir)
 
-    annual.to_csv(annual_path, index=False)
-    slim_cols = [c for c in [AGENCY_COL, AGENCY_DIVISION_COL, AGENCY_BRANCH_COL, FIN_YEAR_COL, CN_ID_COL, SUPPLIER_COL, DESCRIPTION_COL, "capability", "is_addressable", "is_accenture", value_col] if c in df.columns]
-    df[slim_cols].to_csv(output_dir / "defence_filtered_contracts_slim.csv", index=False)
-    summary.to_csv(summary_path, index=False)
-    build_html(annual, summary, dashboard_path, args.value_mode)
+    # Preserve the existing CSV filenames for the Accenture TAM view. Explicit
+    # all-market filenames prevent downstream users receiving a silent scope change.
+    tam_annual.to_csv(tam_annual_path, index=False)
+    tam_summary.to_csv(tam_summary_path, index=False)
+    all_annual.to_csv(all_annual_path, index=False)
+    all_summary.to_csv(all_summary_path, index=False)
 
-    print("Service Offering growth dashboard complete")
+    slim_cols = [
+        c
+        for c in [
+            AGENCY_COL,
+            AGENCY_DIVISION_COL,
+            AGENCY_BRANCH_COL,
+            FIN_YEAR_COL,
+            CN_ID_COL,
+            SUPPLIER_COL,
+            DESCRIPTION_COL,
+            "capability",
+            "is_addressable",
+            "is_accenture",
+            value_col,
+        ]
+        if c in df.columns
+    ]
+    df[slim_cols].to_csv(
+        output_dir / "defence_filtered_contracts_slim.csv",
+        index=False,
+    )
+
+    build_html(
+        tam_annual,
+        tam_summary,
+        tam_dashboard_path,
+        args.value_mode,
+        market_mode="tam",
+    )
+    build_html(
+        all_annual,
+        all_summary,
+        all_dashboard_path,
+        args.value_mode,
+        market_mode="all",
+    )
+
+    print("Service Offering growth dashboards complete")
     print(f"Value mode: {args.value_mode} / column used: {value_col}")
-    print(f"Service Offerings shown: {len(summary)}")
     print(f"Rows after Defence filter: {len(df):,}")
     print(f"Defence filter active: {not args.include_all_agencies}")
-    print(f"Filtered Defence addressable value: {short_money(summary['total_value'].sum() if not summary.empty else 0)}")
-    print(f"Wrote: {dashboard_path}")
-    print(f"Wrote: {annual_path}")
-    print(f"Wrote: {summary_path}")
+    print(f"Accenture TAM Service Offerings shown: {len(tam_summary)}")
+    print(f"All Defence Market segments shown: {len(all_summary)}")
+    print(
+        "Accenture TAM value represented: "
+        + short_money(tam_summary["total_value"].sum() if not tam_summary.empty else 0)
+    )
+    print(
+        "All Defence Market value represented: "
+        + short_money(all_summary["total_value"].sum() if not all_summary.empty else 0)
+    )
+    print(f"Wrote: {tam_dashboard_path}")
+    print(f"Wrote: {all_dashboard_path}")
+    print(f"Wrote: {tam_annual_path}")
+    print(f"Wrote: {tam_summary_path}")
+    print(f"Wrote: {all_annual_path}")
+    print(f"Wrote: {all_summary_path}")
     print(f"Wrote: {output_dir / 'defence_filtered_contracts_slim.csv'}")
-    print(f"Wrote: {output_dir / 'defence_scope_audit_by_agency.csv'}")
-    print(f"Wrote: {output_dir / 'defence_scope_audit_by_org.csv'}")
 
 
 def atlas_navigation(html_text: str, industry: str) -> str:
