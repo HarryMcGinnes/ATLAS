@@ -154,12 +154,16 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
             + ". Rebuild it with build_health_filter_v2.py."
         )
 
-    out = df.loc[_parse_bool_series(df[ADDRESSABLE_COL])].copy()
+    # Retain the complete canonical Federal Health population. Addressability is a
+    # view filter, not a loader filter: the browser has both markets available.
+    out = df.copy()
+    out[ADDRESSABLE_COL] = _parse_bool_series(out[ADDRESSABLE_COL])
     if out.empty:
-        raise SystemExit("No addressable Health contracts found.")
+        raise SystemExit("No Health contracts found.")
 
-    # Service Offering is authoritative from the Health filter. Addressable rows that
-    # remain unresolved are shown as a visible 'Uncategorised' bucket so TAM reconciles.
+    # Service Offering is authoritative from the Health filter. Addressable rows
+    # that remain unresolved are shown as 'Uncategorised'. Non-addressable rows
+    # form their own explicit group in the All Federal Health Market view.
     if "service_offering" in out.columns:
         out[CAPABILITY_COL] = out["service_offering"]
     elif SERVICE_OFFERING_COL in out.columns:
@@ -167,6 +171,7 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
     elif CAPABILITY_COL not in out.columns:
         raise SystemExit("Health master is missing Service Offering/capability classification.")
     out[CAPABILITY_COL] = out[CAPABILITY_COL].fillna("Uncategorised").astype(str).str.strip().replace("", "Uncategorised")
+    out.loc[~out[ADDRESSABLE_COL], CAPABILITY_COL] = "Non-addressable / Unclassified"
 
     out[SUPPLIER_GROUP_COL] = _clean_text(out[SUPPLIER_GROUP_COL], "Unknown supplier")
     out[AGENCY_COL] = _clean_text(out[AGENCY_COL], "Unknown agency")
@@ -186,9 +191,10 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
     out["_start"] = pd.to_datetime(out[start_col], errors="coerce", dayfirst=True) if start_col else pd.Series(pd.NaT, index=out.index)
     out["_end"] = pd.to_datetime(out[end_col], errors="coerce", dayfirst=True) if end_col else pd.Series(pd.NaT, index=out.index)
 
-    print(f"Using canonical Health TAM dataset: {path}")
-    print(f"Addressable Health rows loaded: {len(out):,}")
-    print(f"Health TAM in selected value basis: {money(out['_value'].sum())}")
+    print(f"Using canonical Federal Health market dataset: {path}")
+    print(f"All Federal Health rows loaded: {len(out):,}")
+    print(f"All Federal Health value: {money(out['_value'].sum())}")
+    print(f"Accenture TAM value: {money(out.loc[out[ADDRESSABLE_COL], '_value'].sum())}")
     return out, value_col
 
 
@@ -218,7 +224,12 @@ def _latest_contract_revisions(frame: pd.DataFrame, id_column: str = "CN ID") ->
     return result.drop(columns=["_timeline_base_cn", "_timeline_revision",
                                 "_timeline_date", "_timeline_order"])
 
-def build_model(df: pd.DataFrame, top_n_suppliers: int, as_at: pd.Timestamp) -> dict[str, object]:
+def build_model(
+    df: pd.DataFrame,
+    top_n_suppliers: int,
+    as_at: pd.Timestamp,
+    supplier_options_override: list[str] | None = None,
+) -> dict[str, object]:
     total_tam = float(df["_value"].sum())
 
     supplier_total = (
@@ -233,6 +244,10 @@ def build_model(df: pd.DataFrame, top_n_suppliers: int, as_at: pd.Timestamp) -> 
         supplier_options = ["Accenture"] + [s for s in top_suppliers if s != "Accenture"]
     else:
         supplier_options = top_suppliers
+    if supplier_options_override is not None:
+        # A single union of suppliers across both markets keeps selection valid
+        # and stable as users switch views, including suppliers with zero TAM.
+        supplier_options = list(dict.fromkeys(supplier_options_override))
 
     cap_total = (
         df.groupby(CAPABILITY_COL, dropna=False)["_value"].sum()
@@ -313,15 +328,19 @@ def records(df: pd.DataFrame, cols: list[str]) -> list[dict[str, object]]:
     return frame.to_dict(orient="records")
 
 
-def build_html(model: dict[str, object], output_path: Path, as_at: pd.Timestamp, value_mode: str) -> None:
-    supplier_total: pd.DataFrame = model["supplier_total"]  # type: ignore[assignment]
-    supplier_cap: pd.DataFrame = model["supplier_capability"]  # type: ignore[assignment]
-    yearly: pd.DataFrame = model["yearly"]  # type: ignore[assignment]
-    agency_yearly: pd.DataFrame = model["agency_yearly"]  # type: ignore[assignment]
-    active_contracts: pd.DataFrame = model["active_contracts"]  # type: ignore[assignment]
-    supplier_options: list[str] = model["supplier_options"]  # type: ignore[assignment]
-    capabilities: list[str] = model["capabilities"]  # type: ignore[assignment]
+def build_html(
+    models: dict[str, dict[str, object]],
+    output_path: Path,
+    as_at: pd.Timestamp,
+    value_mode: str,
+) -> None:
+    """Build one self-contained HTML page with an in-place market toggle.
 
+    Keeping both scopes on the *same* HTML page avoids requiring changes to
+    GitHub Pages site-copy rules for a second _AllMarket file.
+    """
+    tam_model = models["tam"]
+    supplier_options: list[str] = tam_model["supplier_options"]  # type: ignore[assignment]
     if not supplier_options:
         raise SystemExit("No suppliers available for comparison.")
 
@@ -329,18 +348,26 @@ def build_html(model: dict[str, object], output_path: Path, as_at: pd.Timestamp,
     default_compare = next((s for s in supplier_options if s != default_supplier), default_supplier)
     options_html = "\n".join(f'<option value="{html.escape(s)}">{html.escape(s)}</option>' for s in supplier_options)
 
-    supplier_payload = records(supplier_total, [SUPPLIER_GROUP_COL, "supplier_value", "tam_share_pct", "rank_in_tam"])
-    cap_payload = records(supplier_cap, [SUPPLIER_GROUP_COL, CAPABILITY_COL, "supplier_capability_value", "capability_market", "capability_share_pct", "capability_rank", "contracts"])
-    yearly_payload = records(yearly, [SUPPLIER_GROUP_COL, CAPABILITY_COL, FIN_YEAR_COL, "value", "contracts", "capability_year_market", "share_pct", "_fy_start"])
-    agency_payload = records(agency_yearly, [SUPPLIER_GROUP_COL, AGENCY_COL, FIN_YEAR_COL, "value", "contracts", "_fy_start"])
-    contract_payload = records(active_contracts, [SUPPLIER_GROUP_COL, CN_ID_COL, DESCRIPTION_COL, CAPABILITY_COL, AGENCY_COL, FIN_YEAR_COL, "_start_display", "_end_display", "_value", "_total_value", CATEGORY_COL])
+    def browser_model(model: dict[str, object]) -> dict[str, object]:
+        return {
+            "supplier_total": records(model["supplier_total"], [SUPPLIER_GROUP_COL, "supplier_value", "tam_share_pct", "rank_in_tam"]),
+            "supplier_capability": records(model["supplier_capability"], [SUPPLIER_GROUP_COL, CAPABILITY_COL, "supplier_capability_value", "capability_market", "capability_share_pct", "capability_rank", "contracts"]),
+            "yearly": records(model["yearly"], [SUPPLIER_GROUP_COL, CAPABILITY_COL, FIN_YEAR_COL, "value", "contracts", "capability_year_market", "share_pct", "_fy_start"]),
+            "agency_yearly": records(model["agency_yearly"], [SUPPLIER_GROUP_COL, AGENCY_COL, FIN_YEAR_COL, "value", "contracts", "_fy_start"]),
+            "contracts": records(model["active_contracts"], [SUPPLIER_GROUP_COL, CN_ID_COL, DESCRIPTION_COL, CAPABILITY_COL, AGENCY_COL, FIN_YEAR_COL, "_start_display", "_end_display", "_value", "_total_value", CATEGORY_COL]),
+            "supplier_options": model["supplier_options"],
+            "capabilities": model["capabilities"],
+            "market_total": model["total_tam"],
+        }
+
+    market_payload = {scope: browser_model(model) for scope, model in models.items()}
     colour_payload = {s: supplier_colour(s) for s in supplier_options}
 
     html_doc = f"""<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>Competitive Intelligence inside Accenture Health TAM</title>
+<title>Federal Health Competitive Intelligence | ATLAS</title>
 <script src="https://cdn.plot.ly/plotly-3.5.0.min.js"></script>
 <style>
 body{{font-family:Arial,Helvetica,sans-serif;margin:0;background:#f6f8fb;color:#1f2937}}
@@ -414,19 +441,40 @@ select{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;backgr
 }}
 .leader-gap-row .leader-gap-dots{{grid-column:1 / -1;letter-spacing:.22em}}
 .note{{color:#667085;font-size:12px;margin-top:14px;line-height:1.4}}
-@media(max-width:1000px){{.selectors,.cards,.leaderboard-grid{{grid-template-columns:1fr}}}}
+.atlas-market{{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px;padding:20px 24px;margin:16px 0 22px;background:#fff;border:1px solid #e5e7eb;border-radius:16px}}
+.atlas-market-copy h2{{margin:0 0 5px;font-size:20px;color:#101828}}
+.atlas-market-copy p{{margin:0;color:#667085;font-size:13px}}
+.atlas-market-actions{{display:flex;flex-wrap:wrap;align-items:center;gap:8px}}
+.atlas-market-choice,#atlasClearFilters{{border:1px solid #d0d5dd;padding:12px 15px;background:#fff;color:#344054;font:700 13px Arial,Helvetica,sans-serif;border-radius:9px;cursor:pointer}}
+.atlas-market-choice[aria-pressed="true"]{{background:#A100FF;color:#fff;border-color:#A100FF}}
+#atlasClearFilters:hover{{border-color:#A100FF;color:#7F00CC;background:#FCF5FF}}
+.atlas-market-choice:focus-visible,#atlasClearFilters:focus-visible{{outline:3px solid #7F56D9;outline-offset:2px}}
+@media(max-width:1000px){{.selectors,.cards,.leaderboard-grid{{grid-template-columns:1fr}}.atlas-market-actions{{width:100%}}}}
+@media(max-width:650px){{.atlas-market{{padding:16px}}.atlas-market-choice,#atlasClearFilters{{flex:1}}}}
 </style>
 </head>
 <body>
 <div class="wrap">
-<h1>Competitive Intelligence inside Accenture Health TAM</h1>
-<div class="subtitle">Supplier-vs-supplier positioning across the addressable Health market.</div>
+<h1>Federal Health Competitive Intelligence</h1>
+<div id="healthScopeDescription" class="subtitle">Supplier-vs-supplier positioning across the Accenture-addressable Federal Health market.</div>
+
+<section class="atlas-market" aria-label="Market selection">
+  <div class="atlas-market-copy">
+    <h2>Explore the Federal Health Market</h2>
+    <p id="atlasMarketDescription">Showing contracts addressable to Accenture</p>
+  </div>
+  <div class="atlas-market-actions" role="group" aria-label="Market scope and filter controls">
+    <button type="button" class="atlas-market-choice" data-market="tam" aria-pressed="true">Accenture TAM</button>
+    <button type="button" class="atlas-market-choice" data-market="all" aria-pressed="false">All Federal Health Market</button>
+    <button type="button" id="atlasClearFilters">Clear All Filters</button>
+  </div>
+</section>
 
 <section class="executive">
 <h2>Executive purpose</h2>
-<p>This dashboard compares two suppliers inside Accenture's addressable Health market. It brings together market position, Service Offering strength, current contracts and agency presence so users can understand where each supplier is established and where competitive gaps or contract opportunities may exist.</p>
+<p id="healthExecutivePurpose">This dashboard compares two suppliers inside Accenture's addressable Health market. It brings together market position, Service Offering strength, current contracts and agency presence.</p>
 <ul class="questions">
-<li>How large is each supplier's position inside Health TAM?</li>
+<li id="healthMarketPurposeQuestion">How large is each supplier's position inside Health TAM?</li>
 <li>Where does each supplier lead by Service Offering?</li>
 <li>Which current contracts underpin that position?</li>
 <li>Which Health agencies are most important to the selected supplier?</li>
@@ -439,46 +487,48 @@ select{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;backgr
 <div class="selector-card"><label>Financial-year period</label><select id="periodSelect"></select></div>
 </div>
 
-<section class="insight"><h2>Start with the headline comparison</h2><p>The KPI cards show relative scale, TAM share, strongest Service Offering and breadth across the addressable Health market.</p></section>
+<section class="insight"><h2>Start with the headline comparison</h2><p id="healthKpiInsight">The KPI cards show relative scale, TAM share, strongest Service Offering and breadth across the addressable Health market.</p></section>
 <div class="cards">
 <div class="supplier-kpi-block" id="selectedBlock"><div class="supplier-kpi-title" id="selectedTitle"></div><div class="supplier-kpi-grid">
 <div class="card" id="selectedCardValue"><div class="card-title">Period value</div><div class="card-value" id="selectedValue"></div><div class="card-subtitle" id="selectedValueSub"></div></div>
-<div class="card" id="selectedCardShare"><div class="card-title">Addressable TAM share</div><div class="card-value" id="selectedShare"></div><div class="card-subtitle" id="selectedRank"></div></div>
+<div class="card" id="selectedCardShare"><div class="card-title" id="selectedShareLabel">Addressable TAM share</div><div class="card-value" id="selectedShare"></div><div class="card-subtitle" id="selectedRank"></div></div>
 <div class="card" id="selectedCardLargest"><div class="card-title">Largest Service Offering</div><div class="card-value" id="selectedLargest"></div><div class="card-subtitle" id="selectedLargestSub"></div></div>
 <div class="card" id="selectedCardBreadth"><div class="card-title">Service Offering presence</div><div class="card-value" id="selectedBreadth"></div><div class="card-subtitle" id="selectedBreadthSub"></div></div>
 </div></div>
 <div class="supplier-kpi-block" id="compareBlock"><div class="supplier-kpi-title" id="compareTitle"></div><div class="supplier-kpi-grid">
 <div class="card" id="compareCardValue"><div class="card-title">Period value</div><div class="card-value" id="compareValue"></div><div class="card-subtitle" id="compareValueSub"></div></div>
-<div class="card" id="compareCardShare"><div class="card-title">Addressable TAM share</div><div class="card-value" id="compareShare"></div><div class="card-subtitle" id="compareRank"></div></div>
+<div class="card" id="compareCardShare"><div class="card-title" id="compareShareLabel">Addressable TAM share</div><div class="card-value" id="compareShare"></div><div class="card-subtitle" id="compareRank"></div></div>
 <div class="card" id="compareCardLargest"><div class="card-title">Largest Service Offering</div><div class="card-value" id="compareLargest"></div><div class="card-subtitle" id="compareLargestSub"></div></div>
 <div class="card" id="compareCardBreadth"><div class="card-title">Service Offering presence</div><div class="card-value" id="compareBreadth"></div><div class="card-subtitle" id="compareBreadthSub"></div></div>
 </div></div>
 </div>
 
 <div class="grid">
-<section class="insight"><h2>Compare where each supplier is strongest</h2><p>The Service Offering comparison shows the scale of each supplier's position across Health TAM, including unresolved addressable work as <b>Uncategorised</b>.</p></section>
-<div class="panel"><div class="chart-heading"><h3 class="chart-title" id="profileTitle"></h3><p class="chart-subtitle">Award value by Service Offering inside the selected Health TAM period.</p></div><div id="profileChart" style="height:650px"></div></div>
+<section class="insight"><h2>Compare where each supplier is strongest</h2><p id="healthProfileInsight">The Service Offering comparison shows the scale of each supplier's position across Health TAM, including unresolved addressable work as Uncategorised.</p></section>
+<div class="panel"><div class="chart-heading"><h3 class="chart-title" id="profileTitle"></h3><p class="chart-subtitle" id="healthProfileSubtitle">Award value by Service Offering inside the selected Health TAM period.</p></div><div id="profileChart" style="height:650px"></div></div>
 
 <section class="insight"><h2>See the wider competitive field</h2><p>Each Service Offering leaderboard ranks suppliers independently within the selected period. The top five are shown, with both selected suppliers included even when they sit outside the top five.</p></section>
-<div class="panel"><div class="chart-heading"><h3 class="chart-title">Service Offering Supplier Leaderboards</h3><p class="chart-subtitle">Market share is calculated against the addressable value of each Service Offering.</p></div><div id="leaderboards" class="leaderboard-grid"></div></div>
+<div class="panel"><div class="chart-heading"><h3 class="chart-title">Service Offering Supplier Leaderboards</h3><p class="chart-subtitle" id="healthLeaderboardSubtitle">Market share is calculated against the addressable value of each Service Offering.</p></div><div id="leaderboards" class="leaderboard-grid"></div></div>
 
-<section class="insight"><h2>Understand the current contracts behind the position</h2><p>The current-contract timeline is controlled by the first supplier selector and shows active addressable Health contracts with valid start and end dates.</p></section>
+<section class="insight"><h2>Understand the current contracts behind the position</h2><p id="healthTimelineInsight">The current-contract timeline is controlled by the first supplier selector and shows active Health contracts with valid start and end dates in the selected market.</p></section>
 <div class="panel"><div class="chart-heading"><h3 class="chart-title" id="timelineTitle"></h3><p class="chart-subtitle" id="timelineSubtitle"></p></div><div id="timelineChart"></div></div>
 
-<section class="insight"><h2>Read the supplier's Health footprint</h2><p>The agency view replaces the Defence-domain logic. It shows where the selected supplier's addressable Health position is concentrated across the Health agencies in scope.</p></section>
+<section class="insight"><h2>Read the supplier's Health footprint</h2><p id="healthAgencyInsight">The agency view shows the selected supplier's position across the Health agencies in scope.</p></section>
 <div class="panel"><div class="chart-heading"><h3 class="chart-title" id="agencyTitle"></h3><p class="chart-subtitle">Selected-period award value by Health agency.</p></div><div id="agencyChart" style="height:500px"></div></div>
 </div>
 
-<p class="note">Note: this is not whole-of-Health procurement share. It is supplier positioning inside Health contracts classified as addressable to Accenture. Service Offering and addressability are read from the canonical Health master dataset and are not reclassified in this dashboard.</p>
+<p class="note" id="healthMethodNote">Addressability and Service Offering are read from the canonical Health master dataset. No reclassification is performed.</p>
 </div>
 <script>
-const SUPPLIER_TOTAL={json.dumps(supplier_payload)};
-const SUPPLIER_CAP={json.dumps(cap_payload)};
-const YEARLY={json.dumps(yearly_payload)};
-const AGENCY_YEARLY={json.dumps(agency_payload)};
-const CONTRACTS={json.dumps(contract_payload)};
+const MODELS={json.dumps(market_payload, ensure_ascii=False)};
 const SUPPLIER_COLOURS={json.dumps(colour_payload)};
-const CAPABILITIES={json.dumps(capabilities)};
+let MARKET_MODE='tam';
+let SUPPLIER_TOTAL=[];
+let SUPPLIER_CAP=[];
+let YEARLY=[];
+let AGENCY_YEARLY=[];
+let CONTRACTS=[];
+let CAPABILITIES=[];
 const DEFAULT_SUPPLIER={json.dumps(default_supplier)};
 const DEFAULT_COMPARE={json.dumps(default_compare)};
 const AS_AT_DATE={json.dumps(as_at.strftime('%Y-%m-%d'))};
@@ -526,7 +576,7 @@ function rowsForSupplier(supplier){{
  const marketByCap=new Map();markets.forEach((v,k)=>{{const cap=k.split('||')[0];marketByCap.set(cap,(marketByCap.get(cap)||0)+v)}});
  return Array.from(new Set([...marketByCap.keys(),...vals.keys()])).map(cap=>{{const v=Number(vals.get(cap)||0),m=Number(marketByCap.get(cap)||0);return{{capability:cap,value:v,market:m,share:m?v/m*100:0}}}})
 }}
-function setKpis(prefix,supplier){{const s=summaryFor(supplier),p=period();document.getElementById(prefix+'Title').textContent=(prefix==='selected'?'Selected supplier: ':'Comparison supplier: ')+supplier;document.getElementById(prefix+'Value').textContent=money(s.awards);document.getElementById(prefix+'ValueSub').textContent='Award value inside '+p.label+' Health TAM';document.getElementById(prefix+'Share').textContent=pct(s.tam_share_pct);document.getElementById(prefix+'Rank').textContent=s.rank?'Rank #'+s.rank+' inside '+p.label+' TAM':'No awards in selected period';document.getElementById(prefix+'Largest').textContent=s.largest;document.getElementById(prefix+'LargestSub').textContent=money(s.largestValue)+' in '+p.label;document.getElementById(prefix+'Breadth').textContent=s.breadth+' Service Offering'+(s.breadth===1?'':'s');document.getElementById(prefix+'BreadthSub').textContent='Presence in '+s.breadth+' of '+CAPABILITIES.length+' addressable categories'}}
+function setKpis(prefix,supplier){{const s=summaryFor(supplier),p=period();document.getElementById(prefix+'Title').textContent=(prefix==='selected'?'Selected supplier: ':'Comparison supplier: ')+supplier;document.getElementById(prefix+'Value').textContent=money(s.awards);document.getElementById(prefix+'ValueSub').textContent='Award value inside '+p.label+' '+(MARKET_MODE==='tam'?'Accenture TAM':'All Federal Health Market');document.getElementById(prefix+'Share').textContent=pct(s.tam_share_pct);document.getElementById(prefix+'Rank').textContent=s.rank?'Rank #'+s.rank+' inside '+p.label+' '+(MARKET_MODE==='tam'?'TAM':'market'):'No awards in selected period';document.getElementById(prefix+'Largest').textContent=s.largest;document.getElementById(prefix+'LargestSub').textContent=money(s.largestValue)+' in '+p.label;document.getElementById(prefix+'Breadth').textContent=s.breadth+' Service Offering'+(s.breadth===1?'':'s');document.getElementById(prefix+'BreadthSub').textContent='Presence in '+s.breadth+' of '+CAPABILITIES.length+' market categories'}}
 
 function setComparisonClass(cardId,ownValue,otherValue){{
  const el=document.getElementById(cardId);if(!el)return;
@@ -638,7 +688,7 @@ function updateLeaderboards(supplier,compare){{
     }}).join('');
 
     return '<section class="leaderboard-card"><h4>'+esc(cap)+'</h4>'+
-      '<div class="leaderboard-market">'+money(d.marketByCap.get(cap)||0)+' addressable market · '+esc(p.label)+'</div>'+
+      '<div class="leaderboard-market">'+money(d.marketByCap.get(cap)||0)+' '+(MARKET_MODE==='tam'?'addressable market':'total market')+' · '+esc(p.label)+'</div>'+
       body+
       '</section>';
   }}).join('');
@@ -649,9 +699,9 @@ function updateAgency(supplier){{const p=period(),ys=new Set(p.years);const rows
 function updateTimeline(supplier){{
  const p=period(),ys=new Set(p.years);
  let rows=CONTRACTS.filter(r=>r.supplier_group===supplier&&(p.key==='all'||ys.has(String(r['Financial Year']||''))));
- document.getElementById('timelineTitle').textContent=supplier+' current addressable contracts';
+ document.getElementById('timelineTitle').textContent=supplier+' current '+(MARKET_MODE==='tam'?'addressable':'market')+' contracts';
  document.getElementById('timelineSubtitle').textContent='Active as at '+dateLabel(AS_AT_DATE)+' · grouped by Service Offering · ranked by total contract value within each section · first supplier selector controls this view.';
- if(!rows.length){{Plotly.react('timelineChart',[],{{template:'plotly_white',height:380,annotations:[{{text:'No active addressable contracts with valid dates for '+esc(supplier)+'.',showarrow:false,x:.5,y:.5,xref:'paper',yref:'paper'}}],xaxis:{{visible:false}},yaxis:{{visible:false}}}},{{responsive:true,displayModeBar:false}});return}}
+ if(!rows.length){{Plotly.react('timelineChart',[],{{template:'plotly_white',height:380,annotations:[{{text:'No active contracts with valid dates in this market for '+esc(supplier)+'.',showarrow:false,x:.5,y:.5,xref:'paper',yref:'paper'}}],xaxis:{{visible:false}},yaxis:{{visible:false}}}},{{responsive:true,displayModeBar:false}});return}}
 
  const asAt=parseDate(AS_AT_DATE);
  const capabilityColour={{
@@ -674,7 +724,7 @@ function updateTimeline(supplier){{
    return asAt&&end?Math.max(0,Math.round((end-asAt)/86400000)):null;
  }}
  function compact(v,n){{
-   const s=String(v||'').replace(/\s+/g,' ').trim();
+   const s=String(v||'').replace(/\\s+/g,' ').trim();
    return s.length>n?s.slice(0,n-1)+'…':s;
  }}
 
@@ -786,7 +836,67 @@ function updateTimeline(supplier){{
 }}
 
 function render(){{const s=document.getElementById('supplierSelect').value,c=document.getElementById('compareSelect').value;document.getElementById('selectedBlock').style.borderTopColor=colour(s);document.getElementById('compareBlock').style.borderTopColor=colour(c);document.getElementById('selectedTitle').style.borderLeftColor=colour(s);document.getElementById('compareTitle').style.borderLeftColor=colour(c);setKpis('selected',s);setKpis('compare',c);updateKpiComparison(s,c);updateProfile(s,c);updateLeaderboards(s,c);updateTimeline(s);updateAgency(s)}}
-buildPeriods();document.getElementById('supplierSelect').value=DEFAULT_SUPPLIER;document.getElementById('compareSelect').value=DEFAULT_COMPARE;['supplierSelect','compareSelect','periodSelect'].forEach(id=>document.getElementById(id).addEventListener('change',render));render();
+function marketLabel(){{return MARKET_MODE==='tam'?'Accenture TAM':'All Federal Health Market'}}
+function updateMarketCopy(){{
+  const tam=MARKET_MODE==='tam',label=marketLabel();
+  document.getElementById('atlasMarketDescription').textContent=tam
+    ? 'Showing contracts classified as addressable to Accenture'
+    : 'Showing all Federal Health procurement, including non-addressable contracts';
+  document.querySelectorAll('.atlas-market-choice').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.market===MARKET_MODE)));
+  document.getElementById('healthScopeDescription').textContent='Supplier-vs-supplier positioning across '+label+'.';
+  document.getElementById('healthExecutivePurpose').textContent='Compare two suppliers across '+label+' using market position, Service Offering strength, active contracts and agency presence.';
+  document.getElementById('healthMarketPurposeQuestion').textContent="How large is each supplier's position inside "+label+'?';
+  document.getElementById('healthKpiInsight').textContent='The KPI cards compare supplier scale, share, Service Offering strength and breadth within '+label+'.';
+  document.getElementById('selectedShareLabel').textContent=tam?'Addressable TAM share':'All Market share';
+  document.getElementById('compareShareLabel').textContent=tam?'Addressable TAM share':'All Market share';
+  document.getElementById('healthProfileInsight').textContent=tam
+    ? 'Supplier positioning within addressable Health Service Offerings. Unresolved addressable work appears as Uncategorised.'
+    : 'Supplier positioning across all Federal Health procurement. Non-addressable spend is shown under Non-addressable / Unclassified.';
+  document.getElementById('healthProfileSubtitle').textContent='Award value by Service Offering within '+label+'.';
+  document.getElementById('healthLeaderboardSubtitle').textContent='Each Service Offering share uses the selected market as its denominator.';
+  document.getElementById('healthTimelineInsight').textContent='The first supplier selector controls the active-contract timeline for '+label+'. Only records with valid start/end dates are plotted.';
+  document.getElementById('healthAgencyInsight').textContent="The agency view shows the selected supplier's position across Federal Health agencies within "+label+'.';
+  document.getElementById('healthMethodNote').textContent=tam
+    ? 'Accenture TAM contains is_addressable = true contracts only. Market share uses that same addressable population. No dashboard reclassification is performed.'
+    : 'All Federal Health Market contains addressable and non-addressable contracts. Non-addressable Service Offerings are grouped into an explicit category; original contract values remain unchanged.';
+}}
+function setMarketMode(mode, preserveFilters=true){{
+  if (!MODELS[mode]) return;
+  const s=document.getElementById('supplierSelect'),c=document.getElementById('compareSelect'),p=document.getElementById('periodSelect');
+  const previousSupplier=preserveFilters?s.value:DEFAULT_SUPPLIER;
+  const previousCompare=preserveFilters?c.value:DEFAULT_COMPARE;
+  const previousPeriod=preserveFilters&&window.PERIODS?period().key:'all';
+  MARKET_MODE=mode;
+  const m=MODELS[mode];
+  SUPPLIER_TOTAL=m.supplier_total;
+  SUPPLIER_CAP=m.supplier_capability;
+  YEARLY=m.yearly;
+  AGENCY_YEARLY=m.agency_yearly;
+  CONTRACTS=m.contracts;
+  CAPABILITIES=m.capabilities;
+  const options=m.supplier_options||[];
+  const optionHTML=options.map(x=>'<option value="'+esc(x)+'">'+esc(x)+'</option>').join('');
+  s.innerHTML=optionHTML;c.innerHTML=optionHTML;
+  s.value=options.includes(previousSupplier)?previousSupplier:(options.includes(DEFAULT_SUPPLIER)?DEFAULT_SUPPLIER:options[0]);
+  c.value=options.includes(previousCompare)?previousCompare:(options.includes(DEFAULT_COMPARE)?DEFAULT_COMPARE:options[0]);
+  buildPeriods();
+  const idx=(window.PERIODS||[]).findIndex(x=>x.key===previousPeriod);
+  p.value=String(idx>=0?idx:0);
+  updateMarketCopy();
+  render();
+}}
+function clearAllFilters(){{
+  // Scope is intentionally untouched: clearing filters must not change market.
+  const s=document.getElementById('supplierSelect'),c=document.getElementById('compareSelect');
+  s.value=DEFAULT_SUPPLIER;
+  c.value=DEFAULT_COMPARE;
+  document.getElementById('periodSelect').value='0';
+  render();
+}}
+['supplierSelect','compareSelect','periodSelect'].forEach(id=>document.getElementById(id).addEventListener('change',render));
+document.querySelectorAll('.atlas-market-choice').forEach(b=>b.addEventListener('click',()=>setMarketMode(b.dataset.market,true)));
+document.getElementById('atlasClearFilters').addEventListener('click',clearAllFilters);
+setMarketMode('tam',false);
 </script>
 </body>
 </html>"""
@@ -804,22 +914,58 @@ def main() -> None:
         raise SystemExit("Could not parse --as-at. Use YYYY-MM-DD.")
     as_at = pd.Timestamp(as_at).normalize()
 
-    model = build_model(df, args.top_n_suppliers, as_at)
+    tam_df = df.loc[df[ADDRESSABLE_COL]].copy()
+    if tam_df.empty:
+        raise SystemExit("No addressable Federal Health contracts found; cannot build default TAM view.")
+
+    # Build a stable supplier selector from the top suppliers in either market.
+    # This prevents a selected supplier being silently replaced when toggling.
+    def ranked_suppliers(frame: pd.DataFrame) -> list[str]:
+        vals = frame.groupby(SUPPLIER_GROUP_COL)["_value"].sum().sort_values(ascending=False)
+        return vals.head(max(1, args.top_n_suppliers)).index.astype(str).tolist()
+
+    options = list(dict.fromkeys(
+        (["Accenture"] if "Accenture" in set(df[SUPPLIER_GROUP_COL]) else [])
+        + ranked_suppliers(tam_df)
+        + ranked_suppliers(df)
+    ))
+    models = {
+        "tam": build_model(tam_df, args.top_n_suppliers, as_at, supplier_options_override=options),
+        "all": build_model(df, args.top_n_suppliers, as_at, supplier_options_override=options),
+    }
     dashboard_path = output_dir / "HealthCompetitiveIntelligence.html"
-    build_html(model, dashboard_path, as_at, args.value_mode)
+    build_html(models, dashboard_path, as_at, args.value_mode)
 
-    model["supplier_total"].to_csv(output_dir / "supplier_summary.csv", index=False)  # type: ignore[index]
-    model["supplier_capability"].to_csv(output_dir / "supplier_service_offering.csv", index=False)  # type: ignore[index]
-    model["yearly"].to_csv(output_dir / "supplier_service_offering_yearly.csv", index=False)  # type: ignore[index]
-    model["agency_yearly"].to_csv(output_dir / "supplier_agency_yearly.csv", index=False)  # type: ignore[index]
-    model["active_contracts"].head(args.top_n_contracts).to_csv(output_dir / "current_contracts.csv", index=False)  # type: ignore[index]
+    # Keep existing export names as TAM outputs; new All-Market files are explicit.
+    export_fields = {
+        "supplier_total": "supplier_summary.csv",
+        "supplier_capability": "supplier_service_offering.csv",
+        "yearly": "supplier_service_offering_yearly.csv",
+        "agency_yearly": "supplier_agency_yearly.csv",
+        "active_contracts": "current_contracts.csv",
+    }
+    for scope, model in models.items():
+        for key, filename in export_fields.items():
+            suffix = "" if scope == "tam" else "_all_market"
+            stem, ext = filename.rsplit(".", 1)
+            frame = model[key]
+            if key == "active_contracts":
+                frame = frame.head(args.top_n_contracts)
+            frame.to_csv(output_dir / f"{stem}{suffix}.{ext}", index=False)
 
-    print("Health competitive intelligence dashboard complete")
+    expected_tam = float(tam_df["_value"].sum())
+    expected_all = float(df["_value"].sum())
+    for scope, expected in (("tam", expected_tam), ("all", expected_all)):
+        actual = float(models[scope]["supplier_total"]["supplier_value"].sum())
+        if abs(expected - actual) > 0.01:
+            raise RuntimeError(f"Health Competitive Intelligence {scope} reconciliation failed: {actual:,.2f} != {expected:,.2f}")
+    print("Health Competitive Intelligence market reconciliation: PASS")
     print(f"Input: {path}")
     print(f"Value mode: {args.value_mode} / column used: {value_col}")
     print(f"As-at date: {as_at.strftime('%Y-%m-%d')}")
-    print(f"Addressable Health TAM: {money(float(model['total_tam']))}")
-    print(f"Suppliers in dropdown: {len(model['supplier_options'])}")
+    print(f"Accenture TAM: {money(expected_tam)}")
+    print(f"All Federal Health Market: {money(expected_all)}")
+    print(f"Suppliers in dropdown: {len(options)}")
     print(f"Wrote: {dashboard_path}")
 
 
