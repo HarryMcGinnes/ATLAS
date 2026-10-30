@@ -204,38 +204,42 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
             + ", ".join(sorted(missing_family_cols))
         )
         
-    if family_cols.issubset(out.columns):
-        valid_family = (
-            out["cn_family_date_status"]
-            .astype("string")
-            .eq("valid")
-            .fillna(False)
-        )
 
-        family_start = pd.to_datetime(
-            out["cn_family_start_date"],
-            errors="coerce",
-            dayfirst=True,
-        )
+    family_start = pd.to_datetime(
+        out["cn_family_start_date"],
+        errors="coerce",
+        dayfirst=True,
+    )
+    family_end = pd.to_datetime(
+        out["cn_family_end_date"],
+        errors="coerce",
+        dayfirst=True,
+    )
 
-        family_end = pd.to_datetime(
-            out["cn_family_end_date"],
-            errors="coerce",
-            dayfirst=True,
-        )
+    family_status = (
+        out["cn_family_date_status"]
+        .astype("string")
+        .fillna("review_missing_family")
+    )
 
-        valid_family &= (
-            family_start.notna()
-            & family_end.notna()
-            & (family_end >= family_start)
-        )
+    credible_statuses = {
+        "valid",
+        "inferred_family_start",
+        "inferred_original_missing",
+    }
 
-        out["_start"] = out["_start"].where(
-            ~valid_family, family_start
-        )
-        out["_end"] = out["_end"].where(
-            ~valid_family, family_end
-        )
+    credible = (
+        family_status.isin(credible_statuses)
+        & family_start.notna()
+        & family_end.notna()
+        & family_end.ge(family_start)
+    )
+
+    # Use family dates only where the reconstructed period
+    # is credible. Unresolved dates are left blank for review.
+    out["_start"] = family_start.where(credible)
+    out["_end"] = family_end.where(credible)
+    out["_date_status"] = family_status
 
     duration = (out["_end"] - out["_start"]).dt.days
     out["_duration_days"] = duration.where(duration >= 0)
@@ -412,22 +416,7 @@ select,input{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;
 <button id="clearFiltersBtn" class="clear-btn" type="button">Clear all filters</button>
 </section>
 
-<div class="field" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
-  <div style="min-width:220px;flex:1">
-    <label for="groupMode">Group contracts by</label>
-    <select id="groupMode">
-      <option value="status">Contract status</option>
-      <option value="start">Start financial year</option>
-      <option value="end">End financial year</option>
-    </select>
-  </div>
-  <div style="min-width:220px;flex:1">
-    <label for="fyFilter">Contracts active during FY</label>
-    <select id="fyFilter">
-      <option value="all">All financial years</option>
-    </select>
-  </div>
-</div>
+
 <div class="summary-line" id="summaryLine"></div>
 <div id="yearContainer"></div>
 <p class="method">The dashboard is scoped to contracts classified as Accenture-addressable within the Health portfolio. Ongoing contracts are shown once in the top bracket; remaining contracts are grouped by their recorded financial year. Supplier and Service Offering filters are ranked by addressable spend within the current agency scope.</p>
@@ -647,14 +636,11 @@ function toggleYear(id) {{
   section.classList.toggle('open');
 }}
 
+
 function render() {{
-  const selectedFY = document.getElementById('fyFilter').value;
-  const mode = document.getElementById('groupMode').value;
-  const rows = filteredRows().filter(r => overlapsFY(r, selectedFY));
-  
-updateContractInsights();
-  const marketLabel = document.getElementById('marketMode').value === 'tam'? 'addressable ': '';
-  
+  const rows = filteredRows();
+
+  updateContractInsights();
   updateKpis(rows);
 
   document.getElementById('summaryLine').textContent =
@@ -675,55 +661,33 @@ updateContractInsights();
   const groups = new Map();
 
   rows.forEach(r => {{
-    let group;
+    const status = contractStatus(r);
+    let group = status;
 
-
-    if (mode === 'status') {{
-      const status = contractStatus(r);
-
-      if (status === 'Completed contracts') {{
-        const signedFY = fyFromDate(r.start_date_iso);
-        group = signedFY === null
-          ? 'Unknown Dates'
-          : fyLabel(signedFY);
-      }} else {{
-        group = status;
-      }}
-    }} else {{
-      const iso = mode === 'start'
-        ? r.start_date_iso
-        : r.end_date_iso;
-      group = fyLabel(fyFromDate(iso));
+    if (status === 'Completed contracts') {{
+      const fy = fyFromDate(r.start_date_iso);
+      group = fy === null
+        ? 'Unknown Dates'
+        : fyLabel(fy);
     }}
-
 
     if (!groups.has(group)) groups.set(group, []);
     groups.get(group).push(r);
   }});
 
-  let keys = [...groups.keys()];
+  const priority = key => {{
+    if (key === 'Active contracts') return 0;
+    if (key === 'Upcoming contracts') return 1;
+    if (key === 'Unknown Dates') return 3;
+    return 2;
+  }};
 
-
-  if (mode === 'status') {{
-    keys.sort((a,b) => {{
-      const priority = key => {{
-        if (key === 'Active contracts') return 0;
-        if (key === 'Upcoming contracts') return 1;
-        if (key === 'Unknown Dates') return 3;
-        return 2;
-      }};
-
-      const pa = priority(a);
-      const pb = priority(b);
-
-      if (pa !== pb) return pa - pb;
-
-      // Completed contract FY groups: newest first.
-      if (pa === 2) return b.localeCompare(a);
-
-      return a.localeCompare(b);
-    }});
-}}
+  const keys = [...groups.keys()].sort((a,b) => {{
+    const difference = priority(a) - priority(b);
+    return difference || (priority(a) === 2
+      ? b.localeCompare(a)
+      : a.localeCompare(b));
+  }});
 
   const sections = [];
 
@@ -739,6 +703,9 @@ updateContractInsights();
 
   container.innerHTML = sections.join('');
 }}
+
+  
+
 function clearAllFilters(){{document.getElementById('agencySelect').value=DEFAULT_AGENCY;document.getElementById('searchInput').value='';document.getElementById('minValueInput').value='';document.getElementById('datedOnly').checked=false;document.getElementById('groupMode').value = 'status';
 document.getElementById('fyFilter').value = 'all';document.getElementById('capabilityFilter').innerHTML='<option value="All Service Offerings">All Service Offerings</option>';document.getElementById('supplierFilter').innerHTML='<option value="All suppliers">All suppliers</option>';refreshFilters();render()}}
 
