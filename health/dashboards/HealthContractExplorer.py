@@ -450,52 +450,6 @@ function contractStatus(r) {{
   return 'Active contracts';
 }}
 
-function overlapsFY(r, year) {{
-  if (year === 'all') return true;
-  if (!r.start_date_iso || !r.end_date_iso ||
-      r.start_date_iso > r.end_date_iso) return false;
-
-  const y = Number(year);
-  const fyStart = y + '-07-01';
-  const fyEnd = (y + 1) + '-06-30';
-
-  return r.start_date_iso <= fyEnd && r.end_date_iso >= fyStart;
-}}
-
-
-function populateFYFilter() {{
-  const select = document.getElementById('fyFilter');
-  const years = new Set();
-
-  // Only populate FY options within the supported reporting window.
-  // All financial years still includes every contract.
-  const MIN_FY = 2015;
-  const MAX_FY = 2026;
-
-  DATA.records.forEach(r => {{
-    const start = fyFromDate(r.start_date_iso);
-    const end = fyFromDate(r.end_date_iso);
-
-    if (start === null || end === null || end < start) return;
-
-    const first = Math.max(start, MIN_FY);
-    const last = Math.min(end, MAX_FY);
-
-    for (let y = first; y <= last; y++) {{
-      years.add(y);
-    }}
-  }});
-
-  select.innerHTML =
-    '<option value="all">All financial years</option>' +
-    [...years]
-      .sort((a, b) => b - a)
-      .map(y =>
-        `<option value="${{y}}">${{fyLabel(y)}}</option>`
-      )
-      .join('');
-}}
-
 
 function esc(v){{return String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;')}}
 function money(v){{v=Number(v||0);const s=v<0?'-':'';const a=Math.abs(v);if(a>=1e9)return s+'$'+(a/1e9).toFixed(2)+'B';if(a>=1e8)return s+'$'+(a/1e6).toFixed(0)+'M';if(a>=1e7)return s+'$'+(a/1e6).toFixed(1)+'M';if(a>=1e6)return s+'$'+(a/1e6).toFixed(2)+'M';if(a>=1e3)return s+'$'+(a/1e3).toFixed(0)+'K';return s+'$'+a.toFixed(0)}}
