@@ -2955,9 +2955,21 @@ def chart_addressable_mix(summary: dict[str, float | int | str]) -> str:
         },
     )
 
-def build_html(df: pd.DataFrame, summary: dict[str, float | int | str], value_col: str, output_html: Path, top_n_suppliers: int, top_n_capabilities: int, value_mode: str, fy_start: str | None = None, fy_end: str | None = None) -> None:
+def build_html(df: pd.DataFrame, summary: dict[str, float | int | str], value_col: str, output_html: Path, top_n_suppliers: int, top_n_capabilities: int, value_mode: str, fy_start: str | None = None, fy_end: str | None = None, market_mode: str = "tam") -> None:
     basis_label = "Total contract value" if value_mode == "total" else "Annualised contract value / run-rate"
     period_label = _format_fy_range_label(fy_start, fy_end)
+
+    # Each market view is independently pre-rendered from the canonical master.
+    # Navigation between the two HTML documents avoids recalculating Parquet in the browser.
+    market_controls = (
+        '<section class="atlas-market-controls" aria-label="Market selection">'
+        '<div><h2>Explore the Defence Market</h2><p>Choose the procurement population for this dashboard.</p></div>'
+        '<div class="atlas-market-actions">'
+        f'<a class="atlas-market-choice {"active" if market_mode == "tam" else ""}" href="DefenceTAM.html" aria-current="{str(market_mode == "tam").lower()}">Accenture TAM</a>'
+        f'<a class="atlas-market-choice {"active" if market_mode == "all" else ""}" href="DefenceTAM_AllMarket.html" aria-current="{str(market_mode == "all").lower()}">All Defence Market</a>'
+        '<button type="button" id="atlasClearFilters">Clear All Filters</button>'
+        '</div></section>'
+    )
 
     cards = [
         ("Total procurement", money(summary["total"]), f"{basis_label}, {period_label}"),
@@ -3396,6 +3408,13 @@ def build_html(df: pd.DataFrame, summary: dict[str, float | int | str], value_co
       .capability-donut-legend {{ grid-template-columns: 1fr; }}
       .donut-card-title {{ min-height: 0; font-size: 15px; padding: 2px 8px 8px 8px; }}
     }}
+  .atlas-market-controls {{display:flex;justify-content:space-between;align-items:center;gap:18px;flex-wrap:wrap;padding:20px 24px;margin:18px 0 22px;background:white;border:1px solid #e5e7eb;border-radius:16px}}
+  .atlas-market-controls h2 {{margin:0 0 5px;font-size:20px}}
+  .atlas-market-controls p {{margin:0;color:#667085;font-size:13px}}
+  .atlas-market-actions {{display:flex;gap:8px;align-items:center;flex-wrap:wrap}}
+  .atlas-market-choice,#atlasClearFilters {{font:700 13px Arial,sans-serif;padding:12px 15px;border:1px solid #d0d5dd;border-radius:9px;background:#fff;color:#344054;text-decoration:none;cursor:pointer}}
+  .atlas-market-choice.active {{background:#A100FF;color:white;border-color:#A100FF}}
+  #atlasClearFilters:hover {{border-color:#A100FF}}
   </style>
 </head>
 <body>
@@ -3440,6 +3459,7 @@ def build_html(df: pd.DataFrame, summary: dict[str, float | int | str], value_co
         </p>
     </section>
 
+  {market_controls}
   <div class="cards">
     {cards_html}
   </div>
@@ -3471,6 +3491,21 @@ def build_html(df: pd.DataFrame, summary: dict[str, float | int | str], value_co
 
 <div id="execTooltip" class="exec-tooltip" role="tooltip" aria-hidden="true"></div>
 <script>
+document.getElementById('atlasClearFilters').addEventListener('click', function() {{
+  // Reset all interactive period selectors, without altering the market mode.
+  document.querySelectorAll('input[type="radio"]').forEach(function(input) {{
+    if (input.value === '0' || input.value === 'all') {{
+      input.checked = true;
+      input.dispatchEvent(new Event('change', {{bubbles:true}}));
+    }}
+  }});
+  document.querySelectorAll('select').forEach(function(select) {{
+    if (select.options.length) {{
+      select.selectedIndex = 0;
+      select.dispatchEvent(new Event('change', {{bubbles:true}}));
+    }}
+  }});
+}});
 (function() {{
   const tooltip = document.getElementById('execTooltip');
   if (!tooltip) return;
@@ -3654,9 +3689,14 @@ def main() -> None:
         export_market_relevance_audit(df, value_col, output_dir)
         _write_audit_cache_manifest(output_dir, cache_key)
 
+    # Render separate static market populations. The existing dashboard's
+    # internal TAM decomposition is retained in both views.
+    tam_df = df.loc[df["is_addressable"]].copy()
+    if tam_df.empty:
+        raise SystemExit("Cannot generate Accenture TAM view: no addressable contracts")
     build_html(
-        df,
-        summary,
+        tam_df,
+        summarise(tam_df, value_col),
         value_col,
         dashboard_path,
         args.top_n_suppliers,
@@ -3664,6 +3704,19 @@ def main() -> None:
         args.value_mode,
         args.fy_start,
         args.fy_end,
+        market_mode="tam",
+    )
+    build_html(
+        df,
+        summary,
+        value_col,
+        output_dir / "DefenceTAM_AllMarket.html",
+        args.top_n_suppliers,
+        args.top_n_capabilities,
+        args.value_mode,
+        args.fy_start,
+        args.fy_end,
+        market_mode="all",
     )
 
 
