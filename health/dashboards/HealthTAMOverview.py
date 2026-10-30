@@ -338,188 +338,327 @@ def validate_health_tam_reconciliation(
     print(f"Accenture wins: A${full['accenture']/1e9:,.3f}B")
 
 
-def build_payloads(df: pd.DataFrame, value_col: str) -> dict:
+
+def build_payloads(df: pd.DataFrame, value_col: str, market_mode: str = "tam") -> dict:
+    """Build one complete payload from the already-selected market population.
+
+    ``df`` is addressable-only for the Accenture TAM page and contains every
+    Federal Health contract for the All Market page.  Every supplier and
+    Service Offering chart therefore uses the same population as its page.
+    The TAM decomposition remains visible as a clearly-labelled subset within
+    the All Market view.
+    """
+    if market_mode not in {"tam", "all"}:
+        raise ValueError(f"Unsupported market mode: {market_mode}")
+
     donut_sets, service_sets, supplier_sets = [], [], []
     for label, sub in fy_options(df):
-        s = summary(sub, value_col)
-        wins = sub[sub["is_addressable"] & sub["is_accenture"]]
-        win_so = wins.groupby("Service Offering")[value_col].sum().sort_values(ascending=False)
+        selected = sub.copy()
+        s = summary(selected, value_col)
+
+        addressable_accenture = selected[
+            selected["is_addressable"] & selected["is_accenture"]
+        ].copy()
+        win_so = (
+            addressable_accenture.groupby("Service Offering", dropna=False)[value_col]
+            .sum()
+            .sort_values(ascending=False)
+        )
         donut_sets.append({
-            "label": label, **s,
-            "total_label": money(s["total"]), "addressable_label": money(s["addressable"]),
-            "not_addressable_label": money(s["not_addressable"]), "accenture_label": money(s["accenture"]),
+            "label": label,
+            **s,
+            "total_label": money(s["total"]),
+            "addressable_label": money(s["addressable"]),
+            "not_addressable_label": money(s["not_addressable"]),
+            "accenture_label": money(s["accenture"]),
             "competitor_label": money(s["competitor"]),
-            "offerings": [{"name": k, "value": float(v), "label": money(v), "colour": SO_COLOURS.get(k, "#DDD6FE")} for k, v in win_so.items() if v > 0],
+            "offerings": [
+                {
+                    "name": str(k) if pd.notna(k) and str(k).strip() else "Uncategorised",
+                    "value": float(v),
+                    "label": money(v),
+                    "colour": SO_COLOURS.get(str(k), "#DDD6FE"),
+                }
+                for k, v in win_so.items()
+                if float(v) > 0
+            ],
         })
 
-        addr = sub[sub["is_addressable"]].copy()
-        wins = wins.copy()
+        accenture_selected = selected[selected["is_accenture"]].copy()
 
-        # Keep the five defined Service Offerings, but do not let addressable
-        # contracts disappear from the chart just because their SO is unresolved.
-        # Any blank, null or unexpected SO is grouped into a final
-        # "Uncategorised" bucket so the service-offering bars reconcile back to
-        # the full addressable TAM.
-        def _chart_so(series: pd.Series) -> pd.Series:
-            cleaned = series.fillna("").astype(str).str.strip()
-            return cleaned.where(cleaned.isin(SERVICE_OFFERINGS), "Uncategorised")
+        def _chart_so(frame: pd.DataFrame) -> pd.Series:
+            cleaned = frame["Service Offering"].fillna("").astype(str).str.strip()
+            bucketed = cleaned.where(cleaned.isin(SERVICE_OFFERINGS), "Uncategorised")
+            if market_mode == "all":
+                bucketed = bucketed.where(
+                    frame["is_addressable"],
+                    "Non-addressable / Unclassified",
+                )
+            return bucketed
 
-        addr["_chart_service_offering"] = _chart_so(addr["Service Offering"])
-        wins["_chart_service_offering"] = _chart_so(wins["Service Offering"])
+        selected["_chart_service_offering"] = _chart_so(selected)
+        accenture_selected["_chart_service_offering"] = _chart_so(accenture_selected)
 
-        so_total = addr.groupby("_chart_service_offering")[value_col].sum()
-        so_acc = wins.groupby("_chart_service_offering")[value_col].sum()
+        so_total = selected.groupby("_chart_service_offering")[value_col].sum()
+        so_acc = accenture_selected.groupby("_chart_service_offering")[value_col].sum()
         chart_offerings = SERVICE_OFFERINGS + ["Uncategorised"]
+        if market_mode == "all":
+            chart_offerings.append("Non-addressable / Unclassified")
+
         service_rows = [{
             "name": so,
             "total": float(so_total.get(so, 0)),
             "accenture": float(so_acc.get(so, 0)),
-            "total_b": float(so_total.get(so, 0))/1e9,
-            "accenture_b": float(so_acc.get(so, 0))/1e9,
+            "total_b": float(so_total.get(so, 0)) / 1e9,
+            "accenture_b": float(so_acc.get(so, 0)) / 1e9,
             "total_label": money(so_total.get(so, 0)),
             "accenture_label": money(so_acc.get(so, 0)),
-        } for so in chart_offerings if so_total.get(so, 0) > 0]
-        # First horizontal-bar category renders at the bottom, so ascending values
-        # display as largest-to-smallest from top to bottom.
+        } for so in chart_offerings if float(so_total.get(so, 0)) > 0]
+
+        # Plotly renders the final horizontal category at the top.
         service_rows.sort(key=lambda r: (r["accenture"], r["total"]))
         service_sets.append({"label": label, "rows": service_rows})
 
-        sup = (addr.groupby("supplier_group").agg(value=(value_col,"sum"), contracts=(CN_ID_COL,"nunique") if CN_ID_COL in addr.columns else (value_col,"size")).reset_index().sort_values("value",ascending=False).head(15))
-        tam = float(addr[value_col].sum())
+        supplier_summary = (
+            selected.groupby("supplier_group", dropna=False)
+            .agg(
+                value=(value_col, "sum"),
+                contracts=(CN_ID_COL, "nunique")
+                if CN_ID_COL in selected.columns
+                else (value_col, "size"),
+            )
+            .reset_index()
+            .sort_values("value", ascending=False)
+            .head(15)
+        )
+        selected_total = float(selected[value_col].sum())
         supplier_sets.append({
             "label": label,
-            "rows": [{"name": r.supplier_group, "value": float(r.value), "value_label": money(r.value), "share": (float(r.value)/tam*100 if tam else 0), "contracts": int(r.contracts)} for r in sup.itertuples()]
+            "rows": [
+                {
+                    "name": str(r.supplier_group),
+                    "value": float(r.value),
+                    "value_label": money(r.value),
+                    "share": float(r.value) / selected_total * 100 if selected_total else 0,
+                    "contracts": int(r.contracts),
+                }
+                for r in supplier_summary.itertuples()
+            ],
         })
-    return {"donut": donut_sets, "service": service_sets, "supplier": supplier_sets}
 
+    return {"donut": donut_sets, "service": service_sets, "supplier": supplier_sets}
 
 def controls(name: str, sets: list[dict]) -> str:
     return "".join(f'<label class="pill"><input type="radio" name="{name}" value="{i}" {"checked" if i==0 else ""}> {d["label"]}</label>' for i,d in enumerate(sets))
 
 
-def build_html(df: pd.DataFrame, value_col: str, output: Path) -> None:
-    payload = build_payloads(df, value_col)
+
+def build_html(
+    df: pd.DataFrame,
+    value_col: str,
+    output: Path,
+    market_mode: str = "tam",
+) -> None:
+    if market_mode not in {"tam", "all"}:
+        raise ValueError(f"Unsupported market mode: {market_mode}")
+
+    payload = build_payloads(df, value_col, market_mode=market_mode)
     s = summary(df, value_col)
-    data = json.dumps(payload)
-    html = f'''<!doctype html>
-<html><head><meta charset="utf-8"><title>Accenture Health TAM Overview</title>
+    data = json.dumps(payload, ensure_ascii=False)
+
+    is_tam = market_mode == "tam"
+    market_label = "Accenture TAM" if is_tam else "All Federal Health Market"
+    page_title = (
+        "Accenture Health Addressable Market Dashboard"
+        if is_tam
+        else "Federal Health Procurement Market Dashboard"
+    )
+    page_subtitle = (
+        "Showing only contracts classified as addressable to Accenture."
+        if is_tam
+        else "Showing every procurement contract in the Federal Health industry scope."
+    )
+    first_stage_title = "Accenture TAM" if is_tam else "Total Health Procurement Market"
+    first_stage_subtitle = (
+        "Selected addressable Health contracts"
+        if is_tam
+        else "All Federal Health procurement in scope"
+    )
+    service_title = (
+        "Accenture Wins by Service Offering"
+        if is_tam
+        else "Selected Market by Service Offering"
+    )
+    service_copy = (
+        "Each Service Offering is shown as Accenture wins in purple and the remaining addressable market in grey."
+        if is_tam
+        else "Each Service Offering is shown as Accenture awards in purple and the remaining selected market in grey. Non-addressable contracts are retained in an explicit bucket."
+    )
+    supplier_title = (
+        "Top Suppliers by Share of Accenture-addressable Health TAM"
+        if is_tam
+        else "Top Suppliers by Share of All Federal Health Market"
+    )
+    selected_market_card_note = (
+        "Contracts where is_addressable is True"
+        if is_tam
+        else "All Federal Health contracts in scope"
+    )
+    supplier_axis_title = (
+        "Share of addressable TAM (%)"
+        if is_tam
+        else "Share of All Federal Health Market (%)"
+    )
+
+    tam_active = " active" if is_tam else ""
+    all_active = " active" if not is_tam else ""
+    tam_current = ' aria-current="page"' if is_tam else ""
+    all_current = ' aria-current="page"' if not is_tam else ""
+
+    market_controls = (
+        '<section class="atlas-market-controls" aria-label="Market selection">'
+        '<div><h2>Explore the Federal Health Market</h2>'
+        '<p>Choose the procurement population for every KPI and visual on this page.</p></div>'
+        '<div class="atlas-market-actions">'
+        f'<a class="atlas-market-choice{tam_active}" href="AccentureHealthTAMOverview.html"{tam_current}>Accenture TAM</a>'
+        f'<a class="atlas-market-choice{all_active}" href="AccentureHealthTAMOverview_AllMarket.html"{all_current}>All Federal Health Market</a>'
+        '<button type="button" id="atlasClearFilters">Clear All Filters</button>'
+        '</div></section>'
+    )
+
+    html = r"""<!doctype html>
+<html><head><meta charset="utf-8"><title>__DOCUMENT_TITLE__</title>
 <script src="https://cdn.plot.ly/plotly-3.5.0.min.js"></script>
 <style>
-body{{font-family:Arial,Helvetica,sans-serif;margin:0;background:#f6f8fb;color:#1f2937}}.wrap{{max-width:1480px;margin:auto;padding:28px}}h1{{margin:0 0 8px;font-size:30px}}
-.subtitle{{color:#526070;margin:0 0 18px}}.summary{{background:#fff;border:1px solid #e5e7eb;border-left:5px solid #A100FF;border-radius:14px;padding:18px 20px;margin-bottom:18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}}
-.summary h2{{margin:0 0 8px;font-size:20px}}.summary p{{margin:5px 0;color:#475467;line-height:1.5}}.warning{{background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:12px 14px;color:#9a3412;margin:12px 0}}
-.cards{{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:14px;margin:18px 0 22px}}.card,.panel{{background:#fff;border:1px solid #e5e7eb;border-radius:14px;box-shadow:0 1px 2px rgba(0,0,0,.04)}}.card{{padding:17px}}.ct{{font-size:12px;text-transform:uppercase;color:#667085;letter-spacing:.04em}}.cv{{font-size:29px;font-weight:700;color:#111827;margin:8px 0 5px}}.cs{{font-size:13px;color:#667085}}
-.panel{{padding:18px;margin-bottom:18px}}.panel h3{{margin:4px 0;font-size:18px}}.panel p{{margin:4px 0 10px;color:#526070;font-size:13px}}.controls{{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}}.pill{{display:inline-flex;align-items:center;gap:6px;border:1px solid #d0d5dd;border-radius:999px;padding:7px 12px;background:#fff;font-size:12px;cursor:pointer}}.pill:has(input:checked){{background:#eef2ff;border-color:#636efa;color:#243b9f;font-weight:600}}
-.flow-head{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;text-align:center;margin:14px 0 0}}.flow-head b{{font-size:17px;line-height:1.25}}.flow-head span{{display:block;color:#667085;font-size:12px;margin-top:5px}}.donut-stage{{position:relative;height:430px;min-width:980px}}#donutChart{{height:430px;width:100%;margin:0 auto}}.flow-transition{{position:absolute;top:45%;width:118px;transform:translate(-50%,-50%);z-index:5;text-align:center;color:#5B21B6;pointer-events:none}}.flow-transition.one{{left:33.5%}}.flow-transition.two{{left:66.5%}}.flow-transition .pct{{font-size:18px;font-weight:800;line-height:1}}.flow-transition .lbl{{font-size:11px;line-height:1.2;margin-top:4px}}.flow-transition .val{{font-size:15px;font-weight:700;margin-top:4px}}.flow-arrow{{height:18px;position:relative;margin-top:8px}}.flow-arrow:before{{content:'';position:absolute;left:0;right:12px;top:8px;height:3px;border-radius:999px;background:#5B21B6}}.flow-arrow:after{{content:'';position:absolute;right:0;top:1px;border-top:8px solid transparent;border-bottom:8px solid transparent;border-left:13px solid #5B21B6}}.donut-legends{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;padding:0 24px 10px;min-width:980px}}.donut-legend{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 16px;align-items:start;padding:12px 14px 14px;border:1px solid #E2E8F0;border-radius:10px;background:#FAFBFD;min-height:70px}}.donut-legend-title{{grid-column:1/-1;font-size:12px;font-weight:800;color:#475467;text-transform:uppercase;letter-spacing:.04em;padding-bottom:6px;border-bottom:1px solid #E9EDF3;margin-bottom:2px}}.legend-item{{display:grid;grid-template-columns:14px minmax(0,1fr);gap:8px;align-items:start;font-size:12px;color:#344054}}.legend-swatch{{width:14px;height:14px;border-radius:3px;margin-top:1px}}.legend-item b{{display:block;font-size:12px;line-height:1.2}}.legend-item small{{display:block;color:#667085;margin-top:2px;line-height:1.2}}.note{{font-size:12px;color:#667085;margin-top:8px}}@media(max-width:800px){{.cards{{grid-template-columns:1fr}}.flow-scroll{{overflow:auto}}}}
+body{font-family:Arial,Helvetica,sans-serif;margin:0;background:#f6f8fb;color:#1f2937}.wrap{max-width:1480px;margin:auto;padding:28px}h1{margin:0 0 8px;font-size:30px}
+.subtitle{color:#526070;margin:0 0 18px}.summary{background:#fff;border:1px solid #e5e7eb;border-left:5px solid #A100FF;border-radius:14px;padding:18px 20px;margin-bottom:18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.summary h2{margin:0 0 8px;font-size:20px}.summary p{margin:5px 0;color:#475467;line-height:1.5}.warning{background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:12px 14px;color:#9a3412;margin:12px 0}
+.atlas-market-controls{display:flex;justify-content:space-between;align-items:center;gap:18px;flex-wrap:wrap;padding:20px 24px;margin:18px 0 22px;background:white;border:1px solid #e5e7eb;border-radius:16px}.atlas-market-controls h2{margin:0 0 5px;font-size:20px}.atlas-market-controls p{margin:0;color:#667085;font-size:13px}.atlas-market-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.atlas-market-choice,#atlasClearFilters{font:700 13px Arial,sans-serif;padding:12px 15px;border:1px solid #d0d5dd;border-radius:9px;background:#fff;color:#344054;text-decoration:none;cursor:pointer}.atlas-market-choice.active{background:#A100FF;color:white;border-color:#A100FF}#atlasClearFilters:hover{border-color:#A100FF;color:#7F00CC;background:#FCF5FF}
+.cards{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:14px;margin:18px 0 22px}.card,.panel{background:#fff;border:1px solid #e5e7eb;border-radius:14px;box-shadow:0 1px 2px rgba(0,0,0,.04)}.card{padding:17px}.ct{font-size:12px;text-transform:uppercase;color:#667085;letter-spacing:.04em}.cv{font-size:29px;font-weight:700;color:#111827;margin:8px 0 5px}.cs{font-size:13px;color:#667085}
+.panel{padding:18px;margin-bottom:18px}.panel h3{margin:4px 0;font-size:18px}.panel p{margin:4px 0 10px;color:#526070;font-size:13px}.controls{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.pill{display:inline-flex;align-items:center;gap:6px;border:1px solid #d0d5dd;border-radius:999px;padding:7px 12px;background:#fff;font-size:12px;cursor:pointer}.pill:has(input:checked){background:#eef2ff;border-color:#636efa;color:#243b9f;font-weight:600}
+.flow-head{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;text-align:center;margin:14px 0 0}.flow-head b{font-size:17px;line-height:1.25}.flow-head span{display:block;color:#667085;font-size:12px;margin-top:5px}.donut-stage{position:relative;height:430px;min-width:980px}#donutChart{height:430px;width:100%;margin:0 auto}.flow-transition{position:absolute;top:45%;width:118px;transform:translate(-50%,-50%);z-index:5;text-align:center;color:#5B21B6;pointer-events:none}.flow-transition.one{left:33.5%}.flow-transition.two{left:66.5%}.flow-transition .pct{font-size:18px;font-weight:800;line-height:1}.flow-transition .lbl{font-size:11px;line-height:1.2;margin-top:4px}.flow-transition .val{font-size:15px;font-weight:700;margin-top:4px}.flow-arrow{height:18px;position:relative;margin-top:8px}.flow-arrow:before{content:'';position:absolute;left:0;right:12px;top:8px;height:3px;border-radius:999px;background:#5B21B6}.flow-arrow:after{content:'';position:absolute;right:0;top:1px;border-top:8px solid transparent;border-bottom:8px solid transparent;border-left:13px solid #5B21B6}.donut-legends{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;padding:0 24px 10px;min-width:980px}.donut-legend{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 16px;align-items:start;padding:12px 14px 14px;border:1px solid #E2E8F0;border-radius:10px;background:#FAFBFD;min-height:70px}.donut-legend-title{grid-column:1/-1;font-size:12px;font-weight:800;color:#475467;text-transform:uppercase;letter-spacing:.04em;padding-bottom:6px;border-bottom:1px solid #E9EDF3;margin-bottom:2px}.legend-item{display:grid;grid-template-columns:14px minmax(0,1fr);gap:8px;align-items:start;font-size:12px;color:#344054}.legend-swatch{width:14px;height:14px;border-radius:3px;margin-top:1px}.legend-item b{display:block;font-size:12px;line-height:1.2}.legend-item small{display:block;color:#667085;margin-top:2px;line-height:1.2}.note{font-size:12px;color:#667085;margin-top:8px}@media(max-width:800px){.cards{grid-template-columns:1fr}.flow-scroll{overflow:auto}.atlas-market-actions{width:100%}.atlas-market-choice,#atlasClearFilters{flex:1;text-align:center}}
 </style></head><body><div class="wrap">
-<h1>Accenture Health Addressable Market Dashboard</h1><p class="subtitle">Canonical Health portfolio procurement and Accenture-addressable market.</p>
+<h1>__PAGE_TITLE__</h1><p class="subtitle">__PAGE_SUBTITLE__</p>
 <section class="summary"><h2>Executive Summary</h2><p>This dashboard provides a first-pass view of Health portfolio procurement, the portion provisionally addressable to Accenture, Accenture's historical wins, service-offering demand and leading suppliers.</p><div class="warning"><b>Classifier status:</b> this is a first-pass Health TAM classifier. It deliberately excludes obvious clinical products, medical goods and commodities, then identifies consulting, digital, data, cloud, cyber and managed-services evidence. Review the exported audit before using the TAM as a final executive figure.</div></section>
+__MARKET_CONTROLS__
 <div class="cards">
-<div class="card"><div class="ct">Total Health procurement</div><div class="cv">{money(s['total'])}</div><div class="cs">Full Health Portfolio dataset</div></div>
-<div class="card"><div class="ct">Addressable TAM</div><div class="cv">{money(s['addressable'])}</div><div class="cs">{s['addressable_pct']:.1f}% of Health procurement</div></div>
-<div class="card"><div class="ct">Accenture wins in TAM</div><div class="cv">{money(s['accenture'])}</div><div class="cs">{s['accenture_share']:.1f}% of addressable TAM</div></div>
-<div class="card"><div class="ct">Competitor-owned TAM</div><div class="cv">{money(s['competitor'])}</div><div class="cs">Addressable value awarded to other suppliers</div></div>
-<div class="card"><div class="ct">Avg annual addressable</div><div class="cv">{money(s['avg_addressable'])}</div><div class="cs">Across {s['years']} financial years</div></div>
-<div class="card"><div class="ct">Avg annual Accenture wins</div><div class="cv">{money(s['avg_accenture'])}</div><div class="cs">Across {s['years']} financial years</div></div>
+<div class="card"><div class="ct">Selected market</div><div class="cv">__SELECTED_TOTAL__</div><div class="cs">__SELECTED_NOTE__</div></div>
+<div class="card"><div class="ct">Addressable TAM</div><div class="cv">__ADDRESSABLE__</div><div class="cs">__ADDRESSABLE_PCT__% of selected market</div></div>
+<div class="card"><div class="ct">Accenture wins in TAM</div><div class="cv">__ACCENTURE__</div><div class="cs">__ACCENTURE_SHARE__% of addressable TAM</div></div>
+<div class="card"><div class="ct">Competitor-owned TAM</div><div class="cv">__COMPETITOR__</div><div class="cs">Addressable value awarded to other suppliers</div></div>
+<div class="card"><div class="ct">Avg annual addressable</div><div class="cv">__AVG_ADDRESSABLE__</div><div class="cs">Across __YEARS__ financial years</div></div>
+<div class="card"><div class="ct">Avg annual Accenture wins</div><div class="cv">__AVG_ACCENTURE__</div><div class="cs">Across __YEARS__ financial years</div></div>
 </div>
-<div class="panel"><h3>Total Addressable Market Overview</h3><div class="controls">{controls('donutRange',payload['donut'])}</div><div class="flow-scroll"><div class="flow-head"><div><b>1. Total Health Procurement Market</b><span>Out of Health portfolio procurement</span></div><div><b>2. Within Addressable Market (TAM)</b><span>Accenture vs competitor-owned TAM</span></div><div><b>3. Accenture Wins</b><span>Accenture wins within the addressable Health market</span></div></div><div class="donut-stage"><div id="donutChart"></div><div id="flowTransitionOne" class="flow-transition one"></div><div id="flowTransitionTwo" class="flow-transition two"></div></div><div class="donut-legends"><div id="donutLegend1" class="donut-legend"></div><div id="donutLegend2" class="donut-legend"></div><div id="donutLegend3" class="donut-legend"></div></div></div></div>
-<div class="panel"><h3>Accenture Wins by Service Offering</h3><p>Each Service Offering is shown as two separate bars: Accenture wins in purple and the remaining addressable market in grey.</p><div class="controls">{controls('serviceRange',payload['service'])}</div><div id="serviceChart"></div></div>
-<div class="panel"><h3>Top Suppliers by Share of Accenture-addressable Health TAM</h3><div class="controls">{controls('supplierRange',payload['supplier'])}</div><div id="supplierChart"></div></div>
-<p class="note">Source: filtered AusTender Health portfolio dataset. Total contract value is used unless --value-mode annualised is selected.</p>
+<div class="panel"><h3>Total Addressable Market Overview</h3><div class="controls">__DONUT_CONTROLS__</div><div class="flow-scroll"><div class="flow-head"><div><b>1. __FIRST_STAGE_TITLE__</b><span>__FIRST_STAGE_SUBTITLE__</span></div><div><b>2. Within Addressable Market (TAM)</b><span>Accenture vs competitor-owned TAM</span></div><div><b>3. Accenture Wins</b><span>Accenture wins within the addressable Health market</span></div></div><div class="donut-stage"><div id="donutChart"></div><div id="flowTransitionOne" class="flow-transition one"></div><div id="flowTransitionTwo" class="flow-transition two"></div></div><div class="donut-legends"><div id="donutLegend1" class="donut-legend"></div><div id="donutLegend2" class="donut-legend"></div><div id="donutLegend3" class="donut-legend"></div></div></div></div>
+<div class="panel"><h3>__SERVICE_TITLE__</h3><p>__SERVICE_COPY__</p><div class="controls">__SERVICE_CONTROLS__</div><div id="serviceChart"></div></div>
+<div class="panel"><h3>__SUPPLIER_TITLE__</h3><div class="controls">__SUPPLIER_CONTROLS__</div><div id="supplierChart"></div></div>
+<p class="note">Source: filtered AusTender Health portfolio dataset. Every visual uses the selected __MARKET_LABEL__ population unless a narrower TAM subset is explicitly labelled. Total contract value is used unless --value-mode annualised is selected.</p>
 </div><script>
-const DATA={data};
-function selected(name){{const e=document.querySelector('input[name="'+name+'"]:checked');return e?Number(e.value):0;}}
-function fmtPct(v){{return Number(v||0).toFixed(1)+'%';}}
-function money(v){{v=Number(v||0);let a=Math.abs(v);if(a>=1e9)return '$'+(v/1e9).toFixed(2)+'B';if(a>=1e6)return '$'+(v/1e6).toFixed(1)+'M';if(a>=1e3)return '$'+(v/1e3).toFixed(1)+'K';return '$'+v.toFixed(0);}}
-function legendItem(title,pct,value,colour){{return '<div class="legend-item"><span class="legend-swatch" style="background:'+colour+'"></span><div><b>'+title+'</b><small>'+fmtPct(pct)+' · '+value+'</small></div></div>';}}
-function legendTitle(text){{return '<div class="donut-legend-title">'+text+'</div>';}}
-function transitionHtml(pct,label,value){{return '<div class="pct">'+fmtPct(pct)+'</div><div class="lbl">'+label+'</div><div class="val">'+value+'</div><div class="flow-arrow"></div>';}}
-function renderDonut(){{const d=DATA.donut[selected('donutRange')];const tr=[
-{{type:'pie',hole:.64,labels:['Addressable (TAM)','Not addressable'],values:[d.addressable,d.not_addressable],domain:{{x:[.035,.298],y:[.14,.90]}},sort:false,direction:'clockwise',rotation:90-((d.addressable/Math.max(d.total,1))*360/2),marker:{{colors:['#4C1D95','#D8CCF3'],line:{{color:'#fff',width:3}}}},textinfo:'none',showlegend:false,hovertemplate:'<b>%{{label}}</b><br>%{{value:$,.0f}}<br>%{{percent}}<extra></extra>'}},
-{{type:'pie',hole:.64,labels:['Accenture wins','Competitors'],values:[d.accenture,d.competitor],domain:{{x:[.368,.632],y:[.14,.90]}},sort:false,direction:'clockwise',rotation:90-((d.accenture/Math.max(d.addressable,1))*360/2),marker:{{colors:['#9F7AEA','#4C1D95'],line:{{color:'#fff',width:3}}}},textinfo:'none',showlegend:false,hovertemplate:'<b>%{{label}}</b><br>%{{value:$,.0f}}<br>%{{percent}}<extra></extra>'}},
-{{type:'pie',hole:.64,labels:['Accenture wins'],values:[d.accenture],domain:{{x:[.702,.965],y:[.14,.90]}},sort:false,marker:{{colors:['#9F7AEA'],line:{{color:'#fff',width:3}}}},textinfo:'none',showlegend:false,hovertemplate:'<b>Accenture wins</b><br>%{{value:$,.0f}}<extra></extra>'}}
+const DATA=__DATA__;
+const MARKET_MODE=__MARKET_MODE__;
+const MARKET_LABEL=__MARKET_LABEL_JSON__;
+const FIRST_STAGE_TITLE=__FIRST_STAGE_TITLE_JSON__;
+const SUPPLIER_AXIS_TITLE=__SUPPLIER_AXIS_TITLE__;
+const FILTER_STORAGE_KEY='atlas-health-tam-overview-filters-v1';
+const FILTER_NAMES=['donutRange','serviceRange','supplierRange'];
+function selected(name){const e=document.querySelector('input[name="'+name+'"]:checked');return e?Number(e.value):0;}
+function fmtPct(v){return Number(v||0).toFixed(1)+'%';}
+function money(v){v=Number(v||0);let a=Math.abs(v);if(a>=1e9)return '$'+(v/1e9).toFixed(2)+'B';if(a>=1e6)return '$'+(v/1e6).toFixed(1)+'M';if(a>=1e3)return '$'+(v/1e3).toFixed(1)+'K';return '$'+v.toFixed(0);}
+function legendItem(title,pct,value,colour){return '<div class="legend-item"><span class="legend-swatch" style="background:'+colour+'"></span><div><b>'+title+'</b><small>'+fmtPct(pct)+' · '+value+'</small></div></div>';}
+function legendTitle(text){return '<div class="donut-legend-title">'+text+'</div>';}
+function transitionHtml(pct,label,value){return '<div class="pct">'+fmtPct(pct)+'</div><div class="lbl">'+label+'</div><div class="val">'+value+'</div><div class="flow-arrow"></div>';}
+function saveFilters(){
+  const state={};
+  FILTER_NAMES.forEach(name=>{const e=document.querySelector('input[name="'+name+'"]:checked');state[name]=e?e.value:'0';});
+  try{sessionStorage.setItem(FILTER_STORAGE_KEY,JSON.stringify(state));}catch(_error){}
+}
+function restoreFilters(){
+  let state={};
+  try{state=JSON.parse(sessionStorage.getItem(FILTER_STORAGE_KEY)||'{}')||{};}catch(_error){state={};}
+  FILTER_NAMES.forEach(name=>{
+    const desired=String(state[name]??'0');
+    const option=document.querySelector('input[name="'+name+'"][value="'+desired+'"]');
+    const first=document.querySelector('input[name="'+name+'"]');
+    if(option)option.checked=true;else if(first)first.checked=true;
+  });
+}
+function renderDonut(){const d=DATA.donut[selected('donutRange')];const tr=[
+{type:'pie',hole:.64,labels:['Addressable (TAM)','Not addressable'],values:[d.addressable,d.not_addressable],domain:{x:[.035,.298],y:[.14,.90]},sort:false,direction:'clockwise',rotation:90-((d.addressable/Math.max(d.total,1))*360/2),marker:{colors:['#4C1D95','#D8CCF3'],line:{color:'#fff',width:3}},textinfo:'none',showlegend:false,hovertemplate:'<b>%{label}</b><br>%{value:$,.0f}<br>%{percent}<extra></extra>'},
+{type:'pie',hole:.64,labels:['Accenture wins','Competitors'],values:[d.accenture,d.competitor],domain:{x:[.368,.632],y:[.14,.90]},sort:false,direction:'clockwise',rotation:90-((d.accenture/Math.max(d.addressable,1))*360/2),marker:{colors:['#9F7AEA','#4C1D95'],line:{color:'#fff',width:3}},textinfo:'none',showlegend:false,hovertemplate:'<b>%{label}</b><br>%{value:$,.0f}<br>%{percent}<extra></extra>'},
+{type:'pie',hole:.64,labels:['Accenture wins'],values:[d.accenture],domain:{x:[.702,.965],y:[.14,.90]},sort:false,marker:{colors:['#9F7AEA'],line:{color:'#fff',width:3}},textinfo:'none',showlegend:false,hovertemplate:'<b>Accenture wins</b><br>%{value:$,.0f}<extra></extra>'}
 ];const ann=[
-{{x:.1665,y:.52,xref:'paper',yref:'paper',text:'<b>'+d.total_label+'</b><br><span style="font-size:11px;color:#526070">Total Health Procurement</span>',showarrow:false,xanchor:'center',yanchor:'middle',align:'center',font:{{size:24,color:'#344054'}}}},
-{{x:.5000,y:.52,xref:'paper',yref:'paper',text:'<b>'+d.addressable_label+'</b><br><span style="font-size:11px;color:#526070">Addressable TAM</span>',showarrow:false,xanchor:'center',yanchor:'middle',align:'center',font:{{size:24,color:'#344054'}}}},
-{{x:.8335,y:.52,xref:'paper',yref:'paper',text:'<b>'+d.accenture_label+'</b><br><span style="font-size:11px;color:#526070">Accenture Wins</span>',showarrow:false,xanchor:'center',yanchor:'middle',align:'center',font:{{size:24,color:'#344054'}}}}
+{x:.1665,y:.52,xref:'paper',yref:'paper',text:'<b>'+d.total_label+'</b><br><span style="font-size:11px;color:#526070">'+FIRST_STAGE_TITLE+'</span>',showarrow:false,xanchor:'center',yanchor:'middle',align:'center',font:{size:24,color:'#344054'}},
+{x:.5000,y:.52,xref:'paper',yref:'paper',text:'<b>'+d.addressable_label+'</b><br><span style="font-size:11px;color:#526070">Addressable TAM</span>',showarrow:false,xanchor:'center',yanchor:'middle',align:'center',font:{size:24,color:'#344054'}},
+{x:.8335,y:.52,xref:'paper',yref:'paper',text:'<b>'+d.accenture_label+'</b><br><span style="font-size:11px;color:#526070">Accenture Wins</span>',showarrow:false,xanchor:'center',yanchor:'middle',align:'center',font:{size:24,color:'#344054'}}
 ];
-Plotly.react('donutChart',tr,{{height:430,margin:{{t:4,l:4,r:4,b:4}},showlegend:false,paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',annotations:ann}},{{responsive:true,displayModeBar:false,staticPlot:true,scrollZoom:false,doubleClick:false}});
+Plotly.react('donutChart',tr,{height:430,margin:{t:4,l:4,r:4,b:4},showlegend:false,paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',annotations:ann},{responsive:true,displayModeBar:false,staticPlot:true,scrollZoom:false,doubleClick:false});
 document.getElementById('flowTransitionOne').innerHTML=transitionHtml(d.addressable_pct,'Addressable to Accenture',d.addressable_label);document.getElementById('flowTransitionTwo').innerHTML=transitionHtml(d.accenture_share,'Accenture wins',d.accenture_label);
-document.getElementById('donutLegend1').innerHTML=legendTitle('1 · Total Health Procurement')+legendItem('Not addressable',100-d.addressable_pct,d.not_addressable_label,'#D8CCF3')+legendItem('Addressable (TAM)',d.addressable_pct,d.addressable_label,'#4C1D95');
+document.getElementById('donutLegend1').innerHTML=legendTitle('1 · '+FIRST_STAGE_TITLE)+legendItem('Not addressable',100-d.addressable_pct,d.not_addressable_label,'#D8CCF3')+legendItem('Addressable (TAM)',d.addressable_pct,d.addressable_label,'#4C1D95');
 document.getElementById('donutLegend2').innerHTML=legendTitle('2 · Addressable Market (TAM)')+legendItem('Competitors',100-d.accenture_share,d.competitor_label,'#4C1D95')+legendItem('Accenture wins',d.accenture_share,d.accenture_label,'#9F7AEA');
-document.getElementById('donutLegend3').innerHTML=legendTitle('3 · Accenture Wins')+legendItem('Accenture wins',100,d.accenture_label,'#9F7AEA');}}
-function renderService(){{
+document.getElementById('donutLegend3').innerHTML=legendTitle('3 · Accenture Wins')+legendItem('Accenture wins',100,d.accenture_label,'#9F7AEA');}
+function renderService(){
   const d=DATA.service[selected('serviceRange')];
-  // Keep the executive order: highest Accenture wins at the top.
-  // Plotly renders the final horizontal category at the top, so sort ascending.
   const r=(d.rows||[]).slice().sort((a,b)=>(a.accenture-b.accenture)||(a.total-b.total));
   const accenture=r.map(x=>Number(x.accenture_b||0));
   const others=r.map(x=>Math.max(0,Number(x.total_b||0)-Number(x.accenture_b||0)));
   const mx=Math.max(.1,...r.map((x,i)=>Math.max(accenture[i],others[i])));
+  function shortMoney(v){v=Number(v||0)*1e9;const a=Math.abs(v);if(a>=1e9)return '$'+(v/1e9).toFixed(2)+'B';if(a>=1e6)return '$'+(v/1e6).toFixed(1)+'M';if(a>=1e3)return '$'+(v/1e3).toFixed(1)+'K';return '$'+v.toFixed(0);}
+  function sharePct(x){return x.total>0?(x.accenture/x.total*100):0;}
+  const otherName=MARKET_MODE==='tam'?'Other addressable market':'Other selected market';
+  const segmentLabel=MARKET_MODE==='tam'?'Total addressable segment':'Total selected-market segment';
+  const accTrace={type:'bar',orientation:'h',y:r.map(x=>x.name),x:accenture,name:'Accenture awards',marker:{color:'#A100FF'},offsetgroup:'accenture',text:r.map((x,i)=>{const share=x.total>0?(x.accenture/x.total*100):0;return shortMoney(accenture[i])+'  ·  '+share.toFixed(1)+'% share';}),textposition:'outside',cliponaxis:false,textfont:{size:12,color:'#6B00B6'},customdata:r.map((x,i)=>[x.total_label,sharePct(x),shortMoney(others[i])]),hovertemplate:'<b>%{y}</b><br>Accenture awards: %{text}<br>'+segmentLabel+': %{customdata[0]}<br>'+otherName+': %{customdata[2]}<extra></extra>'};
+  const othersTrace={type:'bar',orientation:'h',y:r.map(x=>x.name),x:others,name:otherName,marker:{color:'#D9DEE8'},offsetgroup:'others',text:others.map(v=>shortMoney(v)),textposition:'outside',cliponaxis:false,textfont:{size:12,color:'#344054'},customdata:r.map(x=>x.total_label),hovertemplate:'<b>%{y}</b><br>'+otherName+': %{text}<br>'+segmentLabel+': %{customdata}<extra></extra>'};
+  Plotly.react('serviceChart',[accTrace,othersTrace],{height:Math.max(560,r.length*105+170),barmode:'group',bargap:.30,bargroupgap:.08,margin:{l:300,r:155,t:28,b:92},xaxis:{title:'Contract value (A$ billions)',range:[0,mx*1.30],showgrid:true,gridcolor:'#EEF1F5',zeroline:true,zerolinecolor:'#98A2B3',tickfont:{size:12},titlefont:{size:12,color:'#475467'}},yaxis:{title:'',automargin:true,tickfont:{size:13,color:'#1F2937'},categoryorder:'array',categoryarray:r.map(x=>x.name)},legend:{orientation:'h',x:0,y:-0.14,xanchor:'left',yanchor:'top',font:{size:12}},paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)'},{responsive:true,displayModeBar:false,staticPlot:true,scrollZoom:false,doubleClick:false});
+}
+function renderSupplier(){const d=DATA.supplier[selected('supplierRange')],r=(d.rows||[]).slice().sort((a,b)=>a.share-b.share),mx=Math.max(.1,...r.map(x=>x.share));Plotly.react('supplierChart',[{type:'bar',orientation:'h',y:r.map(x=>x.name),x:r.map(x=>x.share),marker:{color:r.map(x=>x.name==='Accenture'?'#A100FF':'#667785')},text:r.map(x=>fmtPct(x.share)),textposition:'outside',cliponaxis:false,customdata:r.map(x=>[x.value_label,x.contracts]),hovertemplate:'<b>%{y}</b><br>Share: %{x:.1f}%<br>Value: %{customdata[0]}<br>Contracts: %{customdata[1]}<extra></extra>'}],{height:760,margin:{l:260,r:100,t:20,b:70},xaxis:{title:SUPPLIER_AXIS_TITLE,range:[0,mx*1.18],ticksuffix:'%'}},{responsive:true,displayModeBar:false});}
+function renderAll(){renderDonut();renderService();renderSupplier();}
+restoreFilters();
+[['donutRange',renderDonut],['serviceRange',renderService],['supplierRange',renderSupplier]].forEach(([n,f])=>document.querySelectorAll('input[name="'+n+'"]').forEach(x=>x.addEventListener('change',()=>{saveFilters();f();})));
+document.querySelectorAll('.atlas-market-choice').forEach(link=>link.addEventListener('click',saveFilters));
+document.getElementById('atlasClearFilters').addEventListener('click',()=>{FILTER_NAMES.forEach(name=>{const first=document.querySelector('input[name="'+name+'"]');if(first)first.checked=true;});saveFilters();renderAll();});
+renderAll();
+</script></body></html>"""
 
-  function shortMoney(v){{
-    v=Number(v||0)*1e9;
-    const a=Math.abs(v);
-    if(a>=1e9)return '$'+(v/1e9).toFixed(2)+'B';
-    if(a>=1e6)return '$'+(v/1e6).toFixed(1)+'M';
-    if(a>=1e3)return '$'+(v/1e3).toFixed(1)+'K';
-    return '$'+v.toFixed(0);
-  }}
+    replacements = {
+        "__DOCUMENT_TITLE__": page_title,
+        "__PAGE_TITLE__": page_title,
+        "__PAGE_SUBTITLE__": page_subtitle,
+        "__MARKET_CONTROLS__": market_controls,
+        "__SELECTED_TOTAL__": money(s["total"]),
+        "__SELECTED_NOTE__": selected_market_card_note,
+        "__ADDRESSABLE__": money(s["addressable"]),
+        "__ADDRESSABLE_PCT__": f"{s['addressable_pct']:.1f}",
+        "__ACCENTURE__": money(s["accenture"]),
+        "__ACCENTURE_SHARE__": f"{s['accenture_share']:.1f}",
+        "__COMPETITOR__": money(s["competitor"]),
+        "__AVG_ADDRESSABLE__": money(s["avg_addressable"]),
+        "__AVG_ACCENTURE__": money(s["avg_accenture"]),
+        "__YEARS__": str(s["years"]),
+        "__FIRST_STAGE_TITLE__": first_stage_title,
+        "__FIRST_STAGE_SUBTITLE__": first_stage_subtitle,
+        "__SERVICE_TITLE__": service_title,
+        "__SERVICE_COPY__": service_copy,
+        "__SUPPLIER_TITLE__": supplier_title,
+        "__MARKET_LABEL__": market_label,
+        "__DONUT_CONTROLS__": controls("donutRange", payload["donut"]),
+        "__SERVICE_CONTROLS__": controls("serviceRange", payload["service"]),
+        "__SUPPLIER_CONTROLS__": controls("supplierRange", payload["supplier"]),
+        "__DATA__": data,
+        "__MARKET_MODE__": json.dumps(market_mode),
+        "__MARKET_LABEL_JSON__": json.dumps(market_label),
+        "__FIRST_STAGE_TITLE_JSON__": json.dumps(first_stage_title),
+        "__SUPPLIER_AXIS_TITLE__": json.dumps(supplier_axis_title),
+    }
+    for token, value in replacements.items():
+        html = html.replace(token, str(value))
 
-  const accTrace={{
-    type:'bar',orientation:'h',
-    y:r.map(x=>x.name),x:accenture,
-    name:'Accenture wins',
-    marker:{{color:'#A100FF'}},
-    offsetgroup:'accenture',
-    text:r.map((x,i)=>{{
-      const share=x.total>0?(x.accenture/x.total*100):0;
-      return shortMoney(accenture[i])+'  ·  '+share.toFixed(1)+'% share';
-    }}),
-    textposition:'outside',cliponaxis:false,
-    textfont:{{size:12,color:'#6B00B6'}},
-    customdata:r.map((x,i)=>[x.total_label,sharePct(x),shortMoney(others[i])]),
-    hovertemplate:'<b>%{{y}}</b><br>Accenture wins: %{{text}}<br>Total addressable segment: %{{customdata[0]}}<br>Other suppliers: %{{customdata[2]}}<extra></extra>'
-  }};
-
-  const othersTrace={{
-    type:'bar',orientation:'h',
-    y:r.map(x=>x.name),x:others,
-    name:'Other addressable market',
-    marker:{{color:'#D9DEE8'}},
-    offsetgroup:'others',
-    text:others.map(v=>shortMoney(v)),
-    textposition:'outside',cliponaxis:false,
-    textfont:{{size:12,color:'#344054'}},
-    customdata:r.map(x=>x.total_label),
-    hovertemplate:'<b>%{{y}}</b><br>Other addressable market: %{{text}}<br>Total addressable segment: %{{customdata}}<extra></extra>'
-  }};
-
-  function sharePct(x){{return x.total>0?(x.accenture/x.total*100):0;}}
-
-  Plotly.react('serviceChart',[accTrace,othersTrace],{{
-    height:Math.max(560,r.length*105+170),
-    barmode:'group',bargap:.30,bargroupgap:.08,
-    margin:{{l:300,r:155,t:28,b:92}},
-    xaxis:{{
-      title:'Contract value (A$ billions)',
-      range:[0,mx*1.30],
-      showgrid:true,gridcolor:'#EEF1F5',zeroline:true,zerolinecolor:'#98A2B3',
-      tickfont:{{size:12}},titlefont:{{size:12,color:'#475467'}}
-    }},
-    yaxis:{{
-      title:'',automargin:true,tickfont:{{size:13,color:'#1F2937'}},
-      categoryorder:'array',categoryarray:r.map(x=>x.name)
-    }},
-    legend:{{orientation:'h',x:0,y:-0.14,xanchor:'left',yanchor:'top',font:{{size:12}}}},
-    paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)'
-  }},{{responsive:true,displayModeBar:false,staticPlot:true,scrollZoom:false,doubleClick:false}});
-}}
-function renderSupplier(){{const d=DATA.supplier[selected('supplierRange')],r=(d.rows||[]).slice().sort((a,b)=>a.share-b.share),mx=Math.max(.1,...r.map(x=>x.share));Plotly.react('supplierChart',[{{type:'bar',orientation:'h',y:r.map(x=>x.name),x:r.map(x=>x.share),marker:{{color:r.map(x=>x.name==='Accenture'?'#A100FF':'#667785')}},text:r.map(x=>fmtPct(x.share)),textposition:'outside',cliponaxis:false,customdata:r.map(x=>[x.value_label,x.contracts]),hovertemplate:'<b>%{{y}}</b><br>Share: %{{x:.1f}}%<br>Value: %{{customdata[0]}}<br>Contracts: %{{customdata[1]}}<extra></extra>'}}],{{height:760,margin:{{l:260,r:100,t:20,b:70}},xaxis:{{title:'Share of addressable TAM (%)',range:[0,mx*1.18],ticksuffix:'%'}}}},{{responsive:true,displayModeBar:false}});}}
-[['donutRange',renderDonut],['serviceRange',renderService],['supplierRange',renderSupplier]].forEach(([n,f])=>document.querySelectorAll('input[name="'+n+'"]').forEach(x=>x.addEventListener('change',f)));renderDonut();renderService();renderSupplier();
-</script></body></html>'''
-    output.write_text(atlas_agency_breakdown(atlas_navigation(html, "health"), df, value_col), encoding="utf-8")
-
+    final_html = atlas_agency_breakdown(
+        atlas_navigation(html, "health"),
+        df,
+        value_col,
+        market_mode=market_mode,
+    )
+    output.write_text(final_html, encoding="utf-8")
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
@@ -529,42 +668,89 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+
 def main() -> None:
     args = parse_args()
     outdir = Path(args.output_dir)
     outdir.mkdir(parents=True, exist_ok=True)
-    df = load_health(Path(args.input))
-    df = classify(df)
+
+    df = classify(load_health(Path(args.input)))
     value_col = VALUE_COL if args.value_mode == "total" else ANNUALISED_VALUE_COL
     if value_col not in df.columns:
         raise SystemExit(f"Missing value column: {value_col}")
-            # REQUIRED: Validate Health TAM headline totals.
+
     validate_health_tam_reconciliation(df, value_col)
 
-    audit_cols = [c for c in [CN_ID_COL,AGENCY_COL,FY_COL,DESCRIPTION_COL,CATEGORY_TYPE_COL,CATEGORY_COL,SUPPLIER_COL,SUPPLIER_ABN_COL,"supplier_group",VALUE_COL,"is_addressable","addressability","addressability_reason","Service Offering"] if c in df.columns]
-    df[audit_cols].sort_values(VALUE_COL,ascending=False).to_csv(outdir/"health_tam_classification_audit.csv",index=False)
+    audit_cols = [
+        c for c in [
+            CN_ID_COL,
+            AGENCY_COL,
+            FY_COL,
+            DESCRIPTION_COL,
+            CATEGORY_TYPE_COL,
+            CATEGORY_COL,
+            SUPPLIER_COL,
+            SUPPLIER_ABN_COL,
+            "supplier_group",
+            VALUE_COL,
+            "is_addressable",
+            "addressability",
+            "addressability_reason",
+            "Service Offering",
+        ]
+        if c in df.columns
+    ]
+    df[audit_cols].sort_values(VALUE_COL, ascending=False).to_csv(
+        outdir / "health_tam_classification_audit.csv",
+        index=False,
+    )
     try:
-        df.to_parquet(outdir/"health_tam_classified.parquet", index=False)
+        df.to_parquet(outdir / "health_tam_classified.parquet", index=False)
     except ImportError:
-        df.to_csv(outdir/"health_tam_classified.csv", index=False)
+        df.to_csv(outdir / "health_tam_classified.csv", index=False)
         print("Parquet engine not installed; wrote classified CSV instead.")
-    s = summary(df,value_col)
-    pd.DataFrame([s]).to_csv(outdir/"health_market_summary.csv",index=False)
-    dashboard = outdir/"AccentureHealthTAMOverview.html"
-    build_html(df,value_col,dashboard)
 
+    all_summary = summary(df, value_col)
+    tam_df = df.loc[df["is_addressable"]].copy()
+    if tam_df.empty:
+        raise SystemExit("Cannot generate Accenture TAM view: no addressable Health contracts.")
+    tam_summary = summary(tam_df, value_col)
 
-    print("="*72)
+    pd.DataFrame([all_summary]).to_csv(
+        outdir / "health_market_summary.csv",
+        index=False,
+    )
+    pd.DataFrame([tam_summary]).to_csv(
+        outdir / "health_market_summary_tam.csv",
+        index=False,
+    )
+    pd.DataFrame([all_summary]).to_csv(
+        outdir / "health_market_summary_all_market.csv",
+        index=False,
+    )
+
+    tam_dashboard = outdir / "AccentureHealthTAMOverview.html"
+    all_dashboard = outdir / "AccentureHealthTAMOverview_AllMarket.html"
+    build_html(tam_df, value_col, tam_dashboard, market_mode="tam")
+    build_html(df, value_col, all_dashboard, market_mode="all")
+
+    print("=" * 72)
     print("HEALTH TAM OVERVIEW - CANONICAL DATA")
-    print("="*72)
+    print("=" * 72)
     print(f"Rows loaded:              {len(df):,}")
-    print(f"Total Health procurement: {money(s['total'])}")
-    print(f"Provisional TAM:          {money(s['addressable'])} ({s['addressable_pct']:.1f}%)")
-    print(f"Accenture TAM wins:       {money(s['accenture'])} ({s['accenture_share']:.1f}% share)")
-    print(f"Dashboard:                {dashboard}")
-    print(f"Classification audit:     {outdir/'health_tam_classification_audit.csv'}")
-    print("="*72)
-
+    print(f"Total Health procurement: {money(all_summary['total'])}")
+    print(
+        f"Provisional TAM:          {money(all_summary['addressable'])} "
+        f"({all_summary['addressable_pct']:.1f}%)"
+    )
+    print(
+        f"Accenture TAM wins:       {money(all_summary['accenture'])} "
+        f"({all_summary['accenture_share']:.1f}% share)"
+    )
+    print(f"TAM dashboard:            {tam_dashboard}")
+    print(f"All Market dashboard:     {all_dashboard}")
+    print(f"Classification audit:     {outdir / 'health_tam_classification_audit.csv'}")
+    print("=" * 72)
 
 def atlas_navigation(html_text: str, industry: str) -> str:
     """Add consistent GitHub Pages navigation without changing dashboard analytics."""
@@ -586,52 +772,43 @@ def atlas_navigation(html_text: str, industry: str) -> str:
     return html_text
 
 
-def atlas_agency_breakdown(html_text: str, df: pd.DataFrame, value_col: str) -> str:
-    """Add ranked agency spending, with TAM and All Market views."""
-    if "Agency" not in df.columns or "is_addressable" not in df.columns:
+
+def atlas_agency_breakdown(
+    html_text: str,
+    df: pd.DataFrame,
+    value_col: str,
+    market_mode: str = "tam",
+) -> str:
+    """Add agency expenditure ranked against the same page-level market scope."""
+    if "Agency" not in df.columns:
         return html_text
+
     data = df.copy()
-    flag = data["is_addressable"]
-    if not pd.api.types.is_bool_dtype(flag):
-        flag = flag.fillna(False).astype(str).str.lower().isin({"true", "1", "yes"})
-    data["_atlas_addr"] = flag.fillna(False)
     data[value_col] = pd.to_numeric(data[value_col], errors="coerce").fillna(0)
-    all_values = data.groupby("Agency", dropna=False)[value_col].sum()
-    tam_values = data[data["_atlas_addr"]].groupby("Agency", dropna=False)[value_col].sum()
-    agencies = sorted(set(all_values.index) | set(tam_values.index), key=str)
-    rows = [{"agency": str(a), "all": float(all_values.get(a, 0)), "tam": float(tam_values.get(a, 0))} for a in agencies]
-    panel = """<section class="atlas-agency-panel" style="max-width:1480px;margin:20px auto;padding:22px;background:#fff;border:1px solid #e5e7eb;border-radius:14px">
+    values = data.groupby("Agency", dropna=False)[value_col].sum()
+    rows = [
+        {"agency": str(agency), "value": float(value)}
+        for agency, value in values.items()
+    ]
+    market_label = (
+        "Accenture TAM"
+        if market_mode == "tam"
+        else "All Federal Health Market"
+    )
+
+    panel = f"""<section class="atlas-agency-panel" style="max-width:1480px;margin:20px auto;padding:22px;background:#fff;border:1px solid #e5e7eb;border-radius:14px">
     <h2 style="font-size:20px;margin:0 0 6px">Procurement by agency</h2>
-    <p style="font-size:13px;color:#667085">Ranked expenditure and share of selected market. Uses existing Gold addressability decisions.</p>
-    
+    <p style="font-size:13px;color:#667085">Ranked expenditure and share of {market_label}.</p>
     <div id="atlasAgencyChart" style="width:100%;min-height:400px"></div></section>"""
+
     script = """<script>(function(){
     const rows = __DATA__;
-    function render(){
-      const mode='tam';
-      const sorted=rows.map(r=>({agency:r.agency,value:Number(r[mode]||0)})).filter(r=>r.value!==0).sort((a,b)=>a.value-b.value);
-      const total=sorted.reduce((s,r)=>s+r.value,0);
-      const height=Math.max(420,sorted.length*38+110);
-      Plotly.react('atlasAgencyChart',[{type:'bar',orientation:'h',x:sorted.map(r=>r.value/1e9),y:sorted.map(r=>r.agency),marker:{color:'#7C3AED'},text:sorted.map(r=>total?((r.value/total)*100).toFixed(1)+'%':'0%'),textposition:'outside',cliponaxis:false,customdata:sorted.map(r=>r.value),hovertemplate:'<b>%{y}</b><br>A$%{customdata:,.0f}<br>%{text} of selected market<extra></extra>'}],{template:'plotly_white',height,margin:{t:25,b:60,l:300,r:100},xaxis:{title:'Contract value (A$B)'},yaxis:{automargin:true},showlegend:false},{responsive:true,displayModeBar:false});
-    }
-    render();
-    })();</script>""".replace('__DATA__', json.dumps(rows, ensure_ascii=False))
-    return html_text.replace('</body>', panel + script + '</body>', 1)
-
-
-def atlas_market_switch(html_text: str, current: str, tam_file: str, all_file: str) -> str:
-    """One market selector for the entire generated dashboard."""
-    controls = (
-        '<div class="atlas-global-market" style="max-width:1480px;margin:18px auto 0;padding:12px 18px;'
-        'background:#fff;border:1px solid #e5e7eb;border-radius:12px;font:600 14px Arial">'
-        '<label for="atlasGlobalMarket">Market view &nbsp;</label>'
-        '<select id="atlasGlobalMarket" aria-label="Market view" style="padding:9px 12px;border-radius:8px;'
-        'border:1px solid #d0d5dd;background:#fff" onchange="location.href=this.value">'
-        f'<option value="{tam_file}" {"selected" if current == "tam" else ""}>Addressable TAM</option>'
-        f'<option value="{all_file}" {"selected" if current == "all" else ""}>All of Market</option>'
-        '</select></div>'
-    )
-    return html_text.replace('<body>', '<body>' + controls, 1)
+    const sorted=rows.map(r=>({agency:r.agency,value:Number(r.value||0)})).filter(r=>r.value!==0).sort((a,b)=>a.value-b.value);
+    const total=sorted.reduce((s,r)=>s+r.value,0);
+    const height=Math.max(420,sorted.length*38+110);
+    Plotly.react('atlasAgencyChart',[{type:'bar',orientation:'h',x:sorted.map(r=>r.value/1e9),y:sorted.map(r=>r.agency),marker:{color:'#7C3AED'},text:sorted.map(r=>total?((r.value/total)*100).toFixed(1)+'%':'0%'),textposition:'outside',cliponaxis:false,customdata:sorted.map(r=>r.value),hovertemplate:'<b>%{y}</b><br>A$%{customdata:,.0f}<br>%{text} of selected market<extra></extra>'}],{template:'plotly_white',height,margin:{t:25,b:60,l:300,r:100},xaxis:{title:'Contract value (A$B)'},yaxis:{automargin:true},showlegend:false},{responsive:true,displayModeBar:false});
+    })();</script>""".replace("__DATA__", json.dumps(rows, ensure_ascii=False))
+    return html_text.replace("</body>", panel + script + "</body>", 1)
 
 if __name__ == "__main__":
     main()
