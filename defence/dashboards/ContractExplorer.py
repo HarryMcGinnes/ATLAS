@@ -311,6 +311,20 @@ def financial_year_start(value: object) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def parse_atlas_date_series(series: pd.Series) -> pd.Series:
+    """Parse datetime columns without swapping the month/day in ISO dates."""
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return pd.to_datetime(series, errors="coerce")
+    text = series.astype("string").str.strip()
+    iso = text.str.match(r"^\d{4}-\d{1,2}-\d{1,2}(?:[ T].*)?$", na=False)
+    result = pd.Series(pd.NaT, index=series.index, dtype="datetime64[ns]")
+    result.loc[iso] = pd.to_datetime(text.loc[iso], errors="coerce", format="ISO8601")
+    result.loc[~iso] = pd.to_datetime(
+        text.loc[~iso], errors="coerce", format="mixed", dayfirst=True
+    )
+    return result
+
+
 def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
     if not path.exists():
         raise SystemExit(f"Master Defence parquet not found: {path}")
@@ -385,15 +399,45 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
     end_col = first_existing(out, END_DATE_CANDIDATES)
 
     out["_start"] = (
-        pd.to_datetime(out[start_col], errors="coerce", dayfirst=True)
+        parse_atlas_date_series(out[start_col])
         if start_col
         else pd.Series(pd.NaT, index=out.index)
     )
     out["_end"] = (
-        pd.to_datetime(out[end_col], errors="coerce", dayfirst=True)
+        parse_atlas_date_series(out[end_col])
         if end_col
         else pd.Series(pd.NaT, index=out.index)
     )
+    # ATLAS DEFENCE FAMILY-DATE DISPLAY V2
+    # The Defence dashboard master does not currently guarantee family date
+    # fields. Infer periods from credible related CNs in the master without
+    # touching the original source columns or contract values.
+    out["_date_inferred"] = False
+    if CN_ID_COL in out.columns:
+        ids = out[CN_ID_COL].astype("string").str.strip().str.upper()
+        roots = ids.str.replace(r"-A\d+$", "", regex=True)
+        is_original = ids.eq(roots)
+        valid_raw = (
+            out["_start"].notna() & out["_end"].notna()
+            & out["_start"].le(out["_end"])
+        )
+        original_start = (
+            out["_start"].where(valid_raw & is_original)
+            .groupby(roots).transform("min")
+        )
+        earliest_start = (
+            out["_start"].where(valid_raw).groupby(roots).transform("min")
+        )
+        latest_end = (
+            out["_end"].where(valid_raw).groupby(roots).transform("max")
+        )
+        inferred_start = original_start.combine_first(earliest_start)
+        possible = inferred_start.notna() & latest_end.notna() & inferred_start.le(latest_end)
+        original_present = is_original.groupby(roots).transform("any")
+        out["_date_inferred"] = possible & original_start.isna()
+        out["_start"] = inferred_start.where(possible)
+        out["_end"] = latest_end.where(possible)
+
     duration_days = (out["_end"] - out["_start"]).dt.days
     out["_duration_days"] = duration_days.where(duration_days >= 0)
 
@@ -473,7 +517,7 @@ def build_payload(df: pd.DataFrame) -> dict[str, object]:
             "reinvention_engine": safe_str(row.get(RE_COL), "Unclassified"),
             "value": float(row.get("_value", 0) or 0),
             "total_value": float(row.get("_total_value", 0) or 0),
-            "start_date": fmt_date(row.get("_start")),
+            "start_date": fmt_date(row.get("_start")) + (" (inferred)" if bool(row.get("_date_inferred", False)) else ""),
             "end_date": fmt_date(row.get("_end")),
             "start_date_iso": (
                 pd.Timestamp(row.get("_start")).strftime("%Y-%m-%d")
@@ -1826,7 +1870,7 @@ function render() {{
 
 
 document.getElementById('agencySelect').value = DEFAULT_AGENCY;
-document.getElementById('marketMode').addEventListener('change', () => {{ clearAllFilters(); updateLeaderboards(); }});
+document.getElementById('marketMode').addEventListener('change', () => {{ populateDomains(true); refreshDependentFilters(); render(); updateLeaderboards(); }});
 
 (function() {{
   const select = document.getElementById('marketMode');
