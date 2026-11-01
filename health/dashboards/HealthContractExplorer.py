@@ -106,6 +106,20 @@ def parse_bool_series(series: pd.Series) -> pd.Series:
     )
 
 
+def parse_atlas_date_series(series: pd.Series) -> pd.Series:
+    """Parse datetime columns without swapping the month/day in ISO dates."""
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return pd.to_datetime(series, errors="coerce")
+    text = series.astype("string").str.strip()
+    iso = text.str.match(r"^\d{4}-\d{1,2}-\d{1,2}(?:[ T].*)?$", na=False)
+    result = pd.Series(pd.NaT, index=series.index, dtype="datetime64[ns]")
+    result.loc[iso] = pd.to_datetime(text.loc[iso], errors="coerce", format="ISO8601")
+    result.loc[~iso] = pd.to_datetime(
+        text.loc[~iso], errors="coerce", format="mixed", dayfirst=True
+    )
+    return result
+
+
 def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
     if not path.exists():
         raise SystemExit(f"Health procurement dataset not found: {path}")
@@ -178,13 +192,13 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
     end_col = first_existing(out, END_DATE_CANDIDATES)
 
     out["_start"] = (
-        pd.to_datetime(out[start_col], errors="coerce", dayfirst=True)
+        parse_atlas_date_series(out[start_col])
         if start_col
         else pd.Series(pd.NaT, index=out.index)
     )
 
     out["_end"] = (
-        pd.to_datetime(out[end_col], errors="coerce", dayfirst=True)
+        parse_atlas_date_series(out[end_col])
         if end_col
         else pd.Series(pd.NaT, index=out.index)
     )
@@ -205,16 +219,8 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
         )
         
 
-    family_start = pd.to_datetime(
-        out["cn_family_start_date"],
-        errors="coerce",
-        dayfirst=True,
-    )
-    family_end = pd.to_datetime(
-        out["cn_family_end_date"],
-        errors="coerce",
-        dayfirst=True,
-    )
+    family_start = parse_atlas_date_series(out["cn_family_start_date"])
+    family_end = parse_atlas_date_series(out["cn_family_end_date"])
 
     family_status = (
         out["cn_family_date_status"]
@@ -222,21 +228,46 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
         .fillna("review_missing_family")
     )
 
+    # ATLAS HEALTH FAMILY-DATE DISPLAY V2
+    # The refreshed Silver/Gold date statuses are canonical. Older master
+    # artifacts may still report review_original_missing: safely recompute
+    # observed amendment dates using *only valid individual date pairs*.
     credible_statuses = {
-        "valid",
-        "inferred_family_start",
-        "inferred_original_missing",
+        "valid", "inferred_family_start", "inferred_original_missing",
     }
-
+    raw_start = out["_start"].copy()
+    raw_end = out["_end"].copy()
+    family_root = (
+        out["CN Root ID"].astype("string").str.strip().str.upper()
+        if "CN Root ID" in out.columns
+        else out[CN_ID_COL].astype("string").str.strip().str.upper()
+              .str.replace(r"-A\d+$", "", regex=True)
+    )
+    ids = out[CN_ID_COL].astype("string").str.strip().str.upper()
+    raw_valid = raw_start.notna() & raw_end.notna() & raw_start.le(raw_end)
+    observed_start = raw_start.where(raw_valid).groupby(family_root).transform("min")
+    observed_end = raw_end.where(raw_valid).groupby(family_root).transform("max")
+    parent_present = ids.eq(family_root).groupby(family_root).transform("any")
+    needs_recovery = family_status.isin({
+        "review_original_missing", "review_invalid_version_dates",
+        "review_invalid_family_period", "review_missing_start",
+        "review_missing_end",
+    })
+    recovered = (
+        needs_recovery & observed_start.notna() & observed_end.notna()
+        & observed_start.le(observed_end)
+    )
+    family_start = family_start.where(~recovered, observed_start)
+    family_end = family_end.where(~recovered, observed_end)
+    family_status = family_status.mask(recovered, "inferred_family_start")
+    family_status = family_status.mask(
+        recovered & ~parent_present.fillna(False), "inferred_original_missing"
+    )
     credible = (
         family_status.isin(credible_statuses)
-        & family_start.notna()
-        & family_end.notna()
+        & family_start.notna() & family_end.notna()
         & family_end.ge(family_start)
     )
-
-    # Use family dates only where the reconstructed period
-    # is credible. Unresolved dates are left blank for review.
     out["_start"] = family_start.where(credible)
     out["_end"] = family_end.where(credible)
     out["_date_status"] = family_status
@@ -268,7 +299,7 @@ def build_payload(df: pd.DataFrame) -> dict[str, object]:
             "is_addressable": bool(row.get("is_addressable", False)),
             "value": float(row.get("_value", 0) or 0),
             "total_value": float(row.get("_total_value", 0) or 0),
-            "start_date": fmt_date(row.get("_start")),
+            "start_date": fmt_date(row.get("_start")) + (" (inferred)" if safe_str(row.get("_date_status")).startswith("inferred_") else ""),
             "end_date": fmt_date(row.get("_end")),
             "start_date_iso": pd.Timestamp(row.get("_start")).strftime("%Y-%m-%d") if pd.notna(row.get("_start")) else "",
             "end_date_iso": pd.Timestamp(row.get("_end")).strftime("%Y-%m-%d") if pd.notna(row.get("_end")) else "",
@@ -418,6 +449,7 @@ select,input{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;
 
 
 <div class="summary-line" id="summaryLine"></div>
+<p class="method">Dates marked (inferred) use the earliest credible recorded start and latest credible recorded end across available CN family members. This is an observed range, not confirmation of the current legal contract term.</p>
 <div id="yearContainer"></div>
 <p class="method">The dashboard is scoped to contracts classified as Accenture-addressable within the Health portfolio. Ongoing contracts are shown once in the top bracket; remaining contracts are grouped by their recorded financial year. Supplier and Service Offering filters are ranked by addressable spend within the current agency scope.</p>
 </div>
@@ -675,7 +707,7 @@ function clearAllFilters() {{
   refreshFilters();
   render();
 }}
-document.getElementById('marketMode').addEventListener('change',()=>{{clearAllFilters()}});
+document.getElementById('marketMode').addEventListener('change',()=>{{refreshFilters();render()}});
 
 (function() {{
   const select = document.getElementById('marketMode');
