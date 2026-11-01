@@ -79,7 +79,7 @@ jobs:
           from pathlib import Path
           import pandas as pd
 
-          ID_NAMES = ['CN ID', 'Contract Notice ID', 'CN_ID', 'cn_id']
+          ID_NAMES = ['CN ID', 'Contract Notice ID', 'CN_ID', 'cn_id', 'CNID', 'CN Number', 'CN No', 'Contract Notice Number', 'Contract Number', 'Contract Notice', 'Contract Notice Identifier', 'ContractNoticeId', 'contract_notice_id', 'cnid', 'Contract ID']
           START_NAMES = ['Start Date', 'Contract Start Date', 'Contract Period Start', 'Contract Start']
           END_NAMES = ['End Date', 'Contract End Date', 'Contract Period End', 'Contract End', 'Expiry Date']
           FAM_START = 'cn_family_start_date'
@@ -89,10 +89,12 @@ jobs:
           CN_RE = re.compile(r'(?i)(-A\d+)$')
 
           def column(columns, names):
-              names_lower = {str(c).strip().lower(): c for c in columns}
+              def canon(x):
+                  return re.sub(r'[^a-z0-9]', '', str(x).lower())
+              names_norm = {canon(c): c for c in columns}
               for n in names:
-                  if n.lower() in names_lower:
-                      return names_lower[n.lower()]
+                  if canon(n) in names_norm:
+                      return names_norm[canon(n)]
               return None
 
           def read_selected(path, names):
@@ -183,11 +185,13 @@ jobs:
                       names=pq.read_schema(args.baseline).names
                   else:
                       names=pd.read_csv(args.baseline,nrows=0).columns.tolist()
+                  print('BASELINE COLUMN NAMES: ' + ', '.join(map(str, names)))
                   bid=column(names, ID_NAMES)
+                  print('BASELINE ID MATCH:', repr(bid))
                   bs=column(names, START_NAMES)
                   be=column(names, END_NAMES)
                   if not bid:
-                      print('WARNING: Baseline has no recognized CN ID field; skipping parent match')
+                      print('WARNING: Baseline has no recognized CN ID field; parent match is UNKNOWN, not FALSE')
                   else:
                       b=read_selected(args.baseline, [bid]+[x for x in (bs,be) if x])
                       b['_cn']=clean_id(b[bid])
@@ -211,6 +215,9 @@ jobs:
               unknown=out.loc[out['dashboard_unknown_dates']]
               print(f'\nUnknown date records: {len(unknown):,}; distinct CN families: {unknown.family_id.nunique():,}; amendments: {int(unknown.is_amendment.sum()):,}')
               show_counts('Unknown date statuses', unknown['date_status'])
+              print('\nUnknown-date parent found IN HEALTH MASTER:')
+              print(unknown['parent_in_master'].value_counts(dropna=False).to_string())
+              print(f'Unknown-date families with parent IN HEALTH MASTER: {unknown.loc[unknown.parent_in_master, "family_id"].nunique():,} of {unknown.family_id.nunique():,}')
               print('\nUnknown date breakdown (amendment / original):')
               print(pd.crosstab(unknown['date_status'], unknown['is_amendment']).to_string())
               if args.baseline:
@@ -220,10 +227,22 @@ jobs:
                   print('\nUnknown dates by addressability:')
                   print(unknown['is_addressable'].value_counts(dropna=False).to_string())
               args.output_dir.mkdir(parents=True,exist_ok=True)
+              family_summary=(unknown.groupby('family_id',dropna=False)
+                  .agg(amendments=('cn_id','size'),
+                       parent_in_master=('parent_in_master','max'),
+                       valid_raw_dates=('source_dates_complete_valid','sum'),
+                       valid_family_dates=('family_dates_complete_valid','sum'),
+                       reversed_raw_dates=('raw_dates_reversed','sum'),
+                       reversed_family_dates=('family_dates_reversed','sum'))
+                  .reset_index())
+              family_summary['parent_in_baseline']=family_summary['family_id'].map(
+                  unknown.groupby('family_id')['parent_in_baseline'].first())
+              family_summary.to_csv(args.output_dir/'unknown_date_families.csv', index=False)
               out.to_csv(args.output_dir/'all_health_contract_date_audit.csv',index=False,date_format='%Y-%m-%d')
               unknown.to_csv(args.output_dir/'unknown_date_contracts.csv',index=False,date_format='%Y-%m-%d')
               print(f'\nAUDIT WRITTEN: {args.output_dir / "unknown_date_contracts.csv"}')
               print(f'AUDIT WRITTEN: {args.output_dir / "all_health_contract_date_audit.csv"}')
+              print(f'AUDIT WRITTEN: {args.output_dir / "unknown_date_families.csv"}')
               print('No datasets or dashboard scripts changed.')
 
           if __name__=='__main__':
