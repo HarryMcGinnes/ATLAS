@@ -90,7 +90,10 @@ jobs:
 
           def column(columns, names):
               def canon(x):
-                  return re.sub(r'[^a-z0-9]', '', str(x).lower())
+                  # Historical AusTender baseline prefixes headers with position numbers,
+                  # e.g. '03. Contract Notice ID' and '07. Start Date'.
+                  name = re.sub(r'^\s*\d+\s*[.\-)]\s*', '', str(x).lstrip('\ufeff'))
+                  return re.sub(r'[^a-z0-9]', '', name.lower())
               names_norm = {canon(c): c for c in columns}
               for n in names:
                   if canon(n) in names_norm:
@@ -206,7 +209,18 @@ jobs:
                       mapping=parents.set_index('_cn')[['baseline_parent_start','baseline_parent_end']]
                       out['baseline_parent_start']=out['family_id'].map(mapping['baseline_parent_start'])
                       out['baseline_parent_end']=out['family_id'].map(mapping['baseline_parent_end'])
-                      print(f'BASELINE {args.baseline} | records {len(b):,} | distinct parent IDs {len(parent_ids):,}')
+                      print(f'BASELINE {args.baseline} | records {len(b):,} | distinct CN IDs {len(parent_ids):,}')
+                      unknown_mask = out['dashboard_unknown_dates'] & out['is_amendment']
+                      known_parent = unknown_mask & out['parent_in_baseline'].fillna(False).astype(bool)
+                      start_known = out['baseline_parent_start'].notna()
+                      end_known = out['baseline_parent_end'].notna()
+                      parent_dates_ok = start_known & end_known & out['baseline_parent_end'].ge(out['baseline_parent_start'])
+                      print('\nBASELINE PARENT RECOVERY')
+                      print(f'  Unknown amendments whose original CN exists in baseline: {int(known_parent.sum()):,} of {int(unknown_mask.sum()):,}')
+                      print(f'  Distinct affected families with original in baseline: {out.loc[known_parent, "family_id"].nunique():,} of {out.loc[unknown_mask, "family_id"].nunique():,}')
+                      print(f'  Unknown amendments with credible original baseline date range: {int((known_parent & parent_dates_ok).sum()):,}')
+                      print(f'  Unknown amendments whose original CN is absent from baseline: {int((unknown_mask & ~out["parent_in_baseline"].fillna(False).astype(bool)).sum()):,}')
+                      print('  NOTE: A baseline parent match is evidence only; no dates are changed.')
 
               show_counts('Family date statuses (all Health records)', out['date_status'])
               print('\nHEALTH METRICS')
@@ -237,6 +251,10 @@ jobs:
                   .reset_index())
               family_summary['parent_in_baseline']=family_summary['family_id'].map(
                   unknown.groupby('family_id')['parent_in_baseline'].first())
+              family_summary['baseline_parent_start']=family_summary['family_id'].map(
+                  unknown.groupby('family_id')['baseline_parent_start'].first())
+              family_summary['baseline_parent_end']=family_summary['family_id'].map(
+                  unknown.groupby('family_id')['baseline_parent_end'].first())
               family_summary.to_csv(args.output_dir/'unknown_date_families.csv', index=False)
               out.to_csv(args.output_dir/'all_health_contract_date_audit.csv',index=False,date_format='%Y-%m-%d')
               unknown.to_csv(args.output_dir/'unknown_date_contracts.csv',index=False,date_format='%Y-%m-%d')
