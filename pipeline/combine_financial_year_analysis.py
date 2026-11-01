@@ -714,157 +714,95 @@ def add_contract_version_metadata(
 
 
 def add_contract_family_dates(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Enrich contract families without modifying source dates or values.
+    """ATLAS AMENDMENT FAMILY DATE V2.
 
-    Start:
-      - Original CN start, when available and credible.
-      - Otherwise earliest credible start from available versions.
-
-    End:
-      - Latest recorded end across the family, including amendments.
-
-    Missing originals remain explicitly identified as inferred.
+    Build an *observed* family period, not a legally confirmed contract term.
+    Prefer a credible original CN start date where available; otherwise use
+    the earliest credible start among related amendments.  Use the latest
+    credible recorded end among related CNs.  A reversed source period does
+    not contribute either endpoint, but remains flagged in the audit columns.
+    CN IDs, original source date columns, rows and values are unchanged.
     """
     out = df.copy()
-
-    required = [
-        "CN Root ID", "CN Amendment Number",
-        "Start Date", "End Date", "Value",
-    ]
-    missing = [c for c in required if c not in out.columns]
+    required = {"CN Root ID", "CN Amendment Number", "Start Date", "End Date", "Value"}
+    missing = sorted(required - set(out.columns))
     if missing:
         raise RuntimeError(f"Missing family fields: {missing}")
 
-    root = out["CN Root ID"].astype("string").str.strip()
-    valid = root.notna() & root.ne("")
-
-    out["cn_family_start_date"] = pd.NaT
-    out["cn_family_end_date"] = pd.NaT
-    out["cn_family_date_status"] = "review_missing_family"
-
-    if not valid.any():
-        return out
-
-    versions = pd.DataFrame({
-        "root": root.loc[valid],
-        "amendment": pd.to_numeric(
-            out.loc[valid, "CN Amendment Number"],
-            errors="coerce",
-        ),
-        "start": pd.to_datetime(
-            out.loc[valid, "Start Date"],
-            errors="coerce",
-            dayfirst=True,
-        ),
-        "end": pd.to_datetime(
-            out.loc[valid, "End Date"],
-            errors="coerce",
-            dayfirst=True,
-        ),
-    })
-
-    # A version is credible if its own dates do not contradict
-    # each other. Missing dates remain eligible for review.
-    credible = (
-        versions["start"].notna()
-        & (
-            versions["end"].isna()
-            | versions["start"].le(versions["end"])
+    roots = out["CN Root ID"].astype("string").str.strip().str.upper()
+    has_root = roots.notna() & roots.ne("")
+    amendments = pd.to_numeric(out["CN Amendment Number"], errors="coerce")
+    def parse_date(series: pd.Series) -> pd.Series:
+        if pd.api.types.is_datetime64_any_dtype(series):
+            return pd.to_datetime(series, errors="coerce")
+        text = series.astype("string").str.strip()
+        iso = text.str.match(r"^\d{4}-\d{1,2}-\d{1,2}(?:[ T].*)?$", na=False)
+        result = pd.Series(pd.NaT, index=series.index, dtype="datetime64[ns]")
+        result.loc[iso] = pd.to_datetime(
+            text.loc[iso], errors="coerce", format="ISO8601"
         )
+        result.loc[~iso] = pd.to_datetime(
+            text.loc[~iso], errors="coerce", format="mixed", dayfirst=True
+        )
+        return result
+
+    starts = parse_date(out["Start Date"])
+    ends = parse_date(out["End Date"])
+
+    # A contradiction invalidates the particular *version*, not necessarily
+    # every other version in the same CN family.
+    reversed_version = starts.notna() & ends.notna() & starts.gt(ends)
+    usable_starts = starts.mask(reversed_version)
+    usable_ends = ends.mask(reversed_version)
+    original = amendments.eq(0)
+
+    grouped_start = usable_starts.where(has_root).groupby(roots).transform("min")
+    original_start = (
+        usable_starts.where(has_root & original).groupby(roots).transform("min")
+    )
+    family_start = original_start.combine_first(grouped_start)
+    family_end = usable_ends.where(has_root).groupby(roots).transform("max")
+
+    # Report the underlying evidence separately from date usability.  A family
+    # with one contradictory version and two credible amendments can still
+    # have an inferred range, but the contradictory version remains flagged.
+    has_original = original.where(has_root, False).groupby(roots).transform("any")
+    has_original_start = (
+        (original & usable_starts.notna()).where(has_root, False)
+        .groupby(roots).transform("any")
+    )
+    n_reversed = (
+        reversed_version.where(has_root, False).astype(int)
+        .groupby(roots).transform("sum")
     )
 
-    originals = versions.loc[
-        versions["amendment"].eq(0) & credible
-    ]
+    status = pd.Series("valid", index=out.index, dtype="object")
+    status.loc[has_root & ~has_original_start.fillna(False)] = "inferred_family_start"
+    status.loc[has_root & ~has_original.fillna(False)] = "inferred_original_missing"
+    status.loc[has_root & family_end.isna()] = "review_missing_end"
+    status.loc[has_root & family_start.isna()] = "review_missing_start"
+    status.loc[has_root & family_start.notna() & family_end.notna()
+               & family_start.gt(family_end)] = "review_invalid_family_period"
+    status.loc[~has_root] = "review_missing_family"
 
-    original_start = originals.groupby("root")["start"].min()
+    out["cn_family_start_date"] = family_start.where(has_root)
+    out["cn_family_end_date"] = family_end.where(has_root)
+    out["cn_family_date_status"] = status
+    out["cn_family_invalid_version_count"] = n_reversed.fillna(0).astype("int64")
+    out["cn_family_has_invalid_version_dates"] = n_reversed.fillna(0).gt(0)
 
-    earliest_start = (
-        versions.loc[credible]
-        .groupby("root")["start"]
-        .min()
-    )
-
-    # Retain the latest recorded end date across all versions.
-    # This is a recorded maximum, not proof of current validity.
-    family_end = versions.groupby("root")["end"].max()
-
-    roots = pd.Index(versions["root"].unique(), name="root")
-
-    family_start = original_start.reindex(roots).combine_first(
-        earliest_start.reindex(roots)
-    )
-    family_end = family_end.reindex(roots)
-
-    has_original = versions.loc[
-        versions["amendment"].eq(0)
-    ]["root"].unique()
-
-    has_credible_original = originals["root"].unique()
-
-    status = pd.Series(
-        "valid",
-        index=roots,
-        dtype="object",
-    )
-
-    inferred = ~roots.isin(has_credible_original)
-    missing_original = ~roots.isin(has_original)
-
-    status.loc[inferred] = "inferred_family_start"
-    status.loc[missing_original] = "inferred_original_missing"
-
-    status.loc[family_end.isna()] = "review_missing_end"
-    status.loc[family_start.isna()] = "review_missing_start"
-
-    invalid = (
-        family_start.notna()
-        & family_end.notna()
-        & family_end.lt(family_start)
-    )
-    status.loc[invalid] = "review_invalid_family_period"
-
-    # Flag any family containing a contradictory source version.
-    invalid_version = (
-        versions["start"].notna()
-        & versions["end"].notna()
-        & versions["start"].gt(versions["end"])
-    )
-
-    bad_roots = versions.loc[invalid_version, "root"].unique()
-
-    # Do not overwrite more severe missing/invalid family statuses.
-    reviewable = status.loc[status.index.isin(bad_roots)]
-    reviewable = reviewable.loc[
-        reviewable.isin([
-            "valid",
-            "inferred_family_start",
-            "inferred_original_missing",
-        ])
-    ]
-    status.loc[reviewable.index] = "review_invalid_version_dates"
-
-    out.loc[valid, "cn_family_start_date"] = (
-        root.loc[valid].map(family_start)
-    )
-    out.loc[valid, "cn_family_end_date"] = (
-        root.loc[valid].map(family_end)
-    )
-    out.loc[valid, "cn_family_date_status"] = (
-        root.loc[valid].map(status)
-    )
-
+    # Explicit immutability checks: no source dates, amounts or CNs may change.
     if len(out) != len(df):
         raise RuntimeError("Family enrichment changed row count")
-
     if not out["Value"].equals(df["Value"]):
         raise RuntimeError("Family enrichment changed values")
-
-    print("\nCONTRACT FAMILY DATE ENRICHMENT")
-    print("=" * 50)
-    print(out["cn_family_date_status"].value_counts().to_string())
-
+    for source in ("CN ID", "Start Date", "End Date"):
+        if source in df and not out[source].equals(df[source]):
+            raise RuntimeError(f"Family enrichment modified {source}")
+    print("\nCONTRACT FAMILY DATE ENRICHMENT (V2)")
+    print(out["cn_family_date_status"].value_counts(dropna=False).to_string())
+    print("Rows with contradictory source dates:", int(reversed_version.sum()))
+    print("Rows with affected families:", int(out["cn_family_has_invalid_version_dates"].sum()))
     return out
 
 
