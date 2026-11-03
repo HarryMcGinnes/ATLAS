@@ -1,79 +1,47 @@
 from __future__ import annotations
 
 import argparse
-import html
 import json
 import re
 from pathlib import Path
 
 import pandas as pd
 
-
+AGENCY_COL = "Agency"
+DIVISION_CANDIDATES = ["Agency Division", "Agency Divison", "Division"]
+FY_COL = "Financial Year"
 VALUE_COL = "Value"
 ANNUALISED_VALUE_COL = "Value Per Year"
-SUPPLIER_COL = "Supplier Name"
-SUPPLIER_GROUP_COL = "supplier_group"
-DESCRIPTION_COL = "Description"
-CATEGORY_COL = "Category"
-FIN_YEAR_COL = "Financial Year"
-CN_ID_COL = "CN ID"
-AGENCY_COL = "Agency"
 CAPABILITY_COL = "capability"
-SERVICE_OFFERING_COL = "Service Offering"
-ADDRESSABLE_COL = "is_addressable"
-
-START_DATE_CANDIDATES = ["Start Date", "Contract Start Date", "Contract Period Start", "Contract Start", "StartDate"]
-END_DATE_CANDIDATES = ["End Date", "Contract End Date", "Contract Period End", "Contract End", "Expiry Date", "EndDate"]
-
-SERVICE_OFFERING_ORDER = [
-    "Strategy, Transformation & Advisory",
-    "SI & Engineering",
-    "Data, AI & Automation",
-    "Cloud Infrastructure & Cyber",
-    "Managed Services & Operations",
-    "Uncategorised",
-]
-
-SUPPLIER_COLOUR_MAP = {
-    "Accenture": "#A100FF",
-    "Deloitte": "#86BC25",
-    "KPMG": "#00338D",
-    "EY": "#FFE600",
-    "PwC": "#E0301E",
-    "IBM": "#1F70C1",
-    "Fujitsu": "#D6001C",
-    "DXC": "#5B2C83",
-    "DXC Technology": "#5B2C83",
-    "Microsoft": "#737373",
-    "Amazon / AWS": "#FF9900",
-    "Amazon Web Services": "#FF9900",
-    "Oracle": "#C74634",
-    "SAP": "#0FAAFF",
-    "Telstra": "#008193",
-    "Datacom": "#00AEEF",
-    "Data#3": "#34495E",
-    "Capgemini": "#0070AD",
-}
+SUPPLIER_GROUP_COL = "supplier_group"
+RAW_SUPPLIER_COL = "Supplier Name"
+CN_ID_COL = "CN ID"
+DESCRIPTION_COL = "Description"
+PROCUREMENT_METHOD_COL = "Procurement Method"
+CATEGORY_COL = "Category"
+EXTENSIONS_CANDIDATES = ["#Extensions", "Extensions", "Extension Count", "Number of Extensions"]
+START_DATE_CANDIDATES = ["Start Date", "Contract Start Date", "Contract Period Start", "Contract Start"]
+END_DATE_CANDIDATES = ["End Date", "Contract End Date", "Contract Period End", "Contract End", "Expiry Date"]
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Build Health TAM supplier-vs-supplier competitive intelligence dashboard.")
-    p.add_argument("--input", default="master_output/health_portfolio_contracts.parquet")
-    p.add_argument("--output-dir", default="HealthCompareDashboard_Output")
-    p.add_argument("--value-mode", choices=["total", "annualised"], default="total")
-    p.add_argument("--as-at", help="Date used for active-contract view, YYYY-MM-DD. Defaults to today.")
-    p.add_argument("--top-n-suppliers", type=int, default=30)
-    p.add_argument("--top-n-contracts", type=int, default=500)
+    p = argparse.ArgumentParser(description="Build the Health TAM Exploratory Analysis dashboard.")
+    p.add_argument(
+        "--input",
+        default="health/data/processed/master_health_contracts.parquet",
+        help="Canonical Health master dataset (parquet or CSV).",
+    )
+    p.add_argument("--output-dir", default="docs/health")
+    p.add_argument(
+        "--value-mode",
+        choices=["total", "annualised"],
+        default="total",
+        help="Value used in KPIs and tables.",
+    )
     return p.parse_args()
 
 
-def _parse_bool_series(series: pd.Series) -> pd.Series:
-    if pd.api.types.is_bool_dtype(series):
-        return series.fillna(False)
-    return series.fillna(False).astype(str).str.strip().str.lower().isin({"true", "1", "yes", "y"})
-
-
-def _clean_text(series: pd.Series, fallback: str) -> pd.Series:
+def clean_text(series: pd.Series, fallback: str) -> pd.Series:
     return (
         series.fillna(fallback)
         .astype(str)
@@ -85,10 +53,11 @@ def _clean_text(series: pd.Series, fallback: str) -> pd.Series:
 
 
 def first_existing(df: pd.DataFrame, candidates: list[str]) -> str | None:
-    exact = {str(c).lower(): c for c in df.columns}
+    lower_map = {str(c).lower(): c for c in df.columns}
     for candidate in candidates:
-        if candidate.lower() in exact:
-            return exact[candidate.lower()]
+        found = lower_map.get(candidate.lower())
+        if found is not None:
+            return found
     return None
 
 
@@ -99,875 +68,701 @@ def financial_year_start(value: object) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def money(value: float) -> str:
-    value = float(value or 0)
-    sign = "-" if value < 0 else ""
-    value = abs(value)
-    if value >= 1_000_000_000:
-        return f"{sign}${value / 1_000_000_000:,.2f}B"
-    if value >= 100_000_000:
-        return f"{sign}${value / 1_000_000:,.0f}M"
-    if value >= 10_000_000:
-        return f"{sign}${value / 1_000_000:,.1f}M"
-    if value >= 1_000_000:
-        return f"{sign}${value / 1_000_000:,.2f}M"
-    if value >= 1_000:
-        return f"{sign}${value / 1_000:,.0f}K"
-    return f"{sign}${value:,.0f}"
+def fmt_date(value: pd.Timestamp | pd.NaT) -> str:
+    if pd.isna(value):
+        return ""
+    return pd.Timestamp(value).strftime("%d %b %Y")
 
 
-def supplier_colour(name: object) -> str:
-    name = str(name or "").strip()
-    if name in SUPPLIER_COLOUR_MAP:
-        return SUPPLIER_COLOUR_MAP[name]
-    lower = name.lower()
-    rules = [
-        ("accenture", "#A100FF"), ("deloitte", "#86BC25"), ("kpmg", "#00338D"),
-        ("ernst", "#FFE600"), ("pwc", "#E0301E"), ("pricewaterhouse", "#E0301E"),
-        ("ibm", "#1F70C1"), ("fujitsu", "#D6001C"), ("dxc", "#5B2C83"),
-        ("microsoft", "#737373"), ("amazon", "#FF9900"), ("aws", "#FF9900"),
-        ("oracle", "#C74634"), ("sap", "#0FAAFF"), ("telstra", "#008193"),
-        ("datacom", "#00AEEF"), ("capgemini", "#0070AD"),
-    ]
-    for token, colour in rules:
-        if token in lower:
-            return colour
-    return "#5B6B7A"
+def fmt_duration(days: object) -> str:
+    if days is None or pd.isna(days):
+        return ""
+    days = float(days)
+    years = days / 365.25
+    if years >= 2:
+        return f"{years:.1f} yrs"
+    if years >= 1:
+        return f"{years:.2f} yrs"
+    return f"{int(round(days))} days"
+
+
+def safe_str(value: object, fallback: str = "") -> str:
+    if value is None or pd.isna(value):
+        return fallback
+    text = str(value).strip()
+    return text or fallback
+
+
+def parse_bool_series(series: pd.Series) -> pd.Series:
+    """Parse canonical boolean fields safely from parquet/CSV representations."""
+    if pd.api.types.is_bool_dtype(series):
+        return series.fillna(False)
+    return (
+        series.fillna(False)
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .isin({"true", "1", "yes", "y"})
+    )
+
+
+def parse_atlas_date_series(series: pd.Series) -> pd.Series:
+    """Parse datetime columns without swapping the month/day in ISO dates."""
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return pd.to_datetime(series, errors="coerce")
+    text = series.astype("string").str.strip()
+    iso = text.str.match(r"^\d{4}-\d{1,2}-\d{1,2}(?:[ T].*)?$", na=False)
+    result = pd.Series(pd.NaT, index=series.index, dtype="datetime64[ns]")
+    result.loc[iso] = pd.to_datetime(text.loc[iso], errors="coerce", format="ISO8601")
+    result.loc[~iso] = pd.to_datetime(
+        text.loc[~iso], errors="coerce", format="mixed", dayfirst=True
+    )
+    return result
 
 
 def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
     if not path.exists():
-        raise SystemExit(f"Health master dataset not found: {path}")
-    if path.suffix.lower() in {".parquet", ".pq"}:
-        df = pd.read_parquet(path)
-    elif path.suffix.lower() == ".csv":
-        df = pd.read_csv(path, low_memory=False)
-    else:
-        raise SystemExit("Input must be parquet or CSV.")
+        raise SystemExit(f"Health procurement dataset not found: {path}")
 
-    required = {VALUE_COL, AGENCY_COL, SUPPLIER_GROUP_COL, ADDRESSABLE_COL}
-    missing = sorted(required - set(df.columns))
-    if missing:
+    if path.suffix.lower() == ".csv":
+        df = pd.read_csv(path, low_memory=False)
+    elif path.suffix.lower() in {".parquet", ".pq"}:
+        df = pd.read_parquet(path)
+    else:
+        raise SystemExit(f"Unsupported input type: {path.suffix}. Use CSV or parquet.")
+
+    if AGENCY_COL not in df.columns or VALUE_COL not in df.columns:
+        raise SystemExit(f"Health input must contain '{AGENCY_COL}' and '{VALUE_COL}'.")
+
+    if "is_addressable" not in df.columns:
         raise SystemExit(
-            "Health comparison dashboard requires the canonical Health master dataset. Missing: "
-            + ", ".join(missing)
-            + ". Rebuild it with build_health_filter_v2.py."
+            "Health TAM Exploratory Analysis requires the canonical 'is_addressable' field. "
+            "Rebuild master_output/health_portfolio_contracts.parquet with build_health_filter_v2.py first."
         )
 
-    # Retain the complete canonical Federal Health population. Addressability is a
-    # view filter, not a loader filter: the browser has both markets available.
-    out = df.copy()
-    out[ADDRESSABLE_COL] = _parse_bool_series(out[ADDRESSABLE_COL])
-    if out.empty:
-        raise SystemExit("No Health contracts found.")
+    # Preserve the complete Health market.
+    # The dashboard market switch controls addressability.
+    df = df.copy()
+    df["is_addressable"] = parse_bool_series(
+        df["is_addressable"]
+    )
 
-    # Service Offering is authoritative from the Health filter. Addressable rows
-    # that remain unresolved are shown as 'Uncategorised'. Non-addressable rows
-    # form their own explicit group in the All Federal Health Market view.
-    if "service_offering" in out.columns:
-        out[CAPABILITY_COL] = out["service_offering"]
-    elif SERVICE_OFFERING_COL in out.columns:
-        out[CAPABILITY_COL] = out[SERVICE_OFFERING_COL]
-    elif CAPABILITY_COL not in out.columns:
-        raise SystemExit("Health master is missing Service Offering/capability classification.")
-    out[CAPABILITY_COL] = out[CAPABILITY_COL].fillna("Uncategorised").astype(str).str.strip().replace("", "Uncategorised")
-    out.loc[~out[ADDRESSABLE_COL], CAPABILITY_COL] = "Non-addressable / Unclassified"
+    if df.empty:
+        raise SystemExit("No Health contracts found in the input dataset.")
 
-    out[SUPPLIER_GROUP_COL] = _clean_text(out[SUPPLIER_GROUP_COL], "Unknown supplier")
-    out[AGENCY_COL] = _clean_text(out[AGENCY_COL], "Unknown agency")
-    if FIN_YEAR_COL not in out.columns:
-        out[FIN_YEAR_COL] = "Unknown FY"
-    out[FIN_YEAR_COL] = _clean_text(out[FIN_YEAR_COL], "Unknown FY")
-    out["_fy_start"] = out[FIN_YEAR_COL].map(financial_year_start)
+    if SUPPLIER_GROUP_COL not in df.columns:
+        if "supplier_display" in df.columns:
+            df[SUPPLIER_GROUP_COL] = df["supplier_display"]
+        elif RAW_SUPPLIER_COL in df.columns:
+            df[SUPPLIER_GROUP_COL] = df[RAW_SUPPLIER_COL]
+        else:
+            df[SUPPLIER_GROUP_COL] = "Unknown supplier"
+
+    if "service_offering" in df.columns:
+        df[CAPABILITY_COL] = df["service_offering"]
+    elif "Service Offering" in df.columns:
+        df[CAPABILITY_COL] = df["Service Offering"]
+    elif CAPABILITY_COL not in df.columns:
+        if "Service Offering" in df.columns:
+            df[CAPABILITY_COL] = df["Service Offering"]
+        else:
+            df[CAPABILITY_COL] = "Unclassified"
 
     value_col = ANNUALISED_VALUE_COL if value_mode == "annualised" else VALUE_COL
-    if value_col not in out.columns:
+    if value_col not in df.columns:
         raise SystemExit(f"Requested value column not found: {value_col}")
-    out["_value"] = pd.to_numeric(out[value_col], errors="coerce").fillna(0).clip(lower=0)
-    out["_total_value"] = pd.to_numeric(out[VALUE_COL], errors="coerce").fillna(0).clip(lower=0)
+
+    out = df.copy()
+    out[AGENCY_COL] = clean_text(out[AGENCY_COL], "Unknown agency")
+    division_col = first_existing(out, DIVISION_CANDIDATES)
+    if division_col:
+        out["_division"] = clean_text(out[division_col], "Unspecified division")
+    else:
+        out["_division"] = "Unspecified division"
+    out[SUPPLIER_GROUP_COL] = clean_text(out[SUPPLIER_GROUP_COL], "Unknown supplier")
+    out[CAPABILITY_COL] = clean_text(out[CAPABILITY_COL], "Unclassified")
+    out[FY_COL] = clean_text(out[FY_COL], "Unknown FY") if FY_COL in out.columns else "Unknown FY"
+
+    out["_value"] = pd.to_numeric(out[value_col], errors="coerce").fillna(0)
+    out["_total_value"] = pd.to_numeric(out[VALUE_COL], errors="coerce").fillna(0)
+    out["_fy_start"] = out[FY_COL].map(financial_year_start)
+
 
     start_col = first_existing(out, START_DATE_CANDIDATES)
     end_col = first_existing(out, END_DATE_CANDIDATES)
-    out["_start"] = pd.to_datetime(out[start_col], errors="coerce", dayfirst=True) if start_col else pd.Series(pd.NaT, index=out.index)
-    out["_end"] = pd.to_datetime(out[end_col], errors="coerce", dayfirst=True) if end_col else pd.Series(pd.NaT, index=out.index)
 
-    print(f"Using canonical Federal Health market dataset: {path}")
-    print(f"All Federal Health rows loaded: {len(out):,}")
-    print(f"All Federal Health value: {money(out['_value'].sum())}")
-    print(f"Accenture TAM value: {money(out.loc[out[ADDRESSABLE_COL], '_value'].sum())}")
+    out["_start"] = (
+        parse_atlas_date_series(out[start_col])
+        if start_col
+        else pd.Series(pd.NaT, index=out.index)
+    )
+
+    out["_end"] = (
+        parse_atlas_date_series(out[end_col])
+        if end_col
+        else pd.Series(pd.NaT, index=out.index)
+    )
+
+    # Use validated original-to-latest amendment family dates.
+    family_cols = {
+        "cn_family_start_date",
+        "cn_family_end_date",
+        "cn_family_date_status",
+    }
+    
+    missing_family_cols = family_cols - set(out.columns)
+
+    if missing_family_cols:
+        raise RuntimeError(
+            "Health Contract Explorer missing CN-family fields: "
+            + ", ".join(sorted(missing_family_cols))
+        )
+        
+
+    family_start = parse_atlas_date_series(out["cn_family_start_date"])
+    family_end = parse_atlas_date_series(out["cn_family_end_date"])
+
+    family_status = (
+        out["cn_family_date_status"]
+        .astype("string")
+        .fillna("review_missing_family")
+    )
+
+    # ATLAS HEALTH FAMILY-DATE DISPLAY V2
+    # The refreshed Silver/Gold date statuses are canonical. Older master
+    # artifacts may still report review_original_missing: safely recompute
+    # observed amendment dates using *only valid individual date pairs*.
+    credible_statuses = {
+        "valid", "inferred_family_start", "inferred_original_missing",
+    }
+    raw_start = out["_start"].copy()
+    raw_end = out["_end"].copy()
+    family_root = (
+        out["CN Root ID"].astype("string").str.strip().str.upper()
+        if "CN Root ID" in out.columns
+        else out[CN_ID_COL].astype("string").str.strip().str.upper()
+              .str.replace(r"-A\d+$", "", regex=True)
+    )
+    ids = out[CN_ID_COL].astype("string").str.strip().str.upper()
+    raw_valid = raw_start.notna() & raw_end.notna() & raw_start.le(raw_end)
+    observed_start = raw_start.where(raw_valid).groupby(family_root).transform("min")
+    observed_end = raw_end.where(raw_valid).groupby(family_root).transform("max")
+    parent_present = ids.eq(family_root).groupby(family_root).transform("any")
+    needs_recovery = family_status.isin({
+        "review_original_missing", "review_invalid_version_dates",
+        "review_invalid_family_period", "review_missing_start",
+        "review_missing_end",
+    })
+    recovered = (
+        needs_recovery & observed_start.notna() & observed_end.notna()
+        & observed_start.le(observed_end)
+    )
+    family_start = family_start.where(~recovered, observed_start)
+    family_end = family_end.where(~recovered, observed_end)
+    family_status = family_status.mask(recovered, "inferred_family_start")
+    family_status = family_status.mask(
+        recovered & ~parent_present.fillna(False), "inferred_original_missing"
+    )
+    credible = (
+        family_status.isin(credible_statuses)
+        & family_start.notna() & family_end.notna()
+        & family_end.ge(family_start)
+    )
+    out["_start"] = family_start.where(credible)
+    out["_end"] = family_end.where(credible)
+    out["_date_status"] = family_status
+
+    duration = (out["_end"] - out["_start"]).dt.days
+    out["_duration_days"] = duration.where(duration >= 0)
+
+
+    if out.empty:
+        raise SystemExit("No Health contracts were found.")
     return out, value_col
 
 
+def build_payload(df: pd.DataFrame) -> dict[str, object]:
+    extensions_col = first_existing(df, EXTENSIONS_CANDIDATES)
+    records: list[dict[str, object]] = []
 
-def _latest_contract_revisions(frame: pd.DataFrame, id_column: str = "CN ID") -> pd.DataFrame:
-    """One latest amendment per base CN for timeline display only."""
-    if id_column not in frame.columns or frame.empty:
-        return frame
-    result = frame.copy()
-    ids = result[id_column].fillna("").astype(str).str.strip().str.upper()
-    result["_timeline_base_cn"] = ids.str.replace(r"-A\d+$", "", regex=True)
-    result["_timeline_revision"] = pd.to_numeric(
-        ids.str.extract(r"-A(\d+)$", expand=False), errors="coerce"
-    ).fillna(0)
-    # A dated latest revision wins ties; original input order is final tie-breaker.
-    date_candidates = ["Publish Date", "Amendment Date", "Last Updated", "Execution Date"]
-    date_column = next((c for c in date_candidates if c in result.columns), None)
-    result["_timeline_date"] = (
-        pd.to_datetime(result[date_column], errors="coerce", dayfirst=True, utc=True)
-        if date_column else pd.NaT
+    for _, row in df.iterrows():
+        records.append({
+            "is_addressable": bool(row.get("is_addressable", False)),
+            "agency": safe_str(row.get(AGENCY_COL), "Unknown agency"),
+            "division": safe_str(row.get("_division"), "Unspecified division"),
+            "financial_year": safe_str(row.get(FY_COL), "Unknown FY"),
+            "fy_start": int(row["_fy_start"]) if pd.notna(row.get("_fy_start")) else None,
+            "contract_id": safe_str(row.get(CN_ID_COL)),
+            "description": safe_str(row.get(DESCRIPTION_COL)),
+            "supplier": safe_str(row.get(SUPPLIER_GROUP_COL), "Unknown supplier"),
+            "capability": safe_str(row.get(CAPABILITY_COL), "Unclassified"),
+            "is_addressable": bool(row.get("is_addressable", False)),
+            "value": float(row.get("_value", 0) or 0),
+            "total_value": float(row.get("_total_value", 0) or 0),
+            "start_date": fmt_date(row.get("_start")) + (" (inferred)" if safe_str(row.get("_date_status")).startswith("inferred_") else ""),
+            "end_date": fmt_date(row.get("_end")),
+            "start_date_iso": pd.Timestamp(row.get("_start")).strftime("%Y-%m-%d") if pd.notna(row.get("_start")) else "",
+            "end_date_iso": pd.Timestamp(row.get("_end")).strftime("%Y-%m-%d") if pd.notna(row.get("_end")) else "",
+            "duration_days": float(row["_duration_days"]) if pd.notna(row.get("_duration_days")) else None,
+            "duration_label": fmt_duration(row.get("_duration_days")),
+            "procurement_method": safe_str(row.get(PROCUREMENT_METHOD_COL)),
+            "category": safe_str(row.get(CATEGORY_COL)),
+            "extensions": safe_str(row.get(extensions_col)) if extensions_col else "",
+        })
+
+    agencies = sorted(df[AGENCY_COL].dropna().astype(str).unique().tolist())
+    return {"records": records, "agencies": agencies}
+
+
+def html_escape(value: object) -> str:
+    return (
+        str(value)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#039;")
     )
-    result["_timeline_order"] = range(len(result))
-    result = (result.sort_values(
-        ["_timeline_base_cn", "_timeline_revision", "_timeline_date", "_timeline_order"],
-        kind="stable", na_position="first"
-    ).drop_duplicates("_timeline_base_cn", keep="last"))
-    return result.drop(columns=["_timeline_base_cn", "_timeline_revision",
-                                "_timeline_date", "_timeline_order"])
 
-def build_model(
-    df: pd.DataFrame,
-    top_n_suppliers: int,
-    as_at: pd.Timestamp,
-    supplier_options_override: list[str] | None = None,
-) -> dict[str, object]:
-    total_tam = float(df["_value"].sum())
 
-    supplier_total = (
-        df.groupby(SUPPLIER_GROUP_COL, dropna=False)["_value"].sum()
-        .rename("supplier_value").reset_index().sort_values("supplier_value", ascending=False)
+def build_html(payload: dict[str, object], output_path: Path, value_mode: str, freshness: str = "") -> None:
+    all_agencies = "All Health agencies"
+    agency_options = "\n".join(
+        [f'<option value="{html_escape(all_agencies)}">{html_escape(all_agencies)}</option>']
+        + [f'<option value="{html_escape(a)}">{html_escape(a)}</option>' for a in payload["agencies"]]
     )
-    supplier_total["tam_share_pct"] = supplier_total["supplier_value"] / total_tam * 100 if total_tam else 0
-    supplier_total["rank_in_tam"] = supplier_total["supplier_value"].rank(method="min", ascending=False).astype(int)
+    value_basis = "Total contract value" if value_mode == "total" else "Annualised contract value"
 
-    top_suppliers = supplier_total.head(max(1, top_n_suppliers))[SUPPLIER_GROUP_COL].astype(str).tolist()
-    if "Accenture" in set(supplier_total[SUPPLIER_GROUP_COL].astype(str)):
-        supplier_options = ["Accenture"] + [s for s in top_suppliers if s != "Accenture"]
-    else:
-        supplier_options = top_suppliers
-    if supplier_options_override is not None:
-        # A single union of suppliers across both markets keeps selection valid
-        # and stable as users switch views, including suppliers with zero TAM.
-        supplier_options = list(dict.fromkeys(supplier_options_override))
-
-    cap_total = (
-        df.groupby(CAPABILITY_COL, dropna=False)["_value"].sum()
-        .rename("capability_market").reset_index()
-    )
-    cap_order = cap_total.sort_values("capability_market", ascending=False)[CAPABILITY_COL].astype(str).tolist()
-
-    supplier_cap = (
-        df.groupby([SUPPLIER_GROUP_COL, CAPABILITY_COL], dropna=False)
-        .agg(
-            supplier_capability_value=("_value", "sum"),
-            contracts=(CN_ID_COL, "nunique") if CN_ID_COL in df.columns else ("_value", "size"),
-        )
-        .reset_index().merge(cap_total, on=CAPABILITY_COL, how="left")
-    )
-    supplier_cap["capability_share_pct"] = supplier_cap["supplier_capability_value"] / supplier_cap["capability_market"].replace(0, pd.NA) * 100
-    supplier_cap["capability_rank"] = supplier_cap.groupby(CAPABILITY_COL)["supplier_capability_value"].rank(method="min", ascending=False).astype(int)
-
-    yearly = (
-        df.groupby([SUPPLIER_GROUP_COL, CAPABILITY_COL, FIN_YEAR_COL], dropna=False)
-        .agg(value=("_value", "sum"), contracts=(CN_ID_COL, "nunique") if CN_ID_COL in df.columns else ("_value", "size"))
-        .reset_index()
-    )
-    cap_year_market = (
-        df.groupby([CAPABILITY_COL, FIN_YEAR_COL], dropna=False)["_value"].sum()
-        .rename("capability_year_market").reset_index()
-    )
-    yearly = yearly.merge(cap_year_market, on=[CAPABILITY_COL, FIN_YEAR_COL], how="left")
-    yearly["share_pct"] = yearly["value"] / yearly["capability_year_market"].replace(0, pd.NA) * 100
-    yearly["_fy_start"] = yearly[FIN_YEAR_COL].map(financial_year_start)
-
-    agency_yearly = (
-        df.loc[df[SUPPLIER_GROUP_COL].isin(supplier_options)]
-        .groupby([SUPPLIER_GROUP_COL, AGENCY_COL, FIN_YEAR_COL], dropna=False)
-        .agg(value=("_value", "sum"), contracts=(CN_ID_COL, "nunique") if CN_ID_COL in df.columns else ("_value", "size"))
-        .reset_index()
-    )
-    agency_yearly["_fy_start"] = agency_yearly[FIN_YEAR_COL].map(financial_year_start)
-
-    # Active contracts for the first selected supplier's timeline. Unknown end dates
-    # are not treated as active because the timeline needs a bounded interval.
-    # Select the latest CN amendment for timeline display only.
-    timeline_source = _latest_contract_revisions(df)
-
-    # Use dates from the same DataFrame throughout.
-    active = timeline_source[
-        timeline_source["_start"].notna()
-        & timeline_source["_end"].notna()
-        & (timeline_source["_start"] <= as_at)
-        & (timeline_source["_end"] >= as_at)
-    ].copy()
-    active = active[active[SUPPLIER_GROUP_COL].isin(supplier_options)].copy()
-    active["_start_display"] = active["_start"].dt.strftime("%Y-%m-%d")
-    active["_end_display"] = active["_end"].dt.strftime("%Y-%m-%d")
-    active = active.sort_values([SUPPLIER_GROUP_COL, "_value"], ascending=[True, False])
-
-    contract_cols = [c for c in [
-        SUPPLIER_GROUP_COL, CN_ID_COL, DESCRIPTION_COL, CAPABILITY_COL, AGENCY_COL,
-        FIN_YEAR_COL, "_start_display", "_end_display", "_value", "_total_value", CATEGORY_COL,
-    ] if c in active.columns]
-    active_contracts = active[contract_cols].copy()
-
-    return {
-        "total_tam": total_tam,
-        "supplier_total": supplier_total,
-        "supplier_capability": supplier_cap,
-        "yearly": yearly,
-        "agency_yearly": agency_yearly,
-        "active_contracts": active_contracts,
-        "supplier_options": supplier_options,
-        "capabilities": cap_order,
-    }
-
-
-def records(df: pd.DataFrame, cols: list[str]) -> list[dict[str, object]]:
-    existing = [c for c in cols if c in df.columns]
-    frame = df[existing].copy().astype(object).where(pd.notna(df[existing]), None)
-    return frame.to_dict(orient="records")
-
-
-def build_html(
-    models: dict[str, dict[str, object]],
-    output_path: Path,
-    as_at: pd.Timestamp,
-    value_mode: str,
-    freshness: str = "",
-) -> None:
-    """Build one self-contained HTML page with an in-place market toggle.
-
-    Keeping both scopes on the *same* HTML page avoids requiring changes to
-    GitHub Pages site-copy rules for a second _AllMarket file.
-    """
-    tam_model = models["tam"]
-    supplier_options: list[str] = tam_model["supplier_options"]  # type: ignore[assignment]
-    if not supplier_options:
-        raise SystemExit("No suppliers available for comparison.")
-
-    default_supplier = "Accenture" if "Accenture" in supplier_options else supplier_options[0]
-    default_compare = next((s for s in supplier_options if s != default_supplier), default_supplier)
-    options_html = "\n".join(f'<option value="{html.escape(s)}">{html.escape(s)}</option>' for s in supplier_options)
-
-    def browser_model(model: dict[str, object]) -> dict[str, object]:
-        return {
-            "supplier_total": records(model["supplier_total"], [SUPPLIER_GROUP_COL, "supplier_value", "tam_share_pct", "rank_in_tam"]),
-            "supplier_capability": records(model["supplier_capability"], [SUPPLIER_GROUP_COL, CAPABILITY_COL, "supplier_capability_value", "capability_market", "capability_share_pct", "capability_rank", "contracts"]),
-            "yearly": records(model["yearly"], [SUPPLIER_GROUP_COL, CAPABILITY_COL, FIN_YEAR_COL, "value", "contracts", "capability_year_market", "share_pct", "_fy_start"]),
-            "agency_yearly": records(model["agency_yearly"], [SUPPLIER_GROUP_COL, AGENCY_COL, FIN_YEAR_COL, "value", "contracts", "_fy_start"]),
-            "contracts": records(model["active_contracts"], [SUPPLIER_GROUP_COL, CN_ID_COL, DESCRIPTION_COL, CAPABILITY_COL, AGENCY_COL, FIN_YEAR_COL, "_start_display", "_end_display", "_value", "_total_value", CATEGORY_COL]),
-            "supplier_options": model["supplier_options"],
-            "capabilities": model["capabilities"],
-            "market_total": model["total_tam"],
-        }
-
-    market_payload = {scope: browser_model(model) for scope, model in models.items()}
-    colour_payload = {s: supplier_colour(s) for s in supplier_options}
-
-    html_doc = f"""<!doctype html>
-<html>
+    html = f'''<!doctype html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Federal Health Competitive Intelligence | ATLAS</title>
-<script src="https://cdn.plot.ly/plotly-3.5.0.min.js"></script>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Health TAM Exploratory Analysis</title>
 <style>
-body{{font-family:Arial,Helvetica,sans-serif;margin:0;background:#f6f8fb;color:#1f2937}}
-.wrap{{max-width:1480px;margin:0 auto;padding:28px}}
-h1{{margin:0 0 8px;font-size:30px}}
-.subtitle{{color:#526070;font-size:14px;margin-bottom:18px}}
-.executive,.insight,.panel,.supplier-kpi-block{{background:#fff;border:1px solid #e5e7eb;border-radius:14px;box-shadow:0 1px 2px rgba(0,0,0,.04)}}
-.executive,.insight{{border-left:5px solid #A100FF;padding:16px 18px;margin:16px 0}}
-.executive h2,.insight h2{{margin:0 0 7px;font-size:19px}}
-.executive p,.insight p{{margin:0;color:#475467;font-size:13px;line-height:1.5}}
-.questions{{margin:8px 0 0;padding-left:20px;color:#344054;font-size:13px;font-weight:600;line-height:1.5}}
-.selectors{{display:grid;grid-template-columns:1fr 1fr .72fr;gap:10px;margin:14px 0}}
-.selector-card{{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px 12px}}
-.selector-card label{{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#667085;margin-bottom:4px}}
-select{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;background:#fff;padding:0 10px;font-size:13px}}
-.cards{{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:18px 0}}
-.supplier-kpi-block{{padding:14px;border-top:4px solid #A100FF}}
-.supplier-kpi-title{{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:#344054;margin-bottom:10px;padding-left:9px;border-left:5px solid #A100FF}}
-.supplier-kpi-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}}
-.card{{border:1px solid #e5e7eb;border-radius:12px;padding:14px;min-width:0}}
-.card-title{{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#667085;margin-bottom:7px}}
-.card-value{{font-size:24px;font-weight:700;color:#111827;line-height:1.15;overflow-wrap:anywhere}}
-.card-subtitle{{font-size:12px;color:#667085;margin-top:5px;line-height:1.35}}
-.card.kpi-win{{background:#ecfdf3;border-color:#6ce9a6}}
-.card.kpi-loss{{background:#fef3f2;border-color:#fda29b}}
-.card.kpi-tie{{background:#f8fafc;border-color:#d0d5dd}}
-.grid{{display:grid;grid-template-columns:1fr;gap:18px}}
-.panel{{padding:12px}}
-.chart-heading{{padding:10px 10px 0}}
-.chart-title{{margin:0;font-size:21px}}
-.chart-subtitle{{margin:5px 0 0;color:#526070;font-size:13px}}
-.leaderboard-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;padding:16px 10px 10px}}
-.leaderboard-card{{border:1px solid #e5e7eb;border-radius:12px;padding:14px}}
-.leaderboard-card h4{{margin:0 0 4px;font-size:16px}}
-.leaderboard-market{{font-size:12px;color:#667085;margin-bottom:10px}}
-.leader-row{{display:grid;grid-template-columns:28px minmax(120px,1fr) minmax(110px,2fr) 58px;gap:8px;align-items:center;padding:6px 0;border-top:1px solid #f1f5f9;font-size:12px}}
-.leader-row.focus-selected{{background:#faf5ff;margin:0 -7px;padding-left:7px;padding-right:7px;border-radius:8px}}
-.leader-row.focus-compare{{outline:1px solid #d0d5dd;margin:0 -7px;padding-left:7px;padding-right:7px;border-radius:8px}}
-.leader-bar-track{{height:12px;background:#eef2f7;border-radius:999px;overflow:hidden}}
-.leader-bar-fill{{height:100%;border-radius:999px;min-width:2px}}
-.leader-share{{font-weight:700;text-align:right}}
-.leaderboard-card{{overflow:visible}}
-.leader-row{{position:relative;cursor:default}}
-.leader-row.leaderboard-hover:hover{{background:#f8fafc}}
-.leader-row.focus-selected.leaderboard-hover:hover{{background:#f3e8ff}}
-.leader-tooltip{{
-  display:none;position:absolute;z-index:50;left:34%;top:calc(100% + 7px);
-  min-width:230px;max-width:310px;padding:11px 13px;background:#111827;color:#fff;
-  border-radius:9px;box-shadow:0 8px 24px rgba(15,23,42,.22);font-size:12px;
-  line-height:1.55;text-align:left;pointer-events:none
+:root{{--purple:#A100FF;--ink:#101828;--muted:#667085;--line:#E4E7EC;--bg:#F6F8FB;--card:#FFFFFF;--green:#067647;--amber:#B54708;}}
+*{{box-sizing:border-box}} body{{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--ink)}}
+.wrap{{max-width:1720px;margin:0 auto;padding:28px}} h1{{margin:0 0 8px;font-size:30px}} .subtitle{{margin:0 0 20px;color:#526070;font-size:15px;line-height:1.45}}
+.executive-summary{{background:#fff;border:1px solid #e5e7eb;border-left:5px solid var(--purple);border-radius:14px;padding:18px 20px;margin:0 0 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}}
+.executive-summary h2{{margin:0 0 9px;font-size:20px}} .executive-summary p{{margin:0;color:#475467;line-height:1.55}}
+.insight-grid{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:0 0 20px}}
+.leader-card{{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 17px;box-shadow:0 1px 2px rgba(16,24,40,.04)}}
+.leader-card h3{{margin:0 0 4px;font-size:17px}} .leader-card p{{margin:0 0 12px;color:var(--muted);font-size:12px;line-height:1.4}}
+.leader-row{{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:9px;align-items:center;padding:9px 0;border-top:1px solid #F0F2F5}}
+.leader-row:first-child{{border-top:0}} .leader-rank{{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#F4EBFF;color:#7F00CC;font-size:11px;font-weight:800}}
+.leader-name{{min-width:0;font-size:13px;font-weight:700}} .leader-detail{{margin-top:2px;color:var(--muted);font-size:11px;font-weight:400}} .leader-value{{text-align:right;white-space:nowrap;font-size:13px;font-weight:800}} .leader-positive{{color:#067647}} .leader-negative{{color:#B42318}}
+.field{{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px 12px}} .field label{{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#667085;margin-bottom:3px}}
+select,input{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;background:#fff;padding:0 10px;font-size:13px}}
+.kpis{{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:11px;margin:10px 0 18px}} .kpi{{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px 15px;min-width:0;box-shadow:0 1px 2px rgba(16,24,40,.04)}} .kpi:first-child{{border-top:4px solid var(--purple)}}
+.kpi-label{{color:var(--muted);font-size:11px;text-transform:uppercase;font-weight:700;letter-spacing:.045em;margin-bottom:7px}} .kpi-value{{font-size:clamp(19px,1.7vw,27px);font-weight:750;line-height:1.08}} .kpi-sub{{color:var(--muted);font-size:12px;margin-top:5px;line-height:1.35}}
+.toolbar{{margin:0 0 18px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px;display:grid;grid-template-columns:1.35fr 1.25fr 1.05fr 1.05fr .72fr auto auto;gap:10px;align-items:end}}
+.check-wrap{{min-height:42px;display:flex;align-items:center;gap:8px;padding:0 6px;color:#344054;font-size:13px}} .check-wrap input{{width:auto}}
+.clear-btn{{min-height:42px;border:1px solid #D0D5DD;border-radius:9px;background:#fff;color:#344054;padding:0 16px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap}}
+.summary-line{{margin:14px 2px 10px;color:#475467;font-size:13px}} .year-section{{margin-top:12px;background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden}}
+.year-toggle{{width:100%;border:0;background:#fff;padding:15px 17px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;font-size:15px;font-weight:700;color:var(--ink)}} .year-meta{{color:var(--muted);font-size:12px;font-weight:500}}
+.chev{{display:inline-block;transition:transform .18s ease;margin-right:8px}} .year-section.open .chev{{transform:rotate(90deg)}} .year-body{{display:none;border-top:1px solid var(--line)}} .year-section.open .year-body{{display:block}}
+.table-wrap{{overflow:auto;max-height:620px}} table{{width:100%;border-collapse:collapse;min-width:1250px;font-size:12px}} thead th{{position:sticky;top:0;z-index:2;background:#F9FAFB;color:#475467;text-align:left;padding:10px 9px;border-bottom:1px solid var(--line);white-space:nowrap}} tbody td{{padding:10px 9px;border-bottom:1px solid #F0F2F5;vertical-align:top}} tbody tr:hover{{background:#FCFCFD}}
+
+.pagination{{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:12px;
+  padding:12px 16px;
+  border-top:1px solid #E4E7EC;
+  font-size:12px;
+  color:#667085;
 }}
-.leader-tooltip::before{{
-  content:'';position:absolute;top:-6px;left:22px;width:12px;height:12px;
-  background:#111827;transform:rotate(45deg)
+.pagination > div{{
+  display:flex;
+  align-items:center;
+  gap:10px;
 }}
-.leader-tooltip-rule{{height:1px;background:#475467;margin:7px 0}}
-.leader-row.leaderboard-hover:hover .leader-tooltip,
-.leader-row.leaderboard-hover:focus .leader-tooltip{{display:block}}
-.leader-gap-row{{
-  display:grid;
-  grid-template-columns:28px minmax(120px,1fr) minmax(110px,2fr) 58px;
-  gap:8px;align-items:center;
-  min-height:24px;
-  margin:2px -7px;
-  padding:0 7px;
+.pagination button{{
+  border:1px solid #D0D5DD;
   border-radius:7px;
-  background:#faf5ff;
-  color:#98A2B3;
-  font-weight:700;
-  text-align:center;
+  background:white;
+  padding:7px 12px;
+  font-size:12px;
+  cursor:pointer;
 }}
-.leader-gap-row .leader-gap-dots{{grid-column:1 / -1;letter-spacing:.22em}}
-.note{{color:#667085;font-size:12px;margin-top:14px;line-height:1.4}}
-.atlas-market{{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px;padding:20px 24px;margin:16px 0 22px;background:#fff;border:1px solid #e5e7eb;border-radius:16px}}
-.atlas-market-copy h2{{margin:0 0 5px;font-size:20px;color:#101828}}
-.atlas-market-copy p{{margin:0;color:#667085;font-size:13px}}
-.atlas-market-actions{{display:flex;flex-wrap:wrap;align-items:center;gap:8px}}
-.atlas-market-choice,#atlasClearFilters{{border:1px solid #d0d5dd;padding:12px 15px;background:#fff;color:#344054;font:700 13px Arial,Helvetica,sans-serif;border-radius:9px;cursor:pointer}}
-.atlas-market-choice[aria-pressed="true"]{{background:#A100FF;color:#fff;border-color:#A100FF}}
-#atlasClearFilters:hover{{border-color:#A100FF;color:#7F00CC;background:#FCF5FF}}
-.atlas-market-choice:focus-visible,#atlasClearFilters:focus-visible{{outline:3px solid #7F56D9;outline-offset:2px}}
-@media(max-width:1000px){{.selectors,.cards,.leaderboard-grid{{grid-template-columns:1fr}}.atlas-market-actions{{width:100%}}}}
-@media(max-width:650px){{.atlas-market{{padding:16px}}.atlas-market-choice,#atlasClearFilters{{flex:1}}}}
+.pagination button:disabled{{
+  opacity:.4;
+  cursor:not-allowed;
+}}
+
+.money{{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}} .nowrap{{white-space:nowrap}} .desc{{width:420px;min-width:340px;max-width:480px;line-height:1.4;white-space:normal;overflow-wrap:anywhere}} .supplier-accent{{color:#6B00B6;font-weight:700}}
+.badge{{display:inline-block;border-radius:999px;padding:3px 7px;font-size:11px;font-weight:700;white-space:nowrap}} .badge-large{{background:#ECFDF3;color:var(--green)}} .badge-long{{background:#FFFAEB;color:var(--amber)}} .empty{{background:#fff;border:1px dashed #D0D5DD;border-radius:14px;padding:36px;text-align:center;color:var(--muted);margin-top:16px}} .method{{margin-top:16px;color:var(--muted);font-size:12px;line-height:1.5}}
+@media(max-width:1200px){{.kpis{{grid-template-columns:repeat(3,1fr)}}.toolbar{{grid-template-columns:repeat(2,minmax(0,1fr))}}.insight-grid{{grid-template-columns:1fr}}}} @media(max-width:650px){{.wrap{{padding:15px}}.kpis{{grid-template-columns:1fr 1fr}}.toolbar{{grid-template-columns:1fr}}}}
+
+.atlas-market{{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:20px 0 26px;padding:24px 28px;border:1px solid #e5e7eb;background:#fff;border-radius:18px;flex-wrap:wrap}}
+.atlas-market-copy h2{{font-size:22px;margin:0 0 6px;color:#101828}}
+.atlas-market-copy p{{margin:0;color:#667085;font-size:14px}}
+.atlas-market-switch{{display:flex;gap:5px;background:#f1f2f6;padding:6px;border-radius:14px}}
+.atlas-market-switch button{{border:0;background:transparent;color:#344054;padding:13px 22px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap}}
+.atlas-market-switch button[aria-pressed="true"]{{background:#A100FF;color:#fff;box-shadow:0 2px 7px rgba(70,0,130,.12)}}
+.atlas-market-switch button:focus-visible{{outline:3px solid #805ad5;outline-offset:2px}}
+#marketMode{{display:none}}
+@media(max-width:650px){{.atlas-market{{padding:17px}}.atlas-market-switch{{width:100%}}.atlas-market-switch button{{flex:1;padding:12px 8px;font-size:12px}}}}
 </style>
 </head>
 <body>
 <div class="wrap">
-<h1>Federal Health Competitive Intelligence</h1>
-<div id="healthScopeDescription" class="subtitle">Supplier-vs-supplier positioning across the Accenture-addressable Federal Health market.</div>
-
+<h1>Health Contract Explorer</h1>
+<p class="subtitle">Explore Federal Health procurement by agency, supplier, Service Offering and contract in either Accenture TAM or All Market.</p>
+<section class="executive-summary"><h2>Executive summary</h2><p>This dashboard provides an interactive view of the Accenture-addressable Health market. Select an agency to understand where TAM is concentrated, which suppliers are winning addressable work, and which individual contracts underpin that spend.</p></section>
 <section class="atlas-market" aria-label="Market selection">
-  <div class="atlas-market-copy">
-    <h2>Explore the Federal Health Market</h2>
-    <p id="atlasMarketDescription">Showing contracts addressable to Accenture</p>
+  <div class="atlas-market-copy"><h2>Explore the Federal Health Market</h2><p id="atlasMarketDescription">Showing contracts addressable to Accenture</p></div>
+  <div class="atlas-market-switch" role="group" aria-label="Choose market scope">
+    <button type="button" data-market="tam" aria-pressed="true">Accenture TAM</button>
+    <button type="button" data-market="all" aria-pressed="false">All Federal Health Market</button>
   </div>
-  <div class="atlas-market-actions" role="group" aria-label="Market scope and filter controls">
-    <button type="button" class="atlas-market-choice" data-market="tam" aria-pressed="true">Accenture TAM</button>
-    <button type="button" class="atlas-market-choice" data-market="all" aria-pressed="false">All Federal Health Market</button>
-    <button type="button" id="atlasClearFilters">Clear All Filters</button>
-  </div>
+  <select id="marketMode" aria-label="Market scope"><option value="tam">Accenture TAM</option><option value="all">All Federal Health Market</option></select>
 </section>
 
-<section class="executive">
-<h2>Executive purpose</h2>
-<p id="healthExecutivePurpose">This dashboard compares two suppliers inside Accenture's addressable Health market. It brings together market position, Service Offering strength, current contracts and agency presence.</p>
-<ul class="questions">
-<li id="healthMarketPurposeQuestion">How large is each supplier's position inside Health TAM?</li>
-<li>Where does each supplier lead by Service Offering?</li>
-<li>Which current contracts underpin that position?</li>
-<li>Which Health agencies are most important to the selected supplier?</li>
-</ul>
+
+<section class="insight-grid">
+<div class="leader-card"><h3>Largest active contracts</h3><p id="activeSubtitle">Highest-value contracts active as at today within the selected agency.</p><div id="topActiveContracts"></div></div>
+<div class="leader-card"><h3>Major contracts ending in the next 12 months</h3><p id="endingSubtitle">Highest-value addressable active contracts approaching their recorded end date.</p><div id="topEndingSoon"></div></div>
+<div class="leader-card"><h3>Recently completed major contracts</h3><p id="completedSubtitle">Highest-value contracts that ended within the past 12 months.</p><div id="topRecentlyCompleted"></div></div>
 </section>
 
-<div class="selectors">
-<div class="selector-card"><label>Selected supplier</label><select id="supplierSelect">{options_html}</select></div>
-<div class="selector-card"><label>Compare against</label><select id="compareSelect">{options_html}</select></div>
-<div class="selector-card"><label>Financial-year period</label><select id="periodSelect"></select></div>
+<section class="kpis">
+<div class="kpi"><div class="kpi-label">Selected market</div><div class="kpi-value" id="kpiTotal">-</div><div class="kpi-sub">{value_basis}</div></div>
+<div class="kpi"><div class="kpi-label">Contracts</div><div class="kpi-value" id="kpiContracts">-</div><div class="kpi-sub">Matching contracts</div></div>
+<div class="kpi"><div class="kpi-label">Average value</div><div class="kpi-value" id="kpiAvgValue">-</div><div class="kpi-sub" id="kpiMedianValue">-</div></div>
+<div class="kpi"><div class="kpi-label">Average length</div><div class="kpi-value" id="kpiAvgLength">-</div><div class="kpi-sub" id="kpiMedianLength">-</div></div>
+<div class="kpi"><div class="kpi-label">Suppliers</div><div class="kpi-value" id="kpiSuppliers">-</div><div class="kpi-sub">Distinct supplier groups</div></div>
+<div class="kpi"><div class="kpi-label">Largest contract</div><div class="kpi-value" id="kpiLargest">-</div><div class="kpi-sub" id="kpiLargestSub">-</div></div>
+</section>
+
+<section class="toolbar">
+<div class="field"><label for="searchInput">Search description, supplier, contract ID or category</label><input id="searchInput" type="text" placeholder="Search contracts..."></div>
+<div class="field"><label for="agencySelect">Agency</label><select id="agencySelect">{agency_options}</select></div>
+<div class="field"><label for="capabilityFilter">Service Offering</label><select id="capabilityFilter"><option value="All Service Offerings">All Service Offerings</option></select></div>
+<div class="field"><label for="supplierFilter">Supplier</label><select id="supplierFilter"><option value="All suppliers">All suppliers</option></select></div>
+<div class="field"><label for="minValueInput">Minimum value</label><input id="minValueInput" type="number" min="0" step="100000" placeholder="e.g. 1000000"></div>
+<label class="check-wrap"><input id="datedOnly" type="checkbox"> Dated contracts only</label>
+<button id="clearFiltersBtn" class="clear-btn" type="button">Clear all filters</button>
+</section>
+
+
+<div class="summary-line" id="summaryLine"></div>
+<p class="method">Dates marked (inferred) use the earliest credible recorded start and latest credible recorded end across available CN family members. This is an observed range, not confirmation of the current legal contract term.</p>
+<div id="yearContainer"></div>
+<p class="method">The dashboard supports both Accenture TAM and All Federal Health Market. Ongoing contracts are shown once in the top bracket; remaining contracts are grouped by their recorded financial year. Supplier and Service Offering filters are ranked by addressable spend within the current agency scope.</p>
 </div>
 
-<section class="insight"><h2>Start with the headline comparison</h2><p id="healthKpiInsight">The KPI cards show relative scale, TAM share, strongest Service Offering and breadth across the addressable Health market.</p></section>
-<div class="cards">
-<div class="supplier-kpi-block" id="selectedBlock"><div class="supplier-kpi-title" id="selectedTitle"></div><div class="supplier-kpi-grid">
-<div class="card" id="selectedCardValue"><div class="card-title">Period value</div><div class="card-value" id="selectedValue"></div><div class="card-subtitle" id="selectedValueSub"></div></div>
-<div class="card" id="selectedCardShare"><div class="card-title" id="selectedShareLabel">Addressable TAM share</div><div class="card-value" id="selectedShare"></div><div class="card-subtitle" id="selectedRank"></div></div>
-<div class="card" id="selectedCardLargest"><div class="card-title">Largest Service Offering</div><div class="card-value" id="selectedLargest"></div><div class="card-subtitle" id="selectedLargestSub"></div></div>
-<div class="card" id="selectedCardBreadth"><div class="card-title">Service Offering presence</div><div class="card-value" id="selectedBreadth"></div><div class="card-subtitle" id="selectedBreadthSub"></div></div>
-</div></div>
-<div class="supplier-kpi-block" id="compareBlock"><div class="supplier-kpi-title" id="compareTitle"></div><div class="supplier-kpi-grid">
-<div class="card" id="compareCardValue"><div class="card-title">Period value</div><div class="card-value" id="compareValue"></div><div class="card-subtitle" id="compareValueSub"></div></div>
-<div class="card" id="compareCardShare"><div class="card-title" id="compareShareLabel">Addressable TAM share</div><div class="card-value" id="compareShare"></div><div class="card-subtitle" id="compareRank"></div></div>
-<div class="card" id="compareCardLargest"><div class="card-title">Largest Service Offering</div><div class="card-value" id="compareLargest"></div><div class="card-subtitle" id="compareLargestSub"></div></div>
-<div class="card" id="compareCardBreadth"><div class="card-title">Service Offering presence</div><div class="card-value" id="compareBreadth"></div><div class="card-subtitle" id="compareBreadthSub"></div></div>
-</div></div>
-</div>
-
-<div class="grid">
-<section class="insight"><h2>Compare where each supplier is strongest</h2><p id="healthProfileInsight">The Service Offering comparison shows the scale of each supplier's position across Health TAM, including unresolved addressable work as Uncategorised.</p></section>
-<div class="panel"><div class="chart-heading"><h3 class="chart-title" id="profileTitle"></h3><p class="chart-subtitle" id="healthProfileSubtitle">Award value by Service Offering inside the selected Health TAM period.</p></div><div id="profileChart" style="height:650px"></div></div>
-
-<section class="insight"><h2>See the wider competitive field</h2><p>Each Service Offering leaderboard ranks suppliers independently within the selected period. The top five are shown, with both selected suppliers included even when they sit outside the top five.</p></section>
-<div class="panel"><div class="chart-heading"><h3 class="chart-title">Service Offering Supplier Leaderboards</h3><p class="chart-subtitle" id="healthLeaderboardSubtitle">Market share is calculated against the addressable value of each Service Offering.</p></div><div id="leaderboards" class="leaderboard-grid"></div></div>
-
-<section class="insight"><h2>Understand the current contracts behind the position</h2><p id="healthTimelineInsight">The current-contract timeline is controlled by the first supplier selector and shows active Health contracts with valid start and end dates in the selected market.</p></section>
-<div class="panel"><div class="chart-heading"><h3 class="chart-title" id="timelineTitle"></h3><p class="chart-subtitle" id="timelineSubtitle"></p></div><div id="timelineChart"></div></div>
-
-<section class="insight"><h2>Read the supplier's Health footprint</h2><p id="healthAgencyInsight">The agency view shows the selected supplier's position across the Health agencies in scope.</p></section>
-<div class="panel"><div class="chart-heading"><h3 class="chart-title" id="agencyTitle"></h3><p class="chart-subtitle">Selected-period award value by Health agency.</p></div><div id="agencyChart" style="height:500px"></div></div>
-</div>
-
-<p class="note" id="healthMethodNote">Addressability and Service Offering are read from the canonical Health master dataset. No reclassification is performed.</p>
-</div>
 <script>
-const MODELS={json.dumps(market_payload, ensure_ascii=False)};
-const SUPPLIER_COLOURS={json.dumps(colour_payload)};
-let MARKET_MODE='tam';
-let SUPPLIER_TOTAL=[];
-let SUPPLIER_CAP=[];
-let YEARLY=[];
-let AGENCY_YEARLY=[];
-let CONTRACTS=[];
-let CAPABILITIES=[];
-const DEFAULT_SUPPLIER={json.dumps(default_supplier)};
-const DEFAULT_COMPARE={json.dumps(default_compare)};
-const AS_AT_DATE={json.dumps(as_at.strftime('%Y-%m-%d'))};
-const VALUE_MODE={json.dumps(value_mode)};
-
-function money(v){{v=Number(v||0);if(v>=1e9)return '$'+(v/1e9).toFixed(2)+'B';if(v>=1e8)return '$'+(v/1e6).toFixed(0)+'M';if(v>=1e7)return '$'+(v/1e6).toFixed(1)+'M';if(v>=1e6)return '$'+(v/1e6).toFixed(2)+'M';if(v>=1e3)return '$'+(v/1e3).toFixed(0)+'K';return '$'+v.toFixed(0)}}
-function pct(v){{return Number(v||0).toFixed(1)+'%'}}
-function esc(v){{return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}}
-function colour(name){{return SUPPLIER_COLOURS[name]||'#5B6B7A'}}
-function parseDate(v){{if(!v)return null;const d=new Date(v+'T00:00:00');return Number.isNaN(d.getTime())?null:d}}
-function dateLabel(v){{const d=parseDate(v);return d?d.toLocaleDateString('en-AU',{{day:'2-digit',month:'short',year:'numeric'}}):''}}
-
-function availableYears(){{
-  return Array.from(
-    new Map(
-      YEARLY
-        .filter(r =>
-          r._fy_start != null &&
-          Number(r._fy_start) >= 2015 &&
-          Number(r._fy_start) <= 2026
-        )
-        .map(r => [
-          String(r['Financial Year']),
-          Number(r._fy_start)
-        ])
-    ).entries()
-  )
-  .sort((a,b) => a[1] - b[1])
-  .map(x => x[0]);
-}}function buildPeriods(){{const y=availableYears();const first=y.length?String(y[0]).match(/(?:19|20)\\d{{2}}/):null;const last=y.length?String(y[y.length-1]).match(/(?:19|20)\\d{{2}}/g):null;const label=first&&last?'All FY ('+first[0]+'-'+last[last.length-1]+')':'All FY';const p=[{{key:'all',label:label,years:y}}];if(y.length>=5)p.push({{key:'last5',label:'Last 5 FY',years:y.slice(-5)}});if(y.length>=3)p.push({{key:'last3',label:'Last 3 FY',years:y.slice(-3)}});window.PERIODS=p;document.getElementById('periodSelect').innerHTML=p.map((r,i)=>'<option value="'+i+'">'+r.label+'</option>').join('')}}
-function period(){{return window.PERIODS[Number(document.getElementById('periodSelect').value||0)]||window.PERIODS[0]}}
-function periodRows(){{const p=period();const ys=new Set(p.years);return p.key==='all'?YEARLY:YEARLY.filter(r=>ys.has(String(r['Financial Year']||'')))}}
-function periodAgencyRows(){{const p=period();const ys=new Set(p.years);return p.key==='all'?AGENCY_YEARLY:AGENCY_YEARLY.filter(r=>ys.has(String(r['Financial Year']||'')))}}
-
-function summaryFor(supplier){{
- const rows=periodRows();const supplierTotals=new Map();const supplierCaps=new Map();const marketKeys=new Map();
- rows.forEach(r=>{{const s=String(r.supplier_group||'Unknown');const cap=String(r.capability||'Uncategorised');const fy=String(r['Financial Year']||'');supplierTotals.set(s,(supplierTotals.get(s)||0)+Number(r.value||0));const k=s+'||'+cap;supplierCaps.set(k,(supplierCaps.get(k)||0)+Number(r.value||0));const mk=cap+'||'+fy;if(!marketKeys.has(mk))marketKeys.set(mk,Number(r.capability_year_market||0))}});
- const totalTam=Array.from(marketKeys.values()).reduce((a,b)=>a+b,0);const awards=Number(supplierTotals.get(supplier)||0);const ranked=Array.from(supplierTotals.entries()).sort((a,b)=>b[1]-a[1]);const rank=ranked.findIndex(x=>x[0]===supplier)+1;
- const caps=Array.from(supplierCaps.entries()).filter(([k,v])=>k.startsWith(supplier+'||')&&Number(v)>0).map(([k,v])=>[k.split('||')[1],Number(v)]).sort((a,b)=>b[1]-a[1]);
- return {{supplier,awards,tam_share_pct:totalTam?awards/totalTam*100:0,rank:rank>0?rank:0,largest:caps.length?caps[0][0]:'n/a',largestValue:caps.length?caps[0][1]:0,breadth:caps.length,totalTam}};
-}}
-function rowsForSupplier(supplier){{
- const rows=periodRows();const vals=new Map();const markets=new Map();
- rows.forEach(r=>{{const cap=String(r.capability||'Uncategorised');const fy=String(r['Financial Year']||'');const mk=cap+'||'+fy;if(!markets.has(mk))markets.set(mk,Number(r.capability_year_market||0));if(r.supplier_group===supplier)vals.set(cap,(vals.get(cap)||0)+Number(r.value||0))}});
- const marketByCap=new Map();markets.forEach((v,k)=>{{const cap=k.split('||')[0];marketByCap.set(cap,(marketByCap.get(cap)||0)+v)}});
- return Array.from(new Set([...marketByCap.keys(),...vals.keys()])).map(cap=>{{const v=Number(vals.get(cap)||0),m=Number(marketByCap.get(cap)||0);return{{capability:cap,value:v,market:m,share:m?v/m*100:0}}}})
-}}
-function setKpis(prefix,supplier){{const s=summaryFor(supplier),p=period();document.getElementById(prefix+'Title').textContent=(prefix==='selected'?'Selected supplier: ':'Comparison supplier: ')+supplier;document.getElementById(prefix+'Value').textContent=money(s.awards);document.getElementById(prefix+'ValueSub').textContent='Award value inside '+p.label+' '+(MARKET_MODE==='tam'?'Accenture TAM':'All Federal Health Market');document.getElementById(prefix+'Share').textContent=pct(s.tam_share_pct);document.getElementById(prefix+'Rank').textContent=s.rank?'Rank #'+s.rank+' inside '+p.label+' '+(MARKET_MODE==='tam'?'TAM':'market'):'No awards in selected period';document.getElementById(prefix+'Largest').textContent=s.largest;document.getElementById(prefix+'LargestSub').textContent=money(s.largestValue)+' in '+p.label;document.getElementById(prefix+'Breadth').textContent=s.breadth+' Service Offering'+(s.breadth===1?'':'s');document.getElementById(prefix+'BreadthSub').textContent='Presence in '+s.breadth+' of '+CAPABILITIES.length+' market categories'}}
-
-function setComparisonClass(cardId,ownValue,otherValue){{
- const el=document.getElementById(cardId);if(!el)return;
- el.classList.remove('kpi-win','kpi-loss','kpi-tie');
- const a=Number(ownValue||0),b=Number(otherValue||0);
- const tolerance=Math.max(1e-9,Math.max(Math.abs(a),Math.abs(b))*0.0001);
- el.classList.add(Math.abs(a-b)<=tolerance?'kpi-tie':(a>b?'kpi-win':'kpi-loss'));
+const DATA = {json.dumps(payload, ensure_ascii=False)};
+const ALL_AGENCIES = "All Health agencies";
+const DEFAULT_AGENCY = ALL_AGENCIES;
+const VALUE_BASIS = {json.dumps(value_basis)};
+const AS_AT_DATE = new Date().toISOString().slice(0,10);
+const YEAR_ROWS = new Map();
+function fyFromDate(iso) {{
+  if (!iso) return null;
+  const d = new Date(iso + 'T00:00:00Z');
+  if (isNaN(d.getTime())) return null;
+  return d.getUTCFullYear() - (d.getUTCMonth() < 6 ? 1 : 0);
 }}
 
-function updateKpiComparison(supplier,compare){{
- const a=summaryFor(supplier),b=summaryFor(compare);
- setComparisonClass('selectedCardValue',a.awards,b.awards);
- setComparisonClass('compareCardValue',b.awards,a.awards);
- setComparisonClass('selectedCardShare',a.tam_share_pct,b.tam_share_pct);
- setComparisonClass('compareCardShare',b.tam_share_pct,a.tam_share_pct);
- setComparisonClass('selectedCardLargest',a.largestValue,b.largestValue);
- setComparisonClass('compareCardLargest',b.largestValue,a.largestValue);
- setComparisonClass('selectedCardBreadth',a.breadth,b.breadth);
- setComparisonClass('compareCardBreadth',b.breadth,a.breadth);
+function fyLabel(year) {{
+  return year === null
+    ? 'Unknown FY'
+    : 'FY' + year + '–' + String((year + 1) % 100).padStart(2, '0');
 }}
 
-function updateProfile(supplier,compare){{
- document.getElementById('profileTitle').innerHTML='<b>'+esc(supplier)+'</b> vs <b>'+esc(compare)+'</b> - Value by Service Offering';
- const a=new Map(rowsForSupplier(supplier).map(r=>[r.capability,r]));const b=new Map(rowsForSupplier(compare).map(r=>[r.capability,r]));
- const caps=Array.from(new Set([...a.keys(),...b.keys()])).filter(c=>Number((a.get(c)||{{}}).value||0)>0||Number((b.get(c)||{{}}).value||0)>0).sort((x,y)=>(Number((a.get(y)||{{}}).value||0)+Number((b.get(y)||{{}}).value||0))-(Number((a.get(x)||{{}}).value||0)+Number((b.get(x)||{{}}).value||0))).reverse();
- const av=caps.map(c=>Number((a.get(c)||{{}}).value||0)/1e6),bv=caps.map(c=>Number((b.get(c)||{{}}).value||0)/1e6);
- Plotly.react('profileChart',[{{type:'bar',orientation:'h',y:caps,x:av,name:supplier,marker:{{color:colour(supplier)}},text:caps.map(c=>money((a.get(c)||{{}}).value||0)),textposition:'outside',cliponaxis:false,customdata:caps.map(c=>pct((a.get(c)||{{}}).share||0)),hovertemplate:'<b>%{{y}}</b><br>'+esc(supplier)+': %{{text}}<br>Share of Service Offering: %{{customdata}}<extra></extra>'}},{{type:'bar',orientation:'h',y:caps,x:bv,name:compare,marker:{{color:colour(compare)}},text:caps.map(c=>money((b.get(c)||{{}}).value||0)),textposition:'outside',cliponaxis:false,customdata:caps.map(c=>pct((b.get(c)||{{}}).share||0)),hovertemplate:'<b>%{{y}}</b><br>'+esc(compare)+': %{{text}}<br>Share of Service Offering: %{{customdata}}<extra></extra>'}}],{{template:'plotly_white',barmode:'group',height:650,margin:{{t:30,l:260,r:150,b:75}},xaxis:{{title:'Award value ($M)',fixedrange:true}},yaxis:{{fixedrange:true,automargin:true}},legend:{{orientation:'h',y:-.14}}}},{{responsive:true,displayModeBar:false,scrollZoom:false}})
+function contractStatus(r) {{
+  if (!r.start_date_iso || !r.end_date_iso ||
+      r.start_date_iso > r.end_date_iso) return 'Unknown Dates';
+  if (r.start_date_iso > AS_AT_DATE) return 'Upcoming contracts';
+  if (r.end_date_iso < AS_AT_DATE) return 'Completed contracts';
+  return 'Active contracts';
 }}
 
-function landscape(){{
- const rows=periodRows(), capSup=new Map(), marketKeys=new Map();rows.forEach(r=>{{const cap=String(r.capability||'Uncategorised'),s=String(r.supplier_group||'Unknown'),fy=String(r['Financial Year']||'');const k=cap+'||'+s;capSup.set(k,(capSup.get(k)||0)+Number(r.value||0));const mk=cap+'||'+fy;if(!marketKeys.has(mk))marketKeys.set(mk,Number(r.capability_year_market||0))}});const marketByCap=new Map();marketKeys.forEach((v,k)=>{{const cap=k.split('||')[0];marketByCap.set(cap,(marketByCap.get(cap)||0)+v)}});const out=[];capSup.forEach((v,k)=>{{const [cap,s]=k.split('||');const m=Number(marketByCap.get(cap)||0);out.push({{capability:cap,supplier_group:s,value:v,share:m?v/m*100:0}})}});return{{rows:out,marketByCap}}}}
-function updateLeaderboards(supplier,compare){{
-  const d=landscape();
-  const p=period();
-  const ys=new Set(p.years);
 
-  // Contract counts for the exact same supplier + Service Offering + FY period.
-  const contractCounts=new Map();
-  YEARLY.filter(r=>p.key==='all'||ys.has(String(r['Financial Year']||''))).forEach(r=>{{
-    const cap=String(r.capability||'Uncategorised');
-    const s=String(r.supplier_group||'Unknown');
-    const k=cap+'||'+s;
-    contractCounts.set(k,(contractCounts.get(k)||0)+Number(r.contracts||0));
+function esc(v){{return String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;')}}
+function money(v){{v=Number(v||0);const s=v<0?'-':'';const a=Math.abs(v);if(a>=1e9)return s+'$'+(a/1e9).toFixed(2)+'B';if(a>=1e8)return s+'$'+(a/1e6).toFixed(0)+'M';if(a>=1e7)return s+'$'+(a/1e6).toFixed(1)+'M';if(a>=1e6)return s+'$'+(a/1e6).toFixed(2)+'M';if(a>=1e3)return s+'$'+(a/1e3).toFixed(0)+'K';return s+'$'+a.toFixed(0)}}
+function number(v){{return Number(v||0).toLocaleString('en-AU')}}
+function duration(days){{if(days===null||days===undefined||!isFinite(Number(days)))return'n/a';const d=Number(days),y=d/365.25;if(y>=2)return y.toFixed(1)+' yrs';if(y>=1)return y.toFixed(2)+' yrs';return Math.round(d)+' days'}}
+function median(values){{const a=values.filter(v=>Number.isFinite(v)).sort((x,y)=>x-y);if(!a.length)return null;const m=Math.floor(a.length/2);return a.length%2?a[m]:(a[m-1]+a[m])/2}}
+
+function marketRows(){{return DATA.records.filter(r=>document.getElementById("marketMode").value==="all"||r.is_addressable)}}
+function agencyRows(){{const agency=document.getElementById('agencySelect').value;return marketRows().filter(r=>agency===ALL_AGENCIES||r.agency===agency)}}
+function scopeRows(){{return agencyRows()}}
+function rowsForOptions(exclude){{const search=document.getElementById('searchInput').value.trim().toLowerCase();const cap=document.getElementById('capabilityFilter').value;const sup=document.getElementById('supplierFilter').value;const min=Number(document.getElementById('minValueInput').value||0);const dated=document.getElementById('datedOnly').checked;return scopeRows().filter(r=>{{const hay=[r.description,r.supplier,r.contract_id,r.category,r.procurement_method,r.capability,r.agency].join(' ').toLowerCase();return(!search||hay.includes(search))&&(exclude==='capability'||cap==='All Service Offerings'||r.capability===cap)&&(exclude==='supplier'||sup==='All suppliers'||r.supplier===sup)&&Number(r.value||0)>=min&&(!dated||(r.start_date&&r.end_date))}})}}
+function setRanked(selectId,field,allLabel,exclude){{const select=document.getElementById(selectId);const prev=select.value||allLabel;const totals=new Map();rowsForOptions(exclude).forEach(r=>totals.set(r[field],(totals.get(r[field])||0)+Number(r.value||0)));const vals=[...totals.keys()].sort((a,b)=>(totals.get(b)-totals.get(a))||String(a).localeCompare(String(b)));select.innerHTML=[allLabel,...vals].map(v=>'<option value="'+esc(v)+'">'+esc(v===allLabel?v:v+' — '+money(totals.get(v)))+'</option>').join('');select.value=[...select.options].some(o=>o.value===prev)?prev:allLabel}}
+function refreshFilters(changed=null){{if(changed!=='capability')setRanked('capabilityFilter','capability','All Service Offerings','capability');if(changed!=='supplier')setRanked('supplierFilter','supplier','All suppliers','supplier')}}
+function filteredRows(){{const search=document.getElementById('searchInput').value.trim().toLowerCase();const cap=document.getElementById('capabilityFilter').value;const sup=document.getElementById('supplierFilter').value;const min=Number(document.getElementById('minValueInput').value||0);const dated=document.getElementById('datedOnly').checked;return scopeRows().filter(r=>{{const hay=[r.description,r.supplier,r.contract_id,r.category,r.procurement_method].join(' ').toLowerCase();return(!search||hay.includes(search))&&(cap==='All Service Offerings'||r.capability===cap)&&(sup==='All suppliers'||r.supplier===sup)&&Number(r.value||0)>=min&&(!dated||(r.start_date&&r.end_date))}})}}
+
+function renderContractRows(id,rows,dateLabel){{const el=document.getElementById(id);if(!rows.length){{el.innerHTML='<div class="leader-detail">No matching contracts.</div>';return}}el.innerHTML=rows.map((r,i)=>{{const title=(r.description||r.contract_id||'Contract');const supplier=r.supplier||'Unknown supplier';const agency=r.agency||'Unknown agency';const date=r.end_date||'n/a';return '<div class="leader-row"><div class="leader-rank">'+(i+1)+'</div><div class="leader-name">'+esc(supplier)+'<div class="leader-detail">'+esc(title)+'</div><div class="leader-detail">'+esc(agency)+' · '+dateLabel+' '+esc(date)+'</div></div><div class="leader-value">'+esc(money(r.value))+'</div></div>'}}).join('')}}
+function updateContractInsights(){{const agency=document.getElementById('agencySelect').value;const rows=marketRows().filter(r=>agency===ALL_AGENCIES||r.agency===agency);const today=new Date(AS_AT_DATE+'T00:00:00Z');const in12=new Date(today);in12.setUTCFullYear(in12.getUTCFullYear()+1);const ago12=new Date(today);ago12.setUTCFullYear(ago12.getUTCFullYear()-1);const parse=d=>d?new Date(d+'T00:00:00Z'):null;const active=rows.filter(r=>{{const s=parse(r.start_date_iso),e=parse(r.end_date_iso);return s&&e&&s<=today&&e>=today}}).sort((a,b)=>Number(b.value||0)-Number(a.value||0)).slice(0,5);const ending=rows.filter(r=>{{const s=parse(r.start_date_iso),e=parse(r.end_date_iso);return s&&e&&s<=today&&e>=today&&e<=in12}}).sort((a,b)=>Number(b.value||0)-Number(a.value||0)).slice(0,5);const completed=rows.filter(r=>{{const e=parse(r.end_date_iso);return e&&e<today&&e>=ago12}}).sort((a,b)=>Number(b.value||0)-Number(a.value||0)).slice(0,5);const scopeLabel=agency===ALL_AGENCIES?'all Health agencies':agency;document.getElementById('activeSubtitle').textContent='Highest-value contracts active as at today across '+scopeLabel+'.';document.getElementById('endingSubtitle').textContent='Highest-value addressable active contracts ending within the next 12 months across '+scopeLabel+'.';document.getElementById('completedSubtitle').textContent='Highest-value contracts completed within the past 12 months across '+scopeLabel+'.';renderContractRows('topActiveContracts',active,'Ends');renderContractRows('topEndingSoon',ending,'Ends');renderContractRows('topRecentlyCompleted',completed,'Ended')}}
+
+
+function updateKpis(rows) {{
+  const vals = rows.map(r => Number(r.value || 0));
+  const dur = rows
+    .filter(r => r.duration_days !== null && r.duration_days !== undefined)
+    .map(r => Number(r.duration_days))
+    .filter(Number.isFinite);
+
+  const total = vals.reduce((a,b) => a+b, 0);
+  const largest = rows.slice().sort(
+    (a,b) => Number(b.value || 0) - Number(a.value || 0)
+  )[0];
+
+  const setText = (id, value) => {{
+    const el = document.getElementById(id);
+    if (el) el.textContent = value;
+    else console.warn('Missing KPI element:', id);
+  }};
+
+  setText('kpiTotal', money(total));
+  setText('kpiContracts', number(rows.length));  setText('kpiAvgValue',
+    rows.length ? money(total / rows.length) : 'n/a');
+  setText('kpiMedianValue',
+    rows.length ? 'Median: ' + money(median(vals)) : 'Median: n/a');
+  setText('kpiAvgLength',
+    dur.length ? duration(dur.reduce((a,b) => a+b, 0) / dur.length) : 'n/a');
+  setText('kpiMedianLength',
+    dur.length ? 'Median: ' + duration(median(dur)) : 'Median: n/a');
+  setText('kpiSuppliers',
+    number(new Set(rows.map(r => r.supplier)).size));
+  setText('kpiLargest',
+    largest ? money(largest.value) : 'n/a');
+  setText('kpiLargestSub',
+    largest ? largest.supplier : 'No matching contract');
+}}
+
+
+function rowHtml(r){{const large=Number(r.value||0)>=20000000?'<span class="badge badge-large">Large</span>':'',long=Number(r.duration_days||0)>=1826?'<span class="badge badge-long">5+ years</span>':'',sc=String(r.supplier||'').toLowerCase().includes('accenture')?'supplier-accent':'';return`<tr><td class="nowrap">${{esc(r.contract_id)}}</td><td class="desc">${{esc(r.description)}}</td><td>${{esc(r.agency)}}</td><td>${{esc(r.division)}}</td><td class="${{sc}}">${{esc(r.supplier)}}</td><td>${{esc(r.capability)}}</td><td class="money">${{money(r.value)}} ${{large}}</td><td class="nowrap">${{esc(r.start_date)}}</td><td class="nowrap">${{esc(r.end_date)}}</td><td>${{esc(r.duration_label)}} ${{long}}</td><td>${{esc(r.category)}}</td><td class="nowrap">${{esc(r.extensions)}}</td></tr>`}}
+
+const PAGE_SIZE = 100;
+const PAGE_STATE = new Map();
+
+function tableHtml(rows, page = 0) {{
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const currentPage = Math.max(0, Math.min(page, totalPages - 1));
+  const start = currentPage * PAGE_SIZE;
+  const visibleRows = rows.slice(start, start + PAGE_SIZE);
+
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Contract ID</th>
+            <th>Description</th>
+            <th>Agency</th>
+            <th>Division</th>
+            <th>Supplier</th>
+            <th>Service Offering</th>
+            <th class="money">Contract value</th>
+            <th>Start date</th>
+            <th>End date</th>
+            <th>Contract length</th>
+            <th>Category</th>
+            <th>Extensions</th>
+          </tr>
+        </thead>
+        <tbody>${{visibleRows.map(rowHtml).join('')}}</tbody>
+      </table>
+    </div>
+    <div class="pagination">
+      <span>
+        Showing ${{start + 1}}–${{Math.min(start + PAGE_SIZE, rows.length)}}
+        of ${{number(rows.length)}} contracts
+      </span>
+      <div>
+        <button type="button" data-page-action="prev"
+          ${{currentPage === 0 ? 'disabled' : ''}}>Previous</button>
+        <span>Page ${{currentPage + 1}} of ${{totalPages}}</span>
+        <button type="button" data-page-action="next"
+          ${{currentPage >= totalPages - 1 ? 'disabled' : ''}}>Next</button>
+      </div>
+    </div>`;
+}}
+function bracket(id,title,rows,label='contracts'){{const spend=rows.reduce((s,r)=>s+Number(r.value||0),0);return`<section class="year-section" id="${{id}}"><button class="year-toggle" type="button" onclick="toggleYear('${{id}}')"><span><span class="chev">▶</span>${{esc(title)}}</span><span class="year-meta">${{number(rows.length)}} ${{label}} · ${{money(spend)}}</span></button><div class="year-body" data-loaded="false"></div></section>`}}
+
+function renderYearPage(id) {{
+  const section = document.getElementById(id);
+  const body = section.querySelector('.year-body');
+  const rows = YEAR_ROWS.get(id) || [];
+  const page = PAGE_STATE.get(id) || 0;
+
+  body.innerHTML = tableHtml(rows, page);
+  body.dataset.loaded = 'true';
+
+  body.querySelectorAll('[data-page-action]').forEach(button => {{
+    button.addEventListener('click', () => {{
+      const direction = button.dataset.pageAction === 'next' ? 1 : -1;
+      const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+      const nextPage = Math.max(
+        0,
+        Math.min((PAGE_STATE.get(id) || 0) + direction, totalPages - 1)
+      );
+
+      PAGE_STATE.set(id, nextPage);
+      renderYearPage(id);
+    }});
+  }});
+}}
+
+function toggleYear(id) {{
+  const section = document.getElementById(id);
+  const opening = !section.classList.contains('open');
+
+  if (opening && section.querySelector('.year-body').dataset.loaded !== 'true') {{
+    PAGE_STATE.set(id, 0);
+    renderYearPage(id);
+  }}
+
+  section.classList.toggle('open');
+}}
+
+
+function render() {{
+  const rows = filteredRows();
+
+  updateContractInsights();
+  updateKpis(rows);
+
+  document.getElementById('summaryLine').textContent =
+    number(rows.length) + ' matching contracts · ' +
+    money(rows.reduce((s,r) => s + Number(r.value || 0), 0)) +
+    ' · ' + VALUE_BASIS;
+
+  const container = document.getElementById('yearContainer');
+  YEAR_ROWS.clear();
+  PAGE_STATE.clear();
+
+  if (!rows.length) {{
+    container.innerHTML =
+      '<div class="empty">No contracts match the selected filters.</div>';
+    return;
+  }}
+
+  const groups = new Map();
+
+  rows.forEach(r => {{
+    const status = contractStatus(r);
+    let group = status;
+
+    if (status === 'Completed contracts') {{
+      const fy = fyFromDate(r.start_date_iso);
+      group = fy === null
+        ? 'Unknown Dates'
+        : fyLabel(fy);
+    }}
+
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group).push(r);
   }});
 
-  const caps=Array.from(d.marketByCap.entries())
-    .filter(x=>x[1]>0)
-    .sort((a,b)=>b[1]-a[1])
-    .map(x=>x[0]);
+  const priority = key => {{
+    if (key === 'Active contracts') return 0;
+    if (key === 'Upcoming contracts') return 1;
+    if (key === 'Unknown Dates') return 3;
+    return 2;
+  }};
 
-  document.getElementById('leaderboards').innerHTML=caps.map(cap=>{{
-    const all=d.rows
-      .filter(r=>r.capability===cap&&r.value>0)
-      .sort((a,b)=>b.share-a.share);
+  const keys = [...groups.keys()].sort((a,b) => {{
+    const difference = priority(a) - priority(b);
+    return difference || (priority(a) === 2
+      ? b.localeCompare(a)
+      : a.localeCompare(b));
+  }});
 
-    // Always show top 5, plus the two selected suppliers when they sit outside it.
-    const top=all.slice(0,5);
-    const extras=[];
-    [supplier,compare].forEach(s=>{{
-      const r=all.find(x=>x.supplier_group===s);
-      if(r && !top.some(x=>x.supplier_group===s) && !extras.some(x=>x.supplier_group===s)) {{
-        extras.push(r);
-      }}
-    }});
-    extras.sort((a,b)=>all.findIndex(x=>x.supplier_group===a.supplier_group)-all.findIndex(x=>x.supplier_group===b.supplier_group));
+  const sections = [];
 
-    const visibleRows=[];
-    top.forEach(r=>visibleRows.push({{type:'supplier',row:r}}));
+  keys.forEach((key, index) => {{
+    const groupRows = groups.get(key)
+      .slice()
+      .sort((a,b) => Number(b.value || 0) - Number(a.value || 0));
 
-    // Insert "..." whenever there is a rank jump between the top five and an
-    // off-top-five selected/comparison supplier, and again between extras if needed.
-    let previousRank=top.length;
-    extras.forEach(r=>{{
-      const rank=all.findIndex(x=>x.supplier_group===r.supplier_group)+1;
-      if(rank>previousRank+1) visibleRows.push({{type:'gap'}});
-      visibleRows.push({{type:'supplier',row:r}});
-      previousRank=rank;
-    }});
+    const id = 'contract_group_' + index;
+    YEAR_ROWS.set(id, groupRows);
+    sections.push(bracket(id, key, groupRows));
+  }});
 
-    const visibleSupplierRows=visibleRows.filter(x=>x.type==='supplier').map(x=>x.row);
-    const max=Math.max(1,...visibleSupplierRows.map(r=>r.share));
-
-    const body=visibleRows.map(item=>{{
-      if(item.type==='gap') {{
-        return '<div class="leader-gap-row" aria-label="Additional suppliers omitted"><div class="leader-gap-dots">...</div></div>';
-      }}
-
-      const r=item.row;
-      const rank=all.findIndex(x=>x.supplier_group===r.supplier_group)+1;
-      const cls=r.supplier_group===supplier?' focus-selected':(r.supplier_group===compare?' focus-compare':'');
-      const nContracts=Number(contractCounts.get(cap+'||'+r.supplier_group)||0);
-      const tooltip=
-        '<b>'+esc(r.supplier_group)+'</b><br>'+
-        esc(cap)+'<br>'+
-        '<span style="color:#98A2B3">'+esc(p.label)+'</span>'+
-        '<div class="leader-tooltip-rule"></div>'+
-        '<b>Award value:</b> '+money(r.value)+'<br>'+
-        '<b>Contracts:</b> '+nContracts.toLocaleString()+'<br>'+
-        '<b>Market share:</b> '+pct(r.share)+'<br>'+
-        '<b>Rank:</b> #'+rank;
-
-      return '<div class="leader-row'+cls+' leaderboard-hover" tabindex="0">'+
-        '<div>#'+rank+'</div>'+
-        '<div>'+esc(r.supplier_group)+'</div>'+
-        '<div class="leader-bar-track"><div class="leader-bar-fill" style="width:'+Math.max(1.5,r.share/max*100).toFixed(1)+'%;background:'+colour(r.supplier_group)+'"></div></div>'+
-        '<div class="leader-share">'+pct(r.share)+'</div>'+
-        '<div class="leader-tooltip">'+tooltip+'</div>'+
-        '</div>';
-    }}).join('');
-
-    return '<section class="leaderboard-card"><h4>'+esc(cap)+'</h4>'+
-      '<div class="leaderboard-market">'+money(d.marketByCap.get(cap)||0)+' '+(MARKET_MODE==='tam'?'addressable market':'total market')+' · '+esc(p.label)+'</div>'+
-      body+
-      '</section>';
-  }}).join('');
+  container.innerHTML = sections.join('');
 }}
 
-function updateAgency(supplier){{const p=period(),ys=new Set(p.years);const rows=periodAgencyRows().filter(r=>r.supplier_group===supplier);const by=new Map();rows.forEach(r=>by.set(r.Agency,(by.get(r.Agency)||0)+Number(r.value||0)));const sorted=Array.from(by.entries()).sort((a,b)=>b[1]-a[1]);document.getElementById('agencyTitle').textContent=supplier+' Health agency footprint';if(!sorted.length){{Plotly.react('agencyChart',[],{{template:'plotly_white',annotations:[{{text:'No agency data for this period',showarrow:false,x:.5,y:.5,xref:'paper',yref:'paper'}}]}},{{responsive:true}});return}}const labels=sorted.map(x=>x[0]),values=sorted.map(x=>x[1]);Plotly.react('agencyChart',[{{type:'pie',labels,values,hole:.52,sort:false,textinfo:'label+percent',hovertemplate:'<b>%{{label}}</b><br>%{{value:$,.0f}}<br>%{{percent}} of '+esc(supplier)+'<extra></extra>'}}],{{template:'plotly_white',height:500,margin:{{t:35,l:30,r:220,b:35}},legend:{{orientation:'v',x:1.02,y:.95}},annotations:[{{text:money(values.reduce((a,b)=>a+b,0))+'<br><span style="font-size:12px;color:#667085">'+esc(p.label)+'</span>',x:.5,y:.5,showarrow:false,font:{{size:20}}}}]}},{{responsive:true,displayModeBar:false}})}}
+  
 
-function updateTimeline(supplier){{
- const p=period(),ys=new Set(p.years);
- let rows=CONTRACTS.filter(r=>r.supplier_group===supplier&&(p.key==='all'||ys.has(String(r['Financial Year']||''))));
- document.getElementById('timelineTitle').textContent=supplier+' current '+(MARKET_MODE==='tam'?'addressable':'market')+' contracts';
- document.getElementById('timelineSubtitle').textContent='Active as at '+dateLabel(AS_AT_DATE)+' · grouped by Service Offering · ranked by total contract value within each section · first supplier selector controls this view.';
- if(!rows.length){{Plotly.react('timelineChart',[],{{template:'plotly_white',height:380,annotations:[{{text:'No active contracts with valid dates in this market for '+esc(supplier)+'.',showarrow:false,x:.5,y:.5,xref:'paper',yref:'paper'}}],xaxis:{{visible:false}},yaxis:{{visible:false}}}},{{responsive:true,displayModeBar:false}});return}}
+function clearAllFilters() {{
+  document.getElementById('agencySelect').value = DEFAULT_AGENCY;
+  document.getElementById('searchInput').value = '';
+  document.getElementById('minValueInput').value = '';
+  document.getElementById('datedOnly').checked = false;
 
- const asAt=parseDate(AS_AT_DATE);
- const capabilityColour={{
-   'Strategy, Transformation & Advisory':'#A100FF',
-   'SI & Engineering':'#2563EB',
-   'Data, AI & Automation':'#16A34A',
-   'Cloud Infrastructure & Cyber':'#F59E0B',
-   'Managed Services & Operations':'#667085',
-   'Uncategorised':'#98A2B3'
- }};
- function rgba(hex,a){{
-   const h=String(hex||'#98A2B3').replace('#','');
-   const full=h.length===3?h.split('').map(x=>x+x).join(''):h;
-   const n=parseInt(full,16);
-   return 'rgba('+((n>>16)&255)+','+((n>>8)&255)+','+(n&255)+','+a+')';
- }}
- function capName(r){{const v=String(r.capability||'').trim();return v||'Uncategorised'}}
- function dayCount(r){{
-   const end=parseDate(r._end_display);
-   return asAt&&end?Math.max(0,Math.round((end-asAt)/86400000)):null;
- }}
- function compact(v,n){{
-   const s=String(v||'').replace(/\\s+/g,' ').trim();
-   return s.length>n?s.slice(0,n-1)+'…':s;
- }}
+  document.getElementById('capabilityFilter').innerHTML =
+    '<option value="All Service Offerings">All Service Offerings</option>';
 
- const groups=new Map();
- rows.forEach(r=>{{
-   const cap=capName(r);
-   if(!groups.has(cap))groups.set(cap,[]);
-   groups.get(cap).push(r);
- }});
- const orderedCaps=Array.from(groups.entries()).sort((a,b)=>{{
-   const av=a[1].reduce((s,r)=>s+Number(r._total_value||0),0);
-   const bv=b[1].reduce((s,r)=>s+Number(r._total_value||0),0);
-   return bv-av;
- }}).map(x=>x[0]);
- orderedCaps.forEach(cap=>groups.get(cap).sort((a,b)=>Number(b._total_value||0)-Number(a._total_value||0)));
+  document.getElementById('supplierFilter').innerHTML =
+    '<option value="All suppliers">All suppliers</option>';
 
- const maxContracts=120;
- const selectedByCap=new Map();
- let remaining=maxContracts;
- orderedCaps.forEach(cap=>{{
-   const all=groups.get(cap)||[];
-   const take=all.slice(0,Math.max(0,remaining));
-   selectedByCap.set(cap,take);
-   remaining-=take.length;
- }});
- const activeCaps=orderedCaps.filter(cap=>(selectedByCap.get(cap)||[]).length);
-
- // Mirror the Defence timeline density: compact contract rows, a distinct
- // Service Offering header, then a small gap before the next section.
- const rowItems=[];
- const sections=[];
- let cursor=0;
- activeCaps.forEach(cap=>{{
-   const group=selectedByCap.get(cap)||[];
-   const sectionValue=group.reduce((s,r)=>s+Number(r._total_value||0),0);
-   const remainingDays=group.map(dayCount).filter(v=>v!==null&&Number.isFinite(v));
-   const avgDays=remainingDays.length?Math.round(remainingDays.reduce((a,b)=>a+b,0)/remainingDays.length):0;
-
-   // Small sections can stay compact. Sections with 3+ contracts need more
-   // vertical breathing room because every row carries three lines of text.
-   const denseGroup=group.length>1;
-   const headerGap=denseGroup?0.74:0.66;
-   const rowStep=denseGroup?1.14:0.88;
-   const sectionGap=denseGroup?0.56:0.42;
-
-   const headerY=cursor;
-   cursor+=headerGap;
-   const firstY=cursor;
-   group.forEach((r,idx)=>{{
-     rowItems.push({{row:r,y:cursor,cap,rank:idx+1}});
-     cursor+=rowStep;
-   }});
-   const lastY=group.length ? cursor-rowStep : firstY;
-   sections.push({{cap,headerY,firstY,lastY,count:group.length,value:sectionValue,avgDays,colour:capabilityColour[cap]||'#475467',rowStep,denseGroup}});
-   cursor+=sectionGap;
- }});
-
- const tickVals=rowItems.map(x=>x.y);
- const tickText=rowItems.map(item=>{{
-   const r=item.row;
-   const days=dayCount(r);
-   const agency=compact(r.Agency||'Unknown agency',48);
-   const desc=compact(r.Description||'No description',58);
-   return '<b>#'+item.rank+' · '+money(r._total_value||0)+' · '+esc(agency)+'</b><br>'+ 
-     '<span style="color:#475467">'+esc(desc)+'</span><br>'+ 
-     '<span style="color:#667085">Ends '+dateLabel(r._end_display)+(days===null?'':' · '+days.toLocaleString()+' days left')+'</span>';
- }});
-
- const traces=[];
- rowItems.forEach(item=>{{
-   const r=item.row,c=colour(supplier),days=dayCount(r);
-   const custom=[[r['CN ID']||'',r.Description||'',item.cap,r.Agency||'',money(r._total_value||0),dateLabel(r._start_display),dateLabel(r._end_display),days===null?'':days.toLocaleString()],[r['CN ID']||'',r.Description||'',item.cap,r.Agency||'',money(r._total_value||0),dateLabel(r._start_display),dateLabel(r._end_display),days===null?'':days.toLocaleString()]];
-   const hover='<b>%{{customdata[0]}}</b><br>%{{customdata[1]}}<br><br>Service Offering: %{{customdata[2]}}<br>Agency: %{{customdata[3]}}<br>Total contract value: %{{customdata[4]}}<br>Start: %{{customdata[5]}}<br>End: %{{customdata[6]}}<br>Days remaining: %{{customdata[7]}}<extra></extra>';
-   traces.push({{type:'scatter',mode:'lines',x:[r._start_display,r._end_display],y:[item.y,item.y],line:{{color:c,width:7}},showlegend:false,customdata:custom,hovertemplate:hover}});
-   traces.push({{type:'scatter',mode:'markers',x:[r._start_display],y:[item.y],marker:{{size:7,color:'#FFFFFF',line:{{color:c,width:2}},symbol:'circle'}},showlegend:false,customdata:[custom[0]],hovertemplate:hover}});
-   traces.push({{type:'scatter',mode:'markers',x:[r._end_display],y:[item.y],marker:{{size:9,color:c,symbol:'diamond'}},showlegend:false,customdata:[custom[0]],hovertemplate:hover}});
- }});
-
- const shapes=[];
- const annotations=[];
- sections.forEach(s=>{{
-   const yTop=s.headerY+0.26;
-   const yBottom=s.lastY+0.36;
-   shapes.push({{type:'rect',xref:'paper',x0:0,x1:1,yref:'y',y0:yTop,y1:yBottom,fillcolor:rgba(s.colour,0.045),line:{{color:rgba(s.colour,0.48),width:1.2}},layer:'below'}});
-   shapes.push({{type:'rect',xref:'paper',x0:0,x1:1,yref:'y',y0:s.headerY-0.24,y1:s.headerY+0.24,fillcolor:rgba(s.colour,0.14),line:{{color:rgba(s.colour,0.62),width:1}},layer:'below'}});
-   annotations.push({{xref:'paper',x:0.008,yref:'y',y:s.headerY,xanchor:'left',yanchor:'middle',showarrow:false,align:'left',text:'<b>'+esc(s.cap)+'</b> &nbsp; <span style="color:#475467">'+money(s.value)+' active value &nbsp;|&nbsp; '+s.count+' '+(s.count===1?'contract':'contracts')+' &nbsp;|&nbsp; '+s.avgDays+' avg days remaining</span>',font:{{size:12,color:s.colour}}}});
- }});
-
- const yMin=-0.48;
- const yMax=Math.max(cursor-0.04,1);
- shapes.push({{type:'line',x0:AS_AT_DATE,x1:AS_AT_DATE,y0:yMin,y1:yMax,xref:'x',yref:'y',line:{{color:'#111827',width:2.4,dash:'dash'}}}});
- annotations.push({{x:AS_AT_DATE,y:1.055,xref:'x',yref:'paper',showarrow:false,text:'<b>Today · '+dateLabel(AS_AT_DATE)+'</b>',font:{{size:12,color:'#111827'}},bgcolor:'#ffffff',bordercolor:'#111827',borderwidth:1,borderpad:4}});
-
- // Keep the timeline readable at normal browser zoom
- const denseContractCount=sections.filter(s=>s.denseGroup).reduce((n,s)=>n+s.count,0);
- const h=Math.max(500,rowItems.length*52+denseContractCount*14+sections.length*46+120);
- const longest=Math.max(0,...tickText.map(v=>String(v).replace(/<[^>]*>/g,'').length));
- const leftMargin=Math.min(560,Math.max(430,longest*4.4+70));
-
- Plotly.react('timelineChart',traces,{{
-   template:'plotly_white',height:h,margin:{{t:86,l:leftMargin,r:38,b:64}},
-   xaxis:{{type:'date',title:'Contract start date → contract end date',fixedrange:true,showgrid:true,gridcolor:'#E9EDF3',tickformat:'%Y',dtick:'M12',ticks:'outside',showline:true,linecolor:'#D0D5DD'}},
-   // Duplicate the year ruler at the top so the time scale remains visible when
-   // reading the upper Service Offering sections.
-   xaxis2:{{type:'date',overlaying:'x',matches:'x',side:'top',fixedrange:true,showgrid:false,zeroline:false,tickformat:'%Y',dtick:'M12',ticks:'outside',showline:true,linecolor:'#D0D5DD',title:''}},
-   yaxis:{{tickmode:'array',tickvals:tickVals,ticktext:tickText,range:[yMax,yMin],fixedrange:true,automargin:false,tickfont:{{size:11}},ticklabelstandoff:14,showgrid:false,zeroline:false}},
-   shapes:shapes,annotations:annotations,hoverlabel:{{align:'left'}},showlegend:false
- }},{{responsive:true,displayModeBar:false,scrollZoom:false}})
-}}
-
-function render(){{const s=document.getElementById('supplierSelect').value,c=document.getElementById('compareSelect').value;document.getElementById('selectedBlock').style.borderTopColor=colour(s);document.getElementById('compareBlock').style.borderTopColor=colour(c);document.getElementById('selectedTitle').style.borderLeftColor=colour(s);document.getElementById('compareTitle').style.borderLeftColor=colour(c);setKpis('selected',s);setKpis('compare',c);updateKpiComparison(s,c);updateProfile(s,c);updateLeaderboards(s,c);updateTimeline(s);updateAgency(s)}}
-function marketLabel(){{return MARKET_MODE==='tam'?'Accenture TAM':'All Federal Health Market'}}
-function updateMarketCopy(){{
-  const tam=MARKET_MODE==='tam',label=marketLabel();
-  document.getElementById('atlasMarketDescription').textContent=tam
-    ? 'Showing contracts classified as addressable to Accenture'
-    : 'Showing all Federal Health procurement, including non-addressable contracts';
-  document.querySelectorAll('.atlas-market-choice').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.market===MARKET_MODE)));
-  document.getElementById('healthScopeDescription').textContent='Supplier-vs-supplier positioning across '+label+'.';
-  document.getElementById('healthExecutivePurpose').textContent='Compare two suppliers across '+label+' using market position, Service Offering strength, active contracts and agency presence.';
-  document.getElementById('healthMarketPurposeQuestion').textContent="How large is each supplier's position inside "+label+'?';
-  document.getElementById('healthKpiInsight').textContent='The KPI cards compare supplier scale, share, Service Offering strength and breadth within '+label+'.';
-  document.getElementById('selectedShareLabel').textContent=tam?'Addressable TAM share':'All Market share';
-  document.getElementById('compareShareLabel').textContent=tam?'Addressable TAM share':'All Market share';
-  document.getElementById('healthProfileInsight').textContent=tam
-    ? 'Supplier positioning within addressable Health Service Offerings. Unresolved addressable work appears as Uncategorised.'
-    : 'Supplier positioning across all Federal Health procurement. Non-addressable spend is shown under Non-addressable / Unclassified.';
-  document.getElementById('healthProfileSubtitle').textContent='Award value by Service Offering within '+label+'.';
-  document.getElementById('healthLeaderboardSubtitle').textContent='Each Service Offering share uses the selected market as its denominator.';
-  document.getElementById('healthTimelineInsight').textContent='The first supplier selector controls the active-contract timeline for '+label+'. Only records with valid start/end dates are plotted.';
-  document.getElementById('healthAgencyInsight').textContent="The agency view shows the selected supplier's position across Federal Health agencies within "+label+'.';
-  document.getElementById('healthMethodNote').textContent=tam
-    ? 'Accenture TAM contains is_addressable = true contracts only. Market share uses that same addressable population. No dashboard reclassification is performed.'
-    : 'All Federal Health Market contains addressable and non-addressable contracts. Non-addressable Service Offerings are grouped into an explicit category; original contract values remain unchanged.';
-}}
-function setMarketMode(mode, preserveFilters=true){{
-  if (!MODELS[mode]) return;
-  const s=document.getElementById('supplierSelect'),c=document.getElementById('compareSelect'),p=document.getElementById('periodSelect');
-  const previousSupplier=preserveFilters?s.value:DEFAULT_SUPPLIER;
-  const previousCompare=preserveFilters?c.value:DEFAULT_COMPARE;
-  const previousPeriod=preserveFilters&&window.PERIODS?period().key:'all';
-  MARKET_MODE=mode;
-  const m=MODELS[mode];
-  SUPPLIER_TOTAL=m.supplier_total;
-  SUPPLIER_CAP=m.supplier_capability;
-  YEARLY=m.yearly;
-  AGENCY_YEARLY=m.agency_yearly;
-  CONTRACTS=m.contracts;
-  CAPABILITIES=m.capabilities;
-  const options=m.supplier_options||[];
-  const optionHTML=options.map(x=>'<option value="'+esc(x)+'">'+esc(x)+'</option>').join('');
-  s.innerHTML=optionHTML;c.innerHTML=optionHTML;
-  s.value=options.includes(previousSupplier)?previousSupplier:(options.includes(DEFAULT_SUPPLIER)?DEFAULT_SUPPLIER:options[0]);
-  c.value=options.includes(previousCompare)?previousCompare:(options.includes(DEFAULT_COMPARE)?DEFAULT_COMPARE:options[0]);
-  buildPeriods();
-  const idx=(window.PERIODS||[]).findIndex(x=>x.key===previousPeriod);
-  p.value=String(idx>=0?idx:0);
-  updateMarketCopy();
+  refreshFilters();
   render();
 }}
-function clearAllFilters(){{
-  // Scope is intentionally untouched: clearing filters must not change market.
-  const s=document.getElementById('supplierSelect'),c=document.getElementById('compareSelect');
-  s.value=DEFAULT_SUPPLIER;
-  c.value=DEFAULT_COMPARE;
-  document.getElementById('periodSelect').value='0';
-  render();
-}}
-['supplierSelect','compareSelect','periodSelect'].forEach(id=>document.getElementById(id).addEventListener('change',render));
-document.querySelectorAll('.atlas-market-choice').forEach(b=>b.addEventListener('click',()=>setMarketMode(b.dataset.market,true)));
-document.getElementById('atlasClearFilters').addEventListener('click',clearAllFilters);
-setMarketMode('tam',false);
-</script>
-</body>
-</html>"""
-    output_path.write_text(atlas_navigation(html_doc, "health", page="compare", freshness=freshness), encoding="utf-8")
+document.getElementById('marketMode').addEventListener('change',()=>{{refreshFilters();render()}});
+
+(function() {{
+  const select = document.getElementById('marketMode');
+  const buttons = document.querySelectorAll('.atlas-market-switch button');
+  const description = document.getElementById('atlasMarketDescription');
+  function syncMarketSwitch() {{
+    buttons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.market === select.value)));
+    description.textContent = select.value === 'tam'
+      ? 'Showing contracts addressable to Accenture'
+      : 'Showing all procurement contracts in the selected market';
+  }}
+  buttons.forEach(button => button.addEventListener('click', () => {{
+    if (select.value === button.dataset.market) return;
+    select.value = button.dataset.market;
+    syncMarketSwitch();
+    select.dispatchEvent(new Event('change', {{bubbles: true}}));
+  }}));
+  select.addEventListener('change', syncMarketSwitch);
+  syncMarketSwitch();
+}})();
+document.getElementById('agencySelect').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('searchInput').addEventListener('input',()=>{{refreshFilters();render()}});document.getElementById('capabilityFilter').addEventListener('change',()=>{{refreshFilters('capability');render()}});document.getElementById('supplierFilter').addEventListener('change',()=>{{refreshFilters('supplier');render()}});document.getElementById('minValueInput').addEventListener('input',()=>{{refreshFilters();render()}});document.getElementById('datedOnly').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('clearFiltersBtn').addEventListener('click',clearAllFilters);
+
+refreshFilters();
+render();</script>
+</body></html>'''
+
+    output_path.write_text(atlas_navigation(html, "health", page="explorer", freshness=freshness), encoding="utf-8")
 
 
 def main() -> None:
     args = parse_args()
+    input_path = Path(args.input)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    path = Path(args.input)
-    df, value_col = load_data(path, args.value_mode)
-    as_at = pd.to_datetime(args.as_at, errors="coerce") if args.as_at else pd.Timestamp.today().normalize()
-    if pd.isna(as_at):
-        raise SystemExit("Could not parse --as-at. Use YYYY-MM-DD.")
-    as_at = pd.Timestamp(as_at).normalize()
 
-    tam_df = df.loc[df[ADDRESSABLE_COL]].copy()
-    if tam_df.empty:
-        raise SystemExit("No addressable Federal Health contracts found; cannot build default TAM view.")
+    df, value_col = load_data(input_path, args.value_mode)
+    payload = build_payload(df)
+    html_path = output_dir / "HealthContractExplorer.html"
+    build_html(payload, html_path, args.value_mode, freshness=atlas_freshness(df))
 
-    # Build a stable supplier selector from the top suppliers in either market.
-    # This prevents a selected supplier being silently replaced when toggling.
-    def ranked_suppliers(frame: pd.DataFrame) -> list[str]:
-        vals = frame.groupby(SUPPLIER_GROUP_COL)["_value"].sum().sort_values(ascending=False)
-        return vals.head(max(1, args.top_n_suppliers)).index.astype(str).tolist()
+    agency_audit = (
+        df.groupby([AGENCY_COL, "_division"], dropna=False)
+        .agg(contracts=(CN_ID_COL, "nunique") if CN_ID_COL in df.columns else ("_value", "size"), value=("_value", "sum"))
+        .reset_index()
+        .sort_values("value", ascending=False)
+    )
+    agency_audit.to_csv(output_dir / "agency_division_procurement_audit.csv", index=False)
 
-    options = list(dict.fromkeys(
-        (["Accenture"] if "Accenture" in set(df[SUPPLIER_GROUP_COL]) else [])
-        + ranked_suppliers(tam_df)
-        + ranked_suppliers(df)
-    ))
-    models = {
-        "tam": build_model(tam_df, args.top_n_suppliers, as_at, supplier_options_override=options),
-        "all": build_model(df, args.top_n_suppliers, as_at, supplier_options_override=options),
-    }
-    dashboard_path = output_dir / "HealthCompetitiveIntelligence.html"
-    build_html(models, dashboard_path, as_at, args.value_mode, freshness=atlas_freshness(df))
-
-    # Keep existing export names as TAM outputs; new All-Market files are explicit.
-    export_fields = {
-        "supplier_total": "supplier_summary.csv",
-        "supplier_capability": "supplier_service_offering.csv",
-        "yearly": "supplier_service_offering_yearly.csv",
-        "agency_yearly": "supplier_agency_yearly.csv",
-        "active_contracts": "current_contracts.csv",
-    }
-    for scope, model in models.items():
-        for key, filename in export_fields.items():
-            suffix = "" if scope == "tam" else "_all_market"
-            stem, ext = filename.rsplit(".", 1)
-            frame = model[key]
-            if key == "active_contracts":
-                frame = frame.head(args.top_n_contracts)
-            frame.to_csv(output_dir / f"{stem}{suffix}.{ext}", index=False)
-
-    expected_tam = float(tam_df["_value"].sum())
-    expected_all = float(df["_value"].sum())
-    for scope, expected in (("tam", expected_tam), ("all", expected_all)):
-        actual = float(models[scope]["supplier_total"]["supplier_value"].sum())
-        if abs(expected - actual) > 0.01:
-            raise RuntimeError(f"Health Competitive Intelligence {scope} reconciliation failed: {actual:,.2f} != {expected:,.2f}")
-    print("Health Competitive Intelligence market reconciliation: PASS")
-    print(f"Input: {path}")
+    print("Health TAM Exploratory Analysis dashboard complete")
+    print(f"Input: {input_path}")
     print(f"Value mode: {args.value_mode} / column used: {value_col}")
-    print(f"As-at date: {as_at.strftime('%Y-%m-%d')}")
-    print(f"Accenture TAM: {money(expected_tam)}")
-    print(f"All Federal Health Market: {money(expected_all)}")
-    print(f"Suppliers in dropdown: {len(options)}")
-    print(f"Wrote: {dashboard_path}")
+    print(f"Addressable rows: {len(df):,}")
+    print(f"Addressable Health TAM: A${df['_value'].sum()/1e9:,.2f}B")
+    print(f"Wrote: {html_path}")
+    print(f"Wrote: {output_dir / 'agency_division_procurement_audit.csv'}")
 
 
 
