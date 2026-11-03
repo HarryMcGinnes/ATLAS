@@ -309,12 +309,11 @@ jobs:
             --output-dir "$HEALTH_SITE_DIR" \
             --value-mode total
 
-      - name: Build Health Exploratory Analysis
+      - name: Build Health Contract Explorer
         run: |
           python health/dashboards/HealthContractExplorer.py \
-            --input "$HEALTH_MASTER" \
-            --output-dir "$HEALTH_SITE_DIR" \
-            --value-mode total
+            --input health/data/processed/master_health_contracts.parquet \
+            --output-dir docs/health
 
       # ============================================================
       # VALIDATE DEFENCE OUTPUTS
