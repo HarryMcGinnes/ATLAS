@@ -333,6 +333,7 @@ def build_html(
     output_path: Path,
     as_at: pd.Timestamp,
     value_mode: str,
+    freshness: str = "",
 ) -> None:
     """Build one self-contained HTML page with an in-place market toggle.
 
@@ -900,7 +901,7 @@ setMarketMode('tam',false);
 </script>
 </body>
 </html>"""
-    output_path.write_text(atlas_navigation(html_doc, "health"), encoding="utf-8")
+    output_path.write_text(atlas_navigation(html_doc, "health", page="compare", freshness=freshness), encoding="utf-8")
 
 
 def main() -> None:
@@ -934,7 +935,7 @@ def main() -> None:
         "all": build_model(df, args.top_n_suppliers, as_at, supplier_options_override=options),
     }
     dashboard_path = output_dir / "HealthCompetitiveIntelligence.html"
-    build_html(models, dashboard_path, as_at, args.value_mode)
+    build_html(models, dashboard_path, as_at, args.value_mode, freshness=atlas_freshness(df))
 
     # Keep existing export names as TAM outputs; new All-Market files are explicit.
     export_fields = {
@@ -969,24 +970,85 @@ def main() -> None:
     print(f"Wrote: {dashboard_path}")
 
 
-def atlas_navigation(html_text: str, industry: str) -> str:
-    """Add consistent GitHub Pages navigation without changing dashboard analytics."""
+
+
+def atlas_freshness(df: pd.DataFrame) -> str:
+    """Expose provenance without mistaking HTML build time for source refresh time."""
+    from datetime import datetime, timezone
+    from html import escape
+    import os
+
+    built = datetime.now(timezone.utc).strftime("%d %b %Y %H:%M UTC")
+    pieces = ["Dashboard last refreshed: " + built]
+    reported = os.environ.get("ATLAS_DATA_REFRESHED_AT", "").strip()
+    if not reported:
+        for column in ("atlas_refresh_timestamp", "data_refresh_timestamp", "last_refreshed", "refresh_timestamp"):
+            if column in df.columns:
+                values = df[column].dropna().astype(str).str.strip()
+                values = values[values.ne("")]
+                if not values.empty:
+                    reported = str(values.iloc[-1]); break
+    if reported:
+        stamp = pd.to_datetime(reported, errors="coerce", utc=True)
+        if pd.notna(stamp):
+            pieces.insert(0, "Data refreshed: " + stamp.strftime("%d %b %Y %H:%M UTC"))
+        else:
+            pieces.insert(0, "Data refreshed: " + reported)
+    for column in ("05. Publish Date", "Publish Date"):
+        if column in df.columns:
+            source = df[column]
+            if pd.api.types.is_datetime64_any_dtype(source):
+                values = pd.to_datetime(source, errors="coerce")
+            else:
+                text = source.astype("string").str.strip()
+                iso = text.str.match(r"^\d{4}-\d{1,2}-\d{1,2}(?:[ T].*)?$", na=False)
+                values = pd.Series(pd.NaT, index=source.index, dtype="datetime64[ns]")
+                values.loc[iso] = pd.to_datetime(text.loc[iso], errors="coerce", format="ISO8601")
+                values.loc[~iso] = pd.to_datetime(text.loc[~iso], errors="coerce", format="mixed", dayfirst=True)
+            if values.notna().any():
+                pieces.append("Latest source publication: " + values.max().strftime("%d %b %Y"))
+                break
+    return " · ".join(escape(p) for p in pieces)
+
+
+def atlas_navigation(html_text: str, industry: str, page: str = "overview", freshness: str = "") -> str:
+    """Consistent Health navigation; no analytics or filters are modified."""
     site = "/ATLAS/"
-    nav = f"""<nav class="atlas-nav" aria-label="ATLAS navigation">
-      <a class="atlas-brand" href="{site}">ATLAS</a>
-      <a href="{site}">Home</a>
-      <a href="{site}defence/" {'aria-current="page"' if industry == 'defence' else ''}>Defence</a>
-      <a href="{site}health/" {'aria-current="page"' if industry == 'health' else ''}>Federal Health</a>
-    </nav>"""
+    health = site + "health/"
+    links = [
+        ("Health home", health, "home"),
+        ("TAM overview", health + "tam-overview/", "overview"),
+        ("Competitive intelligence", health + "competitive-intelligence/", "compare"),
+        ("Contract explorer", health + "contract-explorer/", "explorer"),
+        ("Methodology", health + "#atlas-methodology", "methodology"),
+    ]
+    nav_links = "".join(
+        f'<a href="{url}"' + (' aria-current="page"' if ident == page else '') + f'>{label}</a>'
+        for label, url, ident in links
+    )
+    nav = (
+        '<div class="atlas-health-top"><nav class="atlas-health-nav" aria-label="ATLAS Health dashboard navigation">'
+        f'<a class="atlas-health-brand" href="{site}">ATLAS</a>'
+        f'<div class="atlas-health-links">{nav_links}</div>'
+        '</nav>'
+        + (f'<div class="atlas-health-meta" aria-label="Data provenance">{freshness}</div>' if freshness else '')
+        + '</div>'
+    )
     css = """<style>
-    .atlas-nav{display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding:13px max(22px,calc((100vw - 1480px)/2));background:#101018;color:white;font:600 13px Arial,Helvetica,sans-serif}
-    .atlas-nav a{color:#e9e9f1;text-decoration:none;padding:7px 9px;border-radius:7px}
-    .atlas-nav a:hover,.atlas-nav a[aria-current=page]{background:#3d2456;color:white}
-    .atlas-nav .atlas-brand{font-size:21px;font-weight:800;letter-spacing:.06em;color:white;margin-right:auto}
+    .atlas-health-top{background:#11101c;color:#f8f7fc;font-family:Arial,Helvetica,sans-serif}
+    .atlas-health-nav{display:flex;gap:18px;align-items:center;justify-content:space-between;max-width:1500px;margin:auto;padding:14px 22px}
+    .atlas-health-brand{font-size:22px;font-weight:800;letter-spacing:.055em;color:white!important;text-decoration:none;white-space:nowrap}
+    .atlas-health-links{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+    .atlas-health-links a{font-size:13px;font-weight:700;color:#e8e3ef;text-decoration:none;padding:9px 12px;border-radius:9px;white-space:nowrap}
+    .atlas-health-links a:hover,.atlas-health-links a[aria-current=page]{background:#6730ad;color:#fff}
+    .atlas-health-links a:focus-visible{outline:2px solid #e9c9ff;outline-offset:2px}
+    .atlas-health-meta{max-width:1500px;margin:auto;padding:0 22px 12px;color:#cbc4d8;font-size:11px;line-height:1.4}
+    @media(max-width:850px){.atlas-health-nav{align-items:flex-start;flex-direction:column;gap:10px}.atlas-health-links a{padding:7px 9px}.atlas-health-meta{padding-bottom:12px}}
     </style>"""
-    html_text=html_text.replace('</head>',css+'</head>',1)
-    html_text=html_text.replace('<body>', '<body>'+nav,1)
+    html_text = html_text.replace('</head>', css + '</head>', 1)
+    html_text = html_text.replace('<body>', '<body>' + nav, 1)
     return html_text
+
 
 if __name__ == "__main__":
     main()
