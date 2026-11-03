@@ -799,14 +799,16 @@ def atlas_freshness(df: pd.DataFrame) -> str:
 
 def atlas_navigation(html_text: str, industry: str, page: str = "overview", freshness: str = "") -> str:
     """Consistent Health navigation; no analytics or filters are modified."""
-    site = "/ATLAS/"
-    health = site + "health/"
+    # All Health HTML files are published side by side in docs/health/.
+    # Relative links also work when GitHub Pages is hosted under /ATLAS/
+    # or a different base path (such as a custom domain).
+    site = "../"
     links = [
-        ("Health home", health, "home"),
-        ("TAM overview", health + "tam-overview/", "overview"),
-        ("Competitive intelligence", health + "competitive-intelligence/", "compare"),
-        ("Contract explorer", health + "contract-explorer/", "explorer"),
-        ("Methodology", health + "#atlas-methodology", "methodology"),
+        ("Health home", "index.html", "home"),
+        ("TAM overview", "AccentureHealthTAMOverview.html", "overview"),
+        ("Competitive intelligence", "HealthCompetitiveIntelligence.html", "compare"),
+        ("Contract explorer", "HealthContractExplorer.html", "explorer"),
+        ("Methodology", "index.html#atlas-methodology", "methodology"),
     ]
     nav_links = "".join(
         f'<a href="{url}"' + (' aria-current="page"' if ident == page else '') + f'>{label}</a>'
@@ -1070,7 +1072,7 @@ def build_health_home(df: pd.DataFrame, value_col: str, output_path: Path) -> No
     @media(max-width:870px){.kpis,.steps{grid-template-columns:repeat(2,minmax(0,1fr))}.cards{grid-template-columns:1fr}.agency-row{grid-template-columns:minmax(130px,1.3fr) minmax(70px,1fr) 110px;gap:8px}.agency-name{font-size:11px}.agency-num{font-size:11px}}
     @media(max-width:520px){main{padding:24px 13px}.panel{padding:17px}.kpis,.steps,.formulas{grid-template-columns:1fr}.agency-row{grid-template-columns:1fr 72px}.agency-bar{grid-column:1/-1;grid-row:2}.agency-num{grid-column:2;grid-row:1}}
     </style></head><body>
-    <header class="top"><nav class="nav" aria-label="Health navigation"><a class="brand" href="/ATLAS/">ATLAS</a><div class="nav-links"><a href="/ATLAS/">ATLAS home</a><a aria-current="page" href="./">Federal Health</a><a href="tam-overview/">TAM overview</a><a href="competitive-intelligence/">Competitive intelligence</a><a href="contract-explorer/">Contract explorer</a></div></nav><div class="meta">__FRESHNESS__</div></header>
+    <header class="top"><nav class="nav" aria-label="Health navigation"><a class="brand" href="../">ATLAS</a><div class="nav-links"><a href="../">ATLAS home</a><a aria-current="page" href="index.html">Federal Health</a><a href="AccentureHealthTAMOverview.html">TAM overview</a><a href="HealthCompetitiveIntelligence.html">Competitive intelligence</a><a href="HealthContractExplorer.html">Contract explorer</a></div></nav><div class="meta">__FRESHNESS__</div></header>
     <main><section class="hero"><p class="eyebrow">FEDERAL HEALTH INTELLIGENCE</p><h1>Where is the Health market moving?</h1>
     <p class="lead">Explore Federal Health procurement through Accenture's addressable market, competitor positioning, agency concentration and individual contract evidence.</p></section>
     <section class="panel" aria-label="Market snapshot"><div class="section-head"><div><h2>Health market snapshot</h2><p>Historical AusTender contract values, not annual budget expenditure.</p></div>
@@ -1083,9 +1085,9 @@ def build_health_home(df: pd.DataFrame, value_col: str, output_path: Path) -> No
     <p>Share of the selected market's recorded contract value. Select the market above to compare.</p></div></div>
     <div class="rows" id="agencyRows"></div><p class="foot">Source: AusTender. Each contract notice contributes its recorded value, including amendments. Values may be negative where amendments reduce reported contract value.</p></section>
     <section aria-label="Explore dashboards"><h2>Explore the market</h2><div class="cards">
-    <a class="tile" href="tam-overview/"><h3>TAM overview</h3><p>Understand addressable spend, Service Offering demand, leading suppliers and agency share.</p><strong>Open overview</strong></a>
-    <a class="tile" href="competitive-intelligence/"><h3>Competitive intelligence</h3><p>Compare supplier market positions, contract portfolios and agency concentration.</p><strong>Compare suppliers</strong></a>
-    <a class="tile" href="contract-explorer/"><h3>Contract explorer</h3><p>Investigate the specific contracts, amendments and suppliers underpinning the numbers.</p><strong>Explore contracts</strong></a>
+    <a class="tile" href="AccentureHealthTAMOverview.html"><h3>TAM overview</h3><p>Understand addressable spend, Service Offering demand, leading suppliers and agency share.</p><strong>Open overview</strong></a>
+    <a class="tile" href="HealthCompetitiveIntelligence.html"><h3>Competitive intelligence</h3><p>Compare supplier market positions, contract portfolios and agency concentration.</p><strong>Compare suppliers</strong></a>
+    <a class="tile" href="HealthContractExplorer.html"><h3>Contract explorer</h3><p>Investigate the specific contracts, amendments and suppliers underpinning the numbers.</p><strong>Explore contracts</strong></a>
     </div></section>
     <section class="panel" id="atlas-methodology"><p class="eyebrow">TRANSPARENT CLASSIFICATION</p><h2>How ATLAS defines the Health market</h2>
     <p class="foot">Classification is performed upstream in the Health pipeline, not inside the dashboards. This view explains the decision stages and verified aggregation formulas.</p>
