@@ -808,14 +808,16 @@ def atlas_freshness(df: pd.DataFrame) -> str:
 
 def atlas_navigation(html_text: str, industry: str, page: str = "overview", freshness: str = "") -> str:
     """Consistent Health navigation; no analytics or filters are modified."""
-    site = "/ATLAS/"
-    health = site + "health/"
+    # All Health HTML files are published side by side in docs/health/.
+    # Relative links also work when GitHub Pages is hosted under /ATLAS/
+    # or a different base path (such as a custom domain).
+    site = "../"
     links = [
-        ("Health home", health, "home"),
-        ("TAM overview", health + "tam-overview/", "overview"),
-        ("Competitive intelligence", health + "competitive-intelligence/", "compare"),
-        ("Contract explorer", health + "contract-explorer/", "explorer"),
-        ("Methodology", health + "#atlas-methodology", "methodology"),
+        ("Health home", "index.html", "home"),
+        ("TAM overview", "AccentureHealthTAMOverview.html", "overview"),
+        ("Competitive intelligence", "HealthCompetitiveIntelligence.html", "compare"),
+        ("Contract explorer", "HealthContractExplorer.html", "explorer"),
+        ("Methodology", "index.html#atlas-methodology", "methodology"),
     ]
     nav_links = "".join(
         f'<a href="{url}"' + (' aria-current="page"' if ident == page else '') + f'>{label}</a>'
