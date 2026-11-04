@@ -764,7 +764,9 @@ def atlas_freshness(df: pd.DataFrame) -> str:
     from html import escape
     import os
 
-    built = datetime.now(timezone.utc).strftime("%d %b %Y %H:%M UTC")
+    from zoneinfo import ZoneInfo
+
+    built = datetime.now(ZoneInfo("Australia/Sydney")).strftime("%d %b %Y %H:%M %Z")
     pieces = ["Dashboard last refreshed: " + built]
     reported = os.environ.get("ATLAS_DATA_REFRESHED_AT", "").strip()
     if not reported:
