@@ -975,6 +975,7 @@ def main() -> None:
 def atlas_freshness(df: pd.DataFrame) -> str:
     """Expose provenance without mistaking HTML build time for source refresh time."""
     from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
     from html import escape
     import os
 
