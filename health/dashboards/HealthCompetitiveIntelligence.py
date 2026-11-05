@@ -183,8 +183,16 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
     value_col = ANNUALISED_VALUE_COL if value_mode == "annualised" else VALUE_COL
     if value_col not in out.columns:
         raise SystemExit(f"Requested value column not found: {value_col}")
-    out["_value"] = pd.to_numeric(out[value_col], errors="coerce").fillna(0).clip(lower=0)
-    out["_total_value"] = pd.to_numeric(out[VALUE_COL], errors="coerce").fillna(0).clip(lower=0)
+    out["_value"] = pd.to_numeric(out[value_col], errors="coerce").fillna(0)
+    out["_total_value"] = pd.to_numeric(out[VALUE_COL], errors="coerce").fillna(0)
+    # Preserve signed AusTender amendment values in all financial aggregates.
+    # Never clamp negative CN values: Gold and dashboard totals must reconcile.
+    if value_mode == "total":
+        canonical_total = pd.to_numeric(df[VALUE_COL], errors="coerce").fillna(0).sum()
+        if abs(float(out["_value"].sum()) - float(canonical_total)) > 0.01:
+            raise RuntimeError("Health dashboard total differs from canonical signed Value sum")
+    negative_count = int((out["_value"] < 0).sum())
+    print(f"Negative-value contract notices retained: {negative_count:,}")
 
     start_col = first_existing(out, START_DATE_CANDIDATES)
     end_col = first_existing(out, END_DATE_CANDIDATES)
@@ -1055,4 +1063,3 @@ def atlas_navigation(html_text: str, industry: str, page: str = "overview", fres
 
 if __name__ == "__main__":
     main()
-
