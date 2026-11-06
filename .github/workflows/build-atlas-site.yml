@@ -315,6 +315,12 @@ jobs:
             --input health/data/processed/master_health_contracts.parquet \
             --output-dir docs/health
 
+      - name: Build Health Agency Intelligence
+        run: |
+          python health/dashboards/HealthAgencyIntelligence.py \
+            --input health/data/processed/master_health_contracts.parquet \
+            --output-dir docs/health
+
       # ============================================================
       # VALIDATE DEFENCE OUTPUTS
       # ============================================================
