@@ -1031,6 +1031,7 @@ def atlas_navigation(html_text: str, industry: str, page: str = "overview", fres
         ("TAM overview", "AccentureHealthTAMOverview.html", "overview"),
         ("Competitive intelligence", "HealthCompetitiveIntelligence.html", "compare"),
         ("Contract explorer", "HealthContractExplorer.html", "explorer"),
+        ("Agency intelligence", "HealthAgencyIntelligence.html", "agency"),
         ("Methodology", "index.html#atlas-methodology", "methodology"),
     ]
     nav_links = "".join(
