@@ -369,6 +369,7 @@ jobs:
               "AccentureHealthTAMOverview.html",
               "HealthCompetitiveIntelligence.html",
               "HealthContractExplorer.html",
+              "HealthAgencyIntelligence.html",
           ]
 
           print()
