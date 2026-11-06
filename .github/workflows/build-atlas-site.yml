@@ -471,6 +471,17 @@ jobs:
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
+      - name: Inspect ATLAS Pages deployment
+        run: |
+          echo "=== TOTAL SITE SIZE ==="
+          du -sh docs
+
+          echo "=== NUMBER OF FILES ==="
+          find docs -type f | wc -l
+
+          echo "=== 15 LARGEST FILES ==="
+          find docs -type f -printf '%s %p\n' | sort -nr | head -15
+
       - name: Upload ATLAS Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
