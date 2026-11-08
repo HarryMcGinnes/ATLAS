@@ -6,6 +6,7 @@ import re
 import os
 from datetime import datetime
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 from urllib.parse import urlparse
 import xml.etree.ElementTree as ET
 from zoneinfo import ZoneInfo
@@ -361,14 +362,24 @@ def load_atm_feed(rss_file: str = "", timeout: int = 12) -> tuple[list[dict[str,
         source = f"Local RSS snapshot: {Path(rss_file).name}"
     else:
         try:
-            request = Request(ATM_RSS_URL, headers={"User-Agent": "ATLAS-Public-Procurement-Analytics/1.0 (+https://www.tenders.gov.au)", "Accept": "application/rss+xml,application/xml,text/xml,*/*"})
+            request = Request(ATM_RSS_URL, headers={
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "application/rss+xml,application/xml,text/xml,*/*",
+                "Accept-Language": "en-AU,en;q=0.9",
+            })
             with urlopen(request, timeout=max(1, timeout)) as response:
                 raw = response.read(5_000_001)
             if len(raw) > 5_000_000:
                 raise ValueError("AusTender RSS exceeded the safe 5 MB limit")
             source = "Official AusTender ATM RSS"
+        except HTTPError as exc:
+            message = (f"AusTender RSS request returned HTTP {exc.code}. "
+                       "The feed may reject requests from GitHub Actions. This is a retrieval failure, not zero open tenders; "
+                       "check the official live ATM list.")
+            return [], "Unavailable", message
         except Exception as exc:
-            return [], "Unavailable", f"Unable to retrieve AusTender ATM RSS ({type(exc).__name__}). No live opportunities displayed; try again on the next site build."
+            return [], "Unavailable", (f"Unable to retrieve AusTender ATM RSS ({type(exc).__name__}). "
+                                      "Current tender availability is unknown; check the official live ATM list.")
     try:
         root = ET.fromstring(raw)
         nodes = root.findall(".//item")
@@ -581,10 +592,6 @@ select,input{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;
 </section>
 
 
-<div class="summary-line" id="summaryLine"></div>
-<p class="method">Dates marked (inferred) use the earliest credible recorded start and latest credible recorded end across available CN family members. This is an observed range, not confirmation of the current legal contract term.</p>
-<div id="yearContainer"></div>
-
 <section class="atm-area" id="open-tenders">
 <h2>Open Tenders / Approaches to Market</h2>
 <p class="atm-sub">Explore opportunities appearing in the AusTender public RSS feed (not necessarily every currently open ATM) and how their subject matter relates to Accenture’s historical Federal Health contract wins. <strong>Signals are descriptive, not bid recommendations or win probabilities.</strong> ATM notices are separate from awarded CNs.</p>
@@ -599,12 +606,19 @@ select,input{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;
 <p class="atm-sub">Methodology: Service Offering inferred from published title/summary keyword evidence. Historical Accenture presence is calculated from addressable Health CNs in this build, using signed values. It is <strong>not</strong> evidence of incumbency with the ATM buyer. “Potential whitespace” means no historical Accenture value is identified for that offering; “Established Health presence” means ≥5% of historical offering value; otherwise a nonzero presence is an “Expansion opportunity”. Agency, tender closing date, budget, and current open status must be verified at the linked AusTender notice. Source: Department of Finance AusTender ATM RSS.</p>
 </section>
 
+<div class="summary-line" id="summaryLine"></div>
+<p class="method">Dates marked (inferred) use the earliest credible recorded start and latest credible recorded end across available CN family members. This is an observed range, not confirmation of the current legal contract term.</p>
+<div id="yearContainer"></div>
+
+
+
 <p class="method">The dashboard supports both Accenture TAM and All Federal Health Market. Ongoing contracts are shown once in the top bracket; remaining contracts are grouped by their recorded financial year. Supplier and Service Offering filters are ranked by addressable spend within the current agency scope.</p>
 </div>
 
 <script>
 
 const ATM_NOTICES = {atm_json};
+const ATM_FEED_AVAILABLE = {json.dumps(atm_timestamp != "Unavailable")};
 (function initATM() {{
   const search = document.getElementById('atmSearch');
   const scope = document.getElementById('atmScope');
@@ -621,9 +635,12 @@ const ATM_NOTICES = {atm_json};
   function renderATM() {{
     const q = search.value.trim().toLowerCase();
     const rows = ATM_NOTICES.filter(n => (scope.value === 'all' || n.health_candidate) && (offer.value==='all'||offer.value===n.offering) && (signal.value==='all'||signal.value===n.signal) && (!q||(n.title+' '+n.description+' '+n.ref).toLowerCase().includes(q)));
-    count.textContent = `${{rows.length}} matching notices of ${{ATM_NOTICES.length}} feed records. Listings are not independently confirmed open; check AusTender for deadlines.`;
+    count.textContent = ATM_FEED_AVAILABLE
+      ? `${{rows.length}} matching notices of ${{ATM_NOTICES.length}} feed records. Listings are not independently confirmed open; check AusTender for deadlines.`
+      : 'ATM feed unavailable at build time — current opportunities could not be determined.';
     cards.replaceChildren();
-    if (!rows.length) {{cards.innerHTML='<p class="atm-sub">No matching notices available. Try “All feed notices”, or check the source link if the feed is unavailable.</p>';return;}}
+    if (!ATM_FEED_AVAILABLE) {{cards.innerHTML='<p class="atm-sub"><strong>Live feed not available.</strong> This is not confirmation that no tenders are open. Check the official AusTender link above.</p>';return;}}
+    if (!rows.length) {{cards.innerHTML='<p class="atm-sub">No matching notices in the retrieved feed. Try “All feed notices” or verify the official AusTender list.</p>';return;}}
     for (const n of rows) {{
       const article = document.createElement('article'); article.className='atm-card';
       article.innerHTML = `<div class="atm-tags"><span class="atm-tag">${{esc(n.offering)}}</span><span class="atm-tag">${{esc(n.signal)}}</span><span class="atm-tag">${{esc(n.health_relevance)}}</span></div>
