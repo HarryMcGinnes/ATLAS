@@ -1032,7 +1032,7 @@ def atlas_navigation(html_text: str, industry: str, page: str = "overview", fres
         ("Competitive intelligence", "HealthCompetitiveIntelligence.html", "compare"),
         ("Contract explorer", "HealthContractExplorer.html", "explorer"),
         ("Agency intelligence", "HealthAgencyIntelligence.html", "agency"),
-        ("Methodology", "index.html#atlas-methodology", "methodology"),
+        ("Methodology", "Methodology.html", "methodology"),
     ]
     nav_links = "".join(
         f'<a href="{url}"' + (' aria-current="page"' if ident == page else '') + f'>{label}</a>'
@@ -1093,21 +1093,8 @@ def atlas_option_a_style(html_text: str, page: str) -> str:
                   + eyebrow + '</div>' + block + '</div><span class="atlas-option-a-chip">'
                   + chip + '</span></div>')
         html_text = html_text[:match.start()] + header + html_text[match.end():]
-    # Tabs are navigation anchors within the current page, not competing data views.
-    # Keep the Explorer's separate view tabs unchanged.
-    tabs = {
-        'overview': '<a class="active" href="#atlas-overview-main">TAM analysis</a><a href="HealthCompetitiveIntelligence.html">Competitive intelligence</a><a href="HealthAgencyIntelligence.html">Agency intelligence</a><a href="HealthContractExplorer.html">Contract explorer</a>',
-        'compare': '<a class="active" href="#atlas-compare-main">Supplier comparison</a><a href="HealthAgencyIntelligence.html">Agency intelligence</a><a href="HealthContractExplorer.html">Contract explorer</a>',
-        'agency': '<a class="active" href="#atlas-agency-main">Agency analysis</a><a href="HealthCompetitiveIntelligence.html">Competitive intelligence</a><a href="HealthContractExplorer.html">Contract explorer</a>',
-    }
-    tabbar = '<nav class="atlas-option-a-tabs" aria-label="Health intelligence views">' + tabs[page] + '</nav>'
-    where = html_text.find('</div>', html_text.find('class="atlas-option-a-heading"'))
-    # locate the outer closing div by anchoring after the chip
-    marker = '</span></div>'
-    idx = html_text.find(marker, html_text.find('class="atlas-option-a-heading"'))
-    if idx >= 0:
-        idx += len(marker)
-        html_text = html_text[:idx] + tabbar + html_text[idx:]
+    # Primary Health navigation is already in the header. Do not inject a
+    # second navigation row; preserve internal tabs in Contract Explorer.
     if page == 'overview':
         html_text = html_text.replace('<section class="atlas-market-controls"', '<section id="atlas-overview-main" class="atlas-market-controls atlas-option-a-sticky"', 1)
         # If the TAM/All Market selector is the second-level market controls, make its placement obvious.
