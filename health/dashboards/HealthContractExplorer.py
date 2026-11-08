@@ -350,6 +350,75 @@ ATM_HEALTH_HINTS = (
 )
 
 
+# Exactly the agencies in ATLAS Health Silver scope. Mention in an RSS title/summary
+# is only contextual evidence, NOT verification that an agency issued a tender.
+ATLAS_HEALTH_AGENCIES = (
+    "Department of Health, Disability and Ageing",
+    "Department of Health and Aged Care - Therapeutic Goods Administration",
+    "Department of Health and Aged Care",
+    "Department of Health",
+    "Australian Digital Health Agency",
+    "Australian Institute of Health and Welfare",
+    "Aged Care Quality and Safety Commission",
+    "Australian Aged Care Quality Agency",
+    "Independent Health and Aged Care Pricing Authority",
+    "National Health Funding Body",
+    "National Health and Medical Research Council",
+    "National Mental Health Commission",
+    "Department of Social Services",
+)
+# Short-name matches are included only where substantially distinctive; generic
+# terms like 'Health' or 'Social Services' cannot establish the buyer.
+ATLAS_AGENCY_TERMS = {
+    "Australian Digital Health Agency": ("Australian Digital Health Agency",),
+    "Australian Institute of Health and Welfare": ("Australian Institute of Health and Welfare",),
+    "Aged Care Quality and Safety Commission": ("Aged Care Quality and Safety Commission",),
+    "Australian Aged Care Quality Agency": ("Australian Aged Care Quality Agency",),
+    "Independent Health and Aged Care Pricing Authority": ("Independent Health and Aged Care Pricing Authority",),
+    "National Health Funding Body": ("National Health Funding Body",),
+    "National Health and Medical Research Council": ("National Health and Medical Research Council",),
+    "National Mental Health Commission": ("National Mental Health Commission",),
+    "Department of Social Services": ("Department of Social Services",),
+    "Department of Health, Disability and Ageing": ("Department of Health, Disability and Ageing",),
+    "Department of Health and Aged Care - Therapeutic Goods Administration":
+        ("Department of Health and Aged Care - Therapeutic Goods Administration",),
+    "Department of Health and Aged Care": ("Department of Health and Aged Care",),
+    "Department of Health": ("Department of Health",),
+}
+# Goods-only supply is outside ATLAS's service-led TAM. These are review flags,
+# not a replacement for the canonical awarded-CN classification rules.
+ATM_GOODS_HINTS = (
+    "spare parts", "replacement parts", "consumables", "medical supplies",
+    "equipment supply", "supply of equipment", "supply and delivery",
+    "accessories", "medical devices", "pharmaceutical products", "medicines supply",
+    "office furniture", "vehicle purchase", "hardware purchase",
+)
+
+
+def agency_mentions(text: str) -> list[str]:
+    mentions = []
+    for agency, terms in ATLAS_AGENCY_TERMS.items():
+        if any(re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", text, flags=re.I)
+               for term in terms):
+            mentions.append(agency)
+    # Avoid counting shorter historical names when the notice names the longer entity.
+    return [agency for agency in mentions if not any(
+        agency != other and agency.casefold() in other.casefold() for other in mentions
+    )]
+
+
+def atm_addressability(text: str, offering: str) -> tuple[str, str]:
+    low = text.casefold()
+    goods = [term for term in ATM_GOODS_HINTS if term in low]
+    if goods and offering == "Needs review":
+        return "Likely non-addressable", "Goods/equipment supply indicator: " + goods[0]
+    if goods:
+        return "Needs review", "Goods/equipment language overlaps service keywords; manual review required"
+    if offering == "Needs review":
+        return "Needs review", "No specific ATLAS service offering evidence in available summary"
+    return "Potentially addressable", "Service keyword evidence only; review full tender scope"
+
+
 def _rss_txt(node: ET.Element, name: str) -> str:
     found = node.find(name)
     return "" if found is None else " ".join((found.text or "").split())
@@ -433,7 +502,9 @@ def build_atm_insights(df: pd.DataFrame, notices: list[dict[str, str]]) -> list[
         desc = notice["title"] + " " + notice["description"]
         offering, explanation = classify_atm(desc)
         health_hint = any(term in desc.casefold() for term in ATM_HEALTH_HINTS)
-        # Text hints do not establish buying-agency identity.
+        agencies = agency_mentions(desc)
+        addressability, address_reason = atm_addressability(desc, offering)
+        # RSS does not establish who the issuing agency is.
         total = float(market.get(offering, 0))
         existing = float(won.get(offering, 0))
         if offering == "Needs review":
@@ -450,7 +521,10 @@ def build_atm_insights(df: pd.DataFrame, notices: list[dict[str, str]]) -> list[
             rationale = "Accenture has some historical Health wins in this Service Offering, but below 5% of its historical addressable value."
         output.append({**notice, "offering": offering, "match_evidence": explanation,
                        "health_relevance": "Health keyword match" if health_hint else "Health relevance unverified",
-                       "health_candidate": health_hint, "signal": signal, "rationale": rationale,
+                       "health_candidate": health_hint, "agency_mentions": agencies,
+                       "scope_candidate": bool(agencies) and addressability == "Potentially addressable",
+                       "addressability": addressability, "addressability_reason": address_reason,
+                       "signal": signal, "rationale": rationale,
                        "health_market_value": round(total, 2), "accenture_wins_value": round(existing, 2)})
     return output
 
@@ -594,16 +668,16 @@ select,input{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;
 
 <section class="atm-area" id="open-tenders">
 <h2>Open Tenders / Approaches to Market</h2>
-<p class="atm-sub">Explore opportunities appearing in the AusTender public RSS feed (not necessarily every currently open ATM) and how their subject matter relates to Accenture’s historical Federal Health contract wins. <strong>Signals are descriptive, not bid recommendations or win probabilities.</strong> ATM notices are separate from awarded CNs.</p>
+<p class="atm-sub">Explore AusTender ATM notices alongside ATLAS Health historical awarded contracts. The default view includes only notices that <strong>mention a configured ATLAS Health agency and show service-offering evidence</strong>. These are candidates for review, <strong>not verified purchases by the named agency</strong>. The RSS does not reliably provide issuing agency, closing date or current status. Non-addressable and unverified notices remain available via the scope selector.</p>
 <p class="atm-info">ATM feed retrieved: {html_escape(atm_timestamp)} · {html_escape(atm_status)} <a href="https://www.tenders.gov.au/?event=public.ATM.list" target="_blank" rel="noopener noreferrer">Check official live ATM list</a></p>
 <div class="atm-controls">
  <input type="search" id="atmSearch" placeholder="Search open opportunities..." aria-label="Search open tenders">
- <select id="atmScope" aria-label="Health relevance"><option value="health">Health keyword candidates</option><option value="all">All feed notices</option></select>
+ <select id="atmScope" aria-label="ATM scope"><option value="scope">ATLAS agency + service candidates</option><option value="agency">ATLAS agency mentioned (all)</option><option value="health">Broad Health keyword notices</option><option value="all">All feed notices</option></select>
  <select id="atmOffering" aria-label="ATM Service Offering"><option value="all">All Service Offerings</option></select>
  <select id="atmSignal" aria-label="Opportunity signal"><option value="all">All opportunity signals</option></select>
 </div>
 <div id="atmCount" class="atm-info"></div><div id="atmCards" class="atm-grid"></div>
-<p class="atm-sub">Methodology: Service Offering inferred from published title/summary keyword evidence. Historical Accenture presence is calculated from addressable Health CNs in this build, using signed values. It is <strong>not</strong> evidence of incumbency with the ATM buyer. “Potential whitespace” means no historical Accenture value is identified for that offering; “Established Health presence” means ≥5% of historical offering value; otherwise a nonzero presence is an “Expansion opportunity”. Agency, tender closing date, budget, and current open status must be verified at the linked AusTender notice. Source: Department of Finance AusTender ATM RSS.</p>
+<p class="atm-sub">Methodology: The configured ATLAS agency names must be explicitly mentioned in RSS title/summary for the first two filters. Mentions do not prove buyer identity; missing mentions do not prove an ATM is outside scope. Addressability is preliminary: specific service keywords are "Potentially addressable", goods-only indicators are "Likely non-addressable", other cases require manual review. Service Offering inferred from published title/summary keyword evidence. Historical Accenture presence is calculated from addressable Health CNs in this build, using signed values. It is <strong>not</strong> evidence of incumbency with the ATM buyer. “Potential whitespace” means no historical Accenture value is identified for that offering; “Established Health presence” means ≥5% of historical offering value; otherwise a nonzero presence is an “Expansion opportunity”. Agency, tender closing date, budget, and current open status must be verified at the linked AusTender notice. Source: Department of Finance AusTender ATM RSS.</p>
 </section>
 
 <div class="summary-line" id="summaryLine"></div>
@@ -634,17 +708,19 @@ const ATM_FEED_AVAILABLE = {json.dumps(atm_timestamp != "Unavailable")};
   }}
   function renderATM() {{
     const q = search.value.trim().toLowerCase();
-    const rows = ATM_NOTICES.filter(n => (scope.value === 'all' || n.health_candidate) && (offer.value==='all'||offer.value===n.offering) && (signal.value==='all'||signal.value===n.signal) && (!q||(n.title+' '+n.description+' '+n.ref).toLowerCase().includes(q)));
+    const rows = ATM_NOTICES.filter(n => (scope.value === 'all' || (scope.value === 'health' && n.health_candidate) || (scope.value === 'agency' && n.agency_mentions.length > 0) || (scope.value === 'scope' && n.scope_candidate)) && (offer.value==='all'||offer.value===n.offering) && (signal.value==='all'||signal.value===n.signal) && (!q||(n.title+' '+n.description+' '+n.ref).toLowerCase().includes(q)));
     count.textContent = ATM_FEED_AVAILABLE
-      ? `${{rows.length}} matching notices of ${{ATM_NOTICES.length}} feed records. Listings are not independently confirmed open; check AusTender for deadlines.`
+      ? `${{rows.length}} matching notices of ${{ATM_NOTICES.length}} feed records. Agency identity and open status require verification on AusTender.`
       : 'ATM feed unavailable at build time — current opportunities could not be determined.';
     cards.replaceChildren();
     if (!ATM_FEED_AVAILABLE) {{cards.innerHTML='<p class="atm-sub"><strong>Live feed not available.</strong> This is not confirmation that no tenders are open. Check the official AusTender link above.</p>';return;}}
-    if (!rows.length) {{cards.innerHTML='<p class="atm-sub">No matching notices in the retrieved feed. Try “All feed notices” or verify the official AusTender list.</p>';return;}}
+    if (!rows.length) {{cards.innerHTML='<p class="atm-sub">No matching notices for this scope. This does not mean there are no relevant current tenders: the RSS may omit buyer-agency names. Select “Broad Health keyword notices” or “All feed notices” to review unverified notices.</p>';return;}}
     for (const n of rows) {{
       const article = document.createElement('article'); article.className='atm-card';
-      article.innerHTML = `<div class="atm-tags"><span class="atm-tag">${{esc(n.offering)}}</span><span class="atm-tag">${{esc(n.signal)}}</span><span class="atm-tag">${{esc(n.health_relevance)}}</span></div>
+      article.innerHTML = `<div class="atm-tags"><span class="atm-tag">${{esc(n.offering)}}</span><span class="atm-tag">${{esc(n.signal)}}</span><span class="atm-tag">${{esc(n.addressability)}}</span></div>
       <h3>${{esc(n.title)}}</h3><p>${{esc(n.description.slice(0,260))}}</p>
+      <p class="atm-info"><strong>ATLAS agency mentioned:</strong> ${{esc(n.agency_mentions.join(', ')||'None identified')}} · <strong>Buyer not verified</strong></p>
+      <p class="atm-info"><strong>Addressability:</strong> ${{esc(n.addressability_reason)}}</p>
       <p><strong>Why it matters:</strong> ${{esc(n.rationale)}}</p><p class="atm-info">${{esc(n.match_evidence)}} · Published: ${{esc(n.published||'Not provided')}}</p>
       <a href="${{esc(n.url)}}" target="_blank" rel="noopener noreferrer">Verify notice and closing date on AusTender</a>`;
       cards.append(article);
