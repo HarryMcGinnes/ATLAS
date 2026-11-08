@@ -811,7 +811,7 @@ def atlas_navigation(html_text: str, industry: str, page: str = "overview", fres
         ("Competitive intelligence", "HealthCompetitiveIntelligence.html", "compare"),
         ("Contract explorer", "HealthContractExplorer.html", "explorer"),
         ("Agency intelligence", "HealthAgencyIntelligence.html", "agency"),
-        ("Methodology", "index.html#atlas-methodology", "methodology"),
+        ("Methodology", "Methodology.html", "methodology"),
     ]
     nav_links = "".join(
         f'<a href="{url}"' + (' aria-current="page"' if ident == page else '') + f'>{label}</a>'
@@ -1064,7 +1064,7 @@ def build_health_home(df: pd.DataFrame, value_col: str, output_path: Path) -> No
     .rows{margin-top:19px;display:flex;flex-direction:column;gap:13px}.agency-row{display:grid;grid-template-columns:minmax(160px,1.35fr) minmax(100px,2fr) 145px;gap:16px;align-items:center}
     .agency-name{font-size:12px;font-weight:800;line-height:1.35}.agency-bar{height:16px;background:#f0eaf5;border-radius:5px;overflow:hidden}.agency-bar>div{height:100%;background:#8756c2;border-radius:5px}
     .agency-num{text-align:right;font-size:13px;font-weight:800;white-space:nowrap}.agency-num span{display:block;color:var(--muted);font-size:11px;font-weight:400;margin-top:3px}.foot{font-size:12px;color:#6b7280;line-height:1.6}
-    .cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.tile{background:#fff;border:1px solid #e8e4ee;border-radius:14px;padding:19px;display:block;transition:transform .15s,border-color .15s}
+    .cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.tile{background:#fff;border:1px solid #e8e4ee;border-radius:14px;padding:19px;display:block;transition:transform .15s,border-color .15s}
     .tile:hover{transform:translateY(-2px);border-color:#b38bd6}.tile p{font-size:13px;color:#677085;margin:0 0 15px}.tile strong{font-size:13px;color:#7035a8}
     .steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:20px}.step{border:1px solid #e9e3f0;background:#faf9fc;border-radius:12px;padding:17px}
     .step .num{font-size:12px;font-weight:900;color:var(--purple);display:block;margin-bottom:10px}.step p{font-size:12px;color:#637085;margin:9px 0 0}
@@ -1072,10 +1072,11 @@ def build_health_home(df: pd.DataFrame, value_col: str, output_path: Path) -> No
     .formula code{font-size:12px;color:#562388;line-height:1.65;display:block;overflow-wrap:anywhere;white-space:normal}.formula p{font-size:12px;color:#687184;margin:9px 0 0}
     details{border-top:1px solid #eae5ef;padding:14px 0}summary{cursor:pointer;font-size:13px;font-weight:800}details p{font-size:13px;color:#637085;margin-bottom:0}
     .qbar{display:flex;flex-wrap:wrap;gap:12px;margin-top:15px}.q{background:#f6f3fb;border-radius:10px;padding:14px 18px;min-width:125px;flex:1}.q b{font-size:20px;display:block;margin-bottom:4px}.q span{color:#677085;font-size:11px}
+    @media(max-width:1100px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
     @media(max-width:870px){.kpis,.steps{grid-template-columns:repeat(2,minmax(0,1fr))}.cards{grid-template-columns:1fr}.agency-row{grid-template-columns:minmax(130px,1.3fr) minmax(70px,1fr) 110px;gap:8px}.agency-name{font-size:11px}.agency-num{font-size:11px}}
     @media(max-width:520px){main{padding:24px 13px}.panel{padding:17px}.kpis,.steps,.formulas{grid-template-columns:1fr}.agency-row{grid-template-columns:1fr 72px}.agency-bar{grid-column:1/-1;grid-row:2}.agency-num{grid-column:2;grid-row:1}}
     </style></head><body>
-    <header class="top"><nav class="nav" aria-label="Health navigation"><a class="brand" href="../">ATLAS</a><div class="nav-links"><a href="../">ATLAS home</a><a aria-current="page" href="index.html">Federal Health</a><a href="AccentureHealthTAMOverview.html">TAM overview</a><a href="HealthCompetitiveIntelligence.html">Competitive intelligence</a><a href="HealthContractExplorer.html">Contract explorer</a><a href="HealthAgencyIntelligence.html">Agency intelligence</a></div></nav><div class="meta">__FRESHNESS__</div></header>
+    <header class="top"><nav class="nav" aria-label="Health navigation"><a class="brand" href="../">ATLAS</a><div class="nav-links"><a href="../">ATLAS home</a><a aria-current="page" href="index.html">Federal Health</a><a href="AccentureHealthTAMOverview.html">TAM overview</a><a href="HealthCompetitiveIntelligence.html">Competitive intelligence</a><a href="HealthContractExplorer.html">Contract explorer</a><a href="HealthAgencyIntelligence.html">Agency intelligence</a><a href="Methodology.html">Methodology</a></div></nav><div class="meta">__FRESHNESS__</div></header>
     <main><section class="hero"><p class="eyebrow">FEDERAL HEALTH INTELLIGENCE</p><h1>Where is the Health market moving?</h1>
     <p class="lead">Explore Federal Health procurement through Accenture's addressable market, competitor positioning, agency concentration and individual contract evidence.</p></section>
     <section class="panel" aria-label="Market snapshot"><div class="section-head"><div><h2>Health market snapshot</h2><p>Historical AusTender contract values, not annual budget expenditure.</p></div>
@@ -1137,9 +1138,51 @@ def build_health_home(df: pd.DataFrame, value_col: str, output_path: Path) -> No
     </script></body></html>'''
     page = page.replace("__DATA__", safe_data).replace("__FRESHNESS__", source_meta)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    page, method_page = atlas_separate_methodology(page)
     output_path.write_text(atlas_option_a_style(page, "home"), encoding="utf-8")
+    method_path = output_path.with_name("Methodology.html")
+    method_path.write_text(atlas_option_a_style(method_page, "home"), encoding="utf-8")
+    print(f"Wrote standalone Health methodology: {method_path}")
     print(f"Wrote Health executive landing: {output_path}")
 
+
+
+def atlas_separate_methodology(page: str) -> tuple[str, str]:
+    """Publish the exact homepage methodology section on a dedicated page.
+
+    This only rearranges HTML. It does not alter the master, model, classification
+    logic, figures, or source dates. The homepage retains a compact CTA.
+    """
+    import re
+    start_marker = '<section class="panel" id="atlas-methodology">'
+    end_marker = '<section class="panel"><h2>Data confidence</h2>'
+    start = page.find(start_marker)
+    end = page.find(end_marker, start)
+    if start < 0 or end < 0:
+        raise RuntimeError('Could not isolate Health methodology section for separate page')
+    section = page[start:end]
+    home = page[:start] + (
+        '<section class="panel" aria-label="ATLAS methodology">'
+        '<h2>Classification methodology</h2>'
+        '<p class="foot">Review the Health agency scope, addressability rules, '
+        'Service Offering definitions and data limitations.</p>'
+        '<a class="tile" href="Methodology.html" '
+        'style="display:inline-block;padding:12px 18px;font-weight:800;color:#7035a8">'
+        'Open methodology</a></section>') + page[end:]
+    head = page[:page.index('</head>') + len('</head>')]
+    header_start = page.index('<header class="top">')
+    header_end = page.index('</header>', header_start) + len('</header>')
+    header = page[header_start:header_end].replace('aria-current="page" href="index.html"', 'href="index.html"')
+    header = header.replace('<a href="Methodology.html">Methodology</a>', '<a href="Methodology.html" aria-current="page">Methodology</a>')
+    method = (head + '<body>' + header + '<main>'
+              '<section class="hero"><p class="eyebrow">FEDERAL HEALTH INTELLIGENCE / METHODOLOGY</p>'
+              '<h1>ATLAS Health methodology</h1>'
+              '<p class="lead">How ATLAS defines addressability, categorises Service Offerings and handles uncertainty.</p>'
+              '</section>' + section +
+              '<p class="foot">Methodological explanations reflect the dashboard documentation; '
+              'the upstream classifier remains authoritative for exact rule ordering and thresholds.</p>'
+              '</main></body></html>')
+    return home, method
 
 def atlas_option_a_style(html_text: str, page: str) -> str:
     """Presentation-only Option A shell. Existing analytics and event handlers remain untouched."""
@@ -1171,21 +1214,8 @@ def atlas_option_a_style(html_text: str, page: str) -> str:
                   + eyebrow + '</div>' + block + '</div><span class="atlas-option-a-chip">'
                   + chip + '</span></div>')
         html_text = html_text[:match.start()] + header + html_text[match.end():]
-    # Tabs are navigation anchors within the current page, not competing data views.
-    # Keep the Explorer's separate view tabs unchanged.
-    tabs = {
-        'overview': '<a class="active" href="#atlas-overview-main">TAM analysis</a><a href="HealthCompetitiveIntelligence.html">Competitive intelligence</a><a href="HealthAgencyIntelligence.html">Agency intelligence</a><a href="HealthContractExplorer.html">Contract explorer</a>',
-        'compare': '<a class="active" href="#atlas-compare-main">Supplier comparison</a><a href="HealthAgencyIntelligence.html">Agency intelligence</a><a href="HealthContractExplorer.html">Contract explorer</a>',
-        'agency': '<a class="active" href="#atlas-agency-main">Agency analysis</a><a href="HealthCompetitiveIntelligence.html">Competitive intelligence</a><a href="HealthContractExplorer.html">Contract explorer</a>',
-    }
-    tabbar = '<nav class="atlas-option-a-tabs" aria-label="Health intelligence views">' + tabs[page] + '</nav>'
-    where = html_text.find('</div>', html_text.find('class="atlas-option-a-heading"'))
-    # locate the outer closing div by anchoring after the chip
-    marker = '</span></div>'
-    idx = html_text.find(marker, html_text.find('class="atlas-option-a-heading"'))
-    if idx >= 0:
-        idx += len(marker)
-        html_text = html_text[:idx] + tabbar + html_text[idx:]
+    # Primary Health navigation is already in the header. Do not inject a
+    # second navigation row; preserve internal tabs in Contract Explorer.
     if page == 'overview':
         html_text = html_text.replace('<section class="atlas-market-controls"', '<section id="atlas-overview-main" class="atlas-market-controls atlas-option-a-sticky"', 1)
         # If the TAM/All Market selector is the second-level market controls, make its placement obvious.
