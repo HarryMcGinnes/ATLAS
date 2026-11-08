@@ -55,7 +55,7 @@ def payload(df):
 HTML = r'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ATLAS | Health Agency Intelligence</title>
 <script src="https://cdn.plot.ly/plotly-3.5.0.min.js"></script><style>
 :root{--purple:#a100ff;--ink:#1d1830;--muted:#667085;--border:#e5e1eb}*{box-sizing:border-box}body{margin:0;font:14px Arial,Helvetica,sans-serif;background:#f7f6fa;color:var(--ink)}a{color:inherit;text-decoration:none}header{background:#11101c;color:white;padding:16px max(20px,calc((100vw - 1260px)/2))}nav{display:flex;align-items:center;gap:20px;flex-wrap:wrap}nav a{font-weight:700;font-size:13px}nav a:not(.brand){padding:9px 12px;border-radius:9px;color:#e8e3ef}nav a[aria-current="page"]{background:#6730ad;color:#fff}nav a:hover{background:#6730ad}nav .brand{font-size:24px;letter-spacing:.06em;margin-right:18px}main{max-width:1500px;margin:auto;padding:28px 20px 70px}h1{font-size:32px;margin:0 0 8px}h2{font-size:19px;margin:0 0 10px}p{line-height:1.5}.sub{color:var(--muted);margin:0 0 20px}.panel{background:#fff;border:1px solid var(--border);border-radius:14px;padding:20px;margin:16px 0}.toolbar{display:flex;gap:12px;align-items:end;flex-wrap:wrap}.field{flex:1;min-width:220px}.field label{display:block;font-size:12px;color:var(--muted);font-weight:bold;margin-bottom:7px}select,button{font:inherit;padding:11px 12px;border:1px solid #cbc6d6;border-radius:9px;background:#fff;cursor:pointer}select{width:100%}button.active{background:var(--purple);color:white;border-color:var(--purple)}.modes{display:flex;gap:7px;flex-wrap:wrap}.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.kpi{background:#fff;border:1px solid var(--border);padding:18px;border-radius:12px}.kpi span{display:block;color:var(--muted);font-size:12px}.kpi strong{display:block;font-size:25px;margin:10px 0}.chart{min-height:350px}.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}.note{color:var(--muted);font-size:12px}.matrix{overflow:auto;max-height:650px}table{border-collapse:collapse;width:100%;font-size:12px}th,td{padding:11px 12px;border-bottom:1px solid #edeaf1;text-align:right;white-space:nowrap}th:first-child,td:first-child{text-align:left;position:sticky;left:0;background:white}thead th{position:sticky;top:0;background:#f2eef8;z-index:2}thead th:first-child{z-index:3;background:#f2eef8}.bar{height:8px;background:#eee8f5;border-radius:9px;overflow:hidden;margin-top:6px}.bar>i{display:block;height:100%;background:var(--purple)}@media(max-width:850px){.two,.kpis{grid-template-columns:1fr 1fr}}@media(max-width:560px){.two,.kpis{grid-template-columns:1fr}}
-</style></head><body><header><nav><a class="brand" href="../">ATLAS</a><a href="index.html">Health home</a><a href="AccentureHealthTAMOverview.html">TAM overview</a><a href="HealthCompetitiveIntelligence.html">Competitive intelligence</a><a href="HealthContractExplorer.html">Contract explorer</a><a href="HealthAgencyIntelligence.html" aria-current="page">Agency intelligence</a><a href="index.html#atlas-methodology">Methodology</a></nav></header><main>
+</style></head><body><header><nav><a class="brand" href="../">ATLAS</a><a href="index.html">Health home</a><a href="AccentureHealthTAMOverview.html">TAM overview</a><a href="HealthCompetitiveIntelligence.html">Competitive intelligence</a><a href="HealthContractExplorer.html">Contract explorer</a><a href="HealthAgencyIntelligence.html" aria-current="page">Agency intelligence</a><a href="Methodology.html">Methodology</a></nav></header><main>
 <h1>Federal Health Agency Intelligence</h1><p class="sub">What agencies buy, who wins the work, and where suppliers compete. Built __STAMP__ (Australia/Sydney).</p>
 <div class="panel toolbar"><div class="field"><label for="agency">Agency</label><select id="agency"></select></div><div class="modes"><button id="tam" class="active" aria-pressed="true">Accenture TAM</button><button id="all" aria-pressed="false">All Federal Health Market</button><button id="clear">Clear filters</button></div></div>
 <div class="kpis"><div class="kpi"><span>Agency contract value</span><strong id="value">–</strong></div><div class="kpi"><span>Contract notices</span><strong id="contracts">–</strong></div><div class="kpi"><span>Suppliers</span><strong id="suppliers">–</strong></div><div class="kpi"><span>Largest supplier share</span><strong id="topshare">–</strong></div></div>
@@ -112,21 +112,8 @@ def atlas_option_a_style(html_text: str, page: str) -> str:
                   + eyebrow + '</div>' + block + '</div><span class="atlas-option-a-chip">'
                   + chip + '</span></div>')
         html_text = html_text[:match.start()] + header + html_text[match.end():]
-    # Tabs are navigation anchors within the current page, not competing data views.
-    # Keep the Explorer's separate view tabs unchanged.
-    tabs = {
-        'overview': '<a class="active" href="#atlas-overview-main">TAM analysis</a><a href="HealthCompetitiveIntelligence.html">Competitive intelligence</a><a href="HealthAgencyIntelligence.html">Agency intelligence</a><a href="HealthContractExplorer.html">Contract explorer</a>',
-        'compare': '<a class="active" href="#atlas-compare-main">Supplier comparison</a><a href="HealthAgencyIntelligence.html">Agency intelligence</a><a href="HealthContractExplorer.html">Contract explorer</a>',
-        'agency': '<a class="active" href="#atlas-agency-main">Agency analysis</a><a href="HealthCompetitiveIntelligence.html">Competitive intelligence</a><a href="HealthContractExplorer.html">Contract explorer</a>',
-    }
-    tabbar = '<nav class="atlas-option-a-tabs" aria-label="Health intelligence views">' + tabs[page] + '</nav>'
-    where = html_text.find('</div>', html_text.find('class="atlas-option-a-heading"'))
-    # locate the outer closing div by anchoring after the chip
-    marker = '</span></div>'
-    idx = html_text.find(marker, html_text.find('class="atlas-option-a-heading"'))
-    if idx >= 0:
-        idx += len(marker)
-        html_text = html_text[:idx] + tabbar + html_text[idx:]
+    # Primary Health navigation is already in the header. Do not inject a
+    # second navigation row; preserve internal tabs in Contract Explorer.
     if page == 'overview':
         html_text = html_text.replace('<section class="atlas-market-controls"', '<section id="atlas-overview-main" class="atlas-market-controls atlas-option-a-sticky"', 1)
         # If the TAM/All Market selector is the second-level market controls, make its placement obvious.
