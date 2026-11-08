@@ -3,6 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import os
+from datetime import datetime
+from urllib.request import Request, urlopen
+from urllib.parse import urlparse
+import xml.etree.ElementTree as ET
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 import pandas as pd
@@ -38,6 +44,8 @@ def parse_args() -> argparse.Namespace:
         default="total",
         help="Value used in KPIs and tables.",
     )
+    p.add_argument("--atm-rss-file", default="", help="Optional saved AusTender RSS XML for offline builds and tests.")
+    p.add_argument("--atm-timeout", type=int, default=12, help="Timeout for official AusTender ATM RSS fetch.")
     return p.parse_args()
 
 
@@ -325,7 +333,123 @@ def html_escape(value: object) -> str:
     )
 
 
-def build_html(payload: dict[str, object], output_path: Path, value_mode: str, freshness: str = "") -> None:
+# ATLAS open-tender opportunity signals are heuristics, NOT procurement forecasts.
+ATM_RSS_URL = "https://www.tenders.gov.au/public_data/rss/rss.xml"
+ATM_SIGNALS = {
+    "SI & Engineering": ("system integration", "software development", "digital transformation", "application development", "platform modernisation", "systems integration", "implementation", "software engineering", "enterprise architecture"),
+    "Data, AI & Automation": ("data analytics", "data platform", "artificial intelligence", "machine learning", "data governance", "analytics", "automation", "business intelligence", "data warehouse"),
+    "Cloud Infrastructure & Cyber": ("cyber security", "cybersecurity", "cloud", "security operations", "identity management", "zero trust", "infrastructure migration", "penetration testing"),
+    "Managed Services & Operations": ("managed services", "service desk", "application support", "ict support", "service management", "operational support", "help desk"),
+    "Strategy, Transformation & Advisory": ("strategy", "transformation advisory", "consulting", "business case", "program assurance", "operating model", "change management", "strategic review"),
+}
+ATM_HEALTH_HINTS = (
+    "health", "aged care", "medicare", "hospital", "clinical", "medical", "pharmaceutical", "disability", "ndis",
+    "human services", "social services", "mental health", "therapeutic goods", "healthcare", "health funding",
+    "national health", "health and aged care", "health, disability", "digital health",
+)
+
+
+def _rss_txt(node: ET.Element, name: str) -> str:
+    found = node.find(name)
+    return "" if found is None else " ".join((found.text or "").split())
+
+
+def load_atm_feed(rss_file: str = "", timeout: int = 12) -> tuple[list[dict[str, str]], str, str]:
+    """Fetch public ATM RSS; a feed entry is NOT proof an ATM is still open."""
+    if rss_file:
+        raw = Path(rss_file).read_bytes()
+        source = f"Local RSS snapshot: {Path(rss_file).name}"
+    else:
+        try:
+            request = Request(ATM_RSS_URL, headers={"User-Agent": "ATLAS-Public-Procurement-Analytics/1.0 (+https://www.tenders.gov.au)", "Accept": "application/rss+xml,application/xml,text/xml,*/*"})
+            with urlopen(request, timeout=max(1, timeout)) as response:
+                raw = response.read(5_000_001)
+            if len(raw) > 5_000_000:
+                raise ValueError("AusTender RSS exceeded the safe 5 MB limit")
+            source = "Official AusTender ATM RSS"
+        except Exception as exc:
+            return [], "Unavailable", f"Unable to retrieve AusTender ATM RSS ({type(exc).__name__}). No live opportunities displayed; try again on the next site build."
+    try:
+        root = ET.fromstring(raw)
+        nodes = root.findall(".//item")
+        if not nodes:
+            # Atom-style feed fallback, including namespaced entries.
+            nodes = [n for n in root.iter() if n.tag.rsplit('}', 1)[-1] == "entry"]
+        results = []
+        seen = set()
+        for item in nodes:
+            title = _rss_txt(item, "title")
+            desc = _rss_txt(item, "description") or _rss_txt(item, "summary")
+            link = _rss_txt(item, "link")
+            if not link:
+                e = item.find("{http://www.w3.org/2005/Atom}link")
+                link = (e.attrib.get("href") or "") if e is not None else ""
+            parsed = urlparse(link)
+            if parsed.scheme != "https" or parsed.hostname not in {"www.tenders.gov.au", "tenders.gov.au"}:
+                continue
+            ident = _rss_txt(item, "guid") or link
+            if not title or ident in seen:
+                continue
+            seen.add(ident)
+            published = _rss_txt(item, "pubDate") or _rss_txt(item, "published")
+            results.append({"title": title, "description": re.sub(r"<[^>]+>", " ", desc)[:800], "url": link, "ref": ident[:180], "published": published})
+        ts = datetime.now(ZoneInfo("Australia/Sydney")).strftime("%d %b %Y %H:%M %Z")
+        return results, ts, f"{source} · {len(results)} records retrieved. RSS may omit some open ATMs and retain closed notices; verify all notices and closing dates on AusTender."
+    except ET.ParseError:
+        return [], "Unavailable", "AusTender ATM RSS could not be parsed; no tenders displayed."
+
+
+def classify_atm(text: str) -> tuple[str, str]:
+    low = text.casefold()
+    matches = {offering: sum(1 for keyword in words if keyword in low) for offering, words in ATM_SIGNALS.items()}
+    best = sorted(matches.items(), key=lambda p: (-p[1], p[0]))[0]
+    if best[1] == 0:
+        return "Needs review", "No specific ATLAS offering keywords found"
+    return best[0], f"Matched {best[1]} offering keyword(s) in published text"
+
+
+def build_atm_insights(df: pd.DataFrame, notices: list[dict[str, str]]) -> list[dict[str, object]]:
+    # Accenture presence is defined by historic awarded CNs, never inferred from an ATM.
+    if "is_accenture" in df.columns:
+        acc = parse_bool_series(df["is_accenture"])
+    else:
+        acc = df[SUPPLIER_GROUP_COL].astype(str).str.contains(r"\baccenture\b", case=False, regex=True, na=False)
+    eligible = df["is_addressable"]
+    market = df.loc[eligible].groupby(CAPABILITY_COL)["_total_value"].sum().to_dict()
+    won = df.loc[eligible & acc].groupby(CAPABILITY_COL)["_total_value"].sum().to_dict()
+    output = []
+    for notice in notices:
+        desc = notice["title"] + " " + notice["description"]
+        offering, explanation = classify_atm(desc)
+        health_hint = any(term in desc.casefold() for term in ATM_HEALTH_HINTS)
+        # Text hints do not establish buying-agency identity.
+        total = float(market.get(offering, 0))
+        existing = float(won.get(offering, 0))
+        if offering == "Needs review":
+            signal = "Manual qualification"
+            rationale = "Insufficient description to connect this ATM to a defined ATLAS Service Offering."
+        elif existing <= 0:
+            signal = "Potential whitespace"
+            rationale = "No historical Accenture-awarded value in this Health Service Offering is identifiable in the current ATLAS master."
+        elif total > 0 and existing / total >= 0.05:
+            signal = "Established Health presence"
+            rationale = "Accenture has recorded Health wins in this Service Offering (at least 5% of its historical addressable value)."
+        else:
+            signal = "Expansion opportunity"
+            rationale = "Accenture has some historical Health wins in this Service Offering, but below 5% of its historical addressable value."
+        output.append({**notice, "offering": offering, "match_evidence": explanation,
+                       "health_relevance": "Health keyword match" if health_hint else "Health relevance unverified",
+                       "health_candidate": health_hint, "signal": signal, "rationale": rationale,
+                       "health_market_value": round(total, 2), "accenture_wins_value": round(existing, 2)})
+    return output
+
+
+def atm_section(df: pd.DataFrame, rss_file: str, timeout: int) -> tuple[str, str, str]:
+    notices, ts, status = load_atm_feed(rss_file, timeout)
+    insights = build_atm_insights(df, notices)
+    return json.dumps(insights, ensure_ascii=True).replace("</", "<\\/"), ts, status
+
+def build_html(payload: dict[str, object], output_path: Path, value_mode: str, freshness: str = "", atm_json: str = "[]", atm_timestamp: str = "Unavailable", atm_status: str = "") -> None:
     all_agencies = "All Health agencies"
     agency_options = "\n".join(
         [f'<option value="{html_escape(all_agencies)}">{html_escape(all_agencies)}</option>']
@@ -405,6 +529,15 @@ select,input{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;
 .atlas-market-switch button:focus-visible{{outline:3px solid #805ad5;outline-offset:2px}}
 #marketMode{{display:none}}
 @media(max-width:650px){{.atlas-market{{padding:17px}}.atlas-market-switch{{width:100%}}.atlas-market-switch button{{flex:1;padding:12px 8px;font-size:12px}}}}
+
+/* Distinct open-opportunities intelligence; isolated from historical CN filters. */
+.atm-area{{margin:30px 0 12px;background:#fff;border:1px solid var(--line);border-radius:16px;padding:22px}}
+.atm-area h2{{font-size:23px;margin:0 0 8px}} .atm-sub{{color:#526070;font-size:13px;line-height:1.6}}
+.atm-controls{{display:flex;flex-wrap:wrap;gap:10px;margin:17px 0}} .atm-controls select,.atm-controls input{{width:auto;min-width:190px;flex:1}}
+.atm-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}} .atm-card{{background:#fcfcfe;border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0}}
+.atm-card h3{{font-size:16px;line-height:1.35;margin:8px 0}} .atm-tags{{display:flex;gap:6px;flex-wrap:wrap}} .atm-tag{{font-size:11px;padding:5px 8px;border-radius:8px;background:#f1e9ff;color:#6132a1;font-weight:700}}
+.atm-card p{{font-size:12px;line-height:1.5;color:#475467}} .atm-card a{{color:#6c22b0;font-weight:700;text-decoration:underline}} .atm-info{{color:#667085;font-size:11px}}
+@media(max-width:850px){{.atm-grid{{grid-template-columns:1fr}}}}
 </style>
 </head>
 <body>
@@ -451,10 +584,59 @@ select,input{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;
 <div class="summary-line" id="summaryLine"></div>
 <p class="method">Dates marked (inferred) use the earliest credible recorded start and latest credible recorded end across available CN family members. This is an observed range, not confirmation of the current legal contract term.</p>
 <div id="yearContainer"></div>
+
+<section class="atm-area" id="open-tenders">
+<h2>Open Tenders / Approaches to Market</h2>
+<p class="atm-sub">Explore opportunities appearing in the AusTender public RSS feed (not necessarily every currently open ATM) and how their subject matter relates to Accenture’s historical Federal Health contract wins. <strong>Signals are descriptive, not bid recommendations or win probabilities.</strong> ATM notices are separate from awarded CNs.</p>
+<p class="atm-info">ATM feed retrieved: {html_escape(atm_timestamp)} · {html_escape(atm_status)} <a href="https://www.tenders.gov.au/?event=public.ATM.list" target="_blank" rel="noopener noreferrer">Check official live ATM list</a></p>
+<div class="atm-controls">
+ <input type="search" id="atmSearch" placeholder="Search open opportunities..." aria-label="Search open tenders">
+ <select id="atmScope" aria-label="Health relevance"><option value="health">Health keyword candidates</option><option value="all">All feed notices</option></select>
+ <select id="atmOffering" aria-label="ATM Service Offering"><option value="all">All Service Offerings</option></select>
+ <select id="atmSignal" aria-label="Opportunity signal"><option value="all">All opportunity signals</option></select>
+</div>
+<div id="atmCount" class="atm-info"></div><div id="atmCards" class="atm-grid"></div>
+<p class="atm-sub">Methodology: Service Offering inferred from published title/summary keyword evidence. Historical Accenture presence is calculated from addressable Health CNs in this build, using signed values. It is <strong>not</strong> evidence of incumbency with the ATM buyer. “Potential whitespace” means no historical Accenture value is identified for that offering; “Established Health presence” means ≥5% of historical offering value; otherwise a nonzero presence is an “Expansion opportunity”. Agency, tender closing date, budget, and current open status must be verified at the linked AusTender notice. Source: Department of Finance AusTender ATM RSS.</p>
+</section>
+
 <p class="method">The dashboard supports both Accenture TAM and All Federal Health Market. Ongoing contracts are shown once in the top bracket; remaining contracts are grouped by their recorded financial year. Supplier and Service Offering filters are ranked by addressable spend within the current agency scope.</p>
 </div>
 
 <script>
+
+const ATM_NOTICES = {atm_json};
+(function initATM() {{
+  const search = document.getElementById('atmSearch');
+  const scope = document.getElementById('atmScope');
+  const offer = document.getElementById('atmOffering');
+  const signal = document.getElementById('atmSignal');
+  const cards = document.getElementById('atmCards');
+  const count = document.getElementById('atmCount');
+  const esc = x => String(x ?? '').replace(/[&<>"']/g, ch => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}})[ch]);
+  for (const [sel, key] of [[offer,'offering'],[signal,'signal']]) {{
+    for (const v of [...new Set(ATM_NOTICES.map(n => n[key]))].sort()) {{
+      const option = document.createElement('option'); option.value=v; option.textContent=v;sel.append(option);
+    }}
+  }}
+  function renderATM() {{
+    const q = search.value.trim().toLowerCase();
+    const rows = ATM_NOTICES.filter(n => (scope.value === 'all' || n.health_candidate) && (offer.value==='all'||offer.value===n.offering) && (signal.value==='all'||signal.value===n.signal) && (!q||(n.title+' '+n.description+' '+n.ref).toLowerCase().includes(q)));
+    count.textContent = `${{rows.length}} matching notices of ${{ATM_NOTICES.length}} feed records. Listings are not independently confirmed open; check AusTender for deadlines.`;
+    cards.replaceChildren();
+    if (!rows.length) {{cards.innerHTML='<p class="atm-sub">No matching notices available. Try “All feed notices”, or check the source link if the feed is unavailable.</p>';return;}}
+    for (const n of rows) {{
+      const article = document.createElement('article'); article.className='atm-card';
+      article.innerHTML = `<div class="atm-tags"><span class="atm-tag">${{esc(n.offering)}}</span><span class="atm-tag">${{esc(n.signal)}}</span><span class="atm-tag">${{esc(n.health_relevance)}}</span></div>
+      <h3>${{esc(n.title)}}</h3><p>${{esc(n.description.slice(0,260))}}</p>
+      <p><strong>Why it matters:</strong> ${{esc(n.rationale)}}</p><p class="atm-info">${{esc(n.match_evidence)}} · Published: ${{esc(n.published||'Not provided')}}</p>
+      <a href="${{esc(n.url)}}" target="_blank" rel="noopener noreferrer">Verify notice and closing date on AusTender</a>`;
+      cards.append(article);
+    }}
+  }}
+  for (const el of [search,scope,offer,signal]) el.addEventListener(el===search?'input':'change',renderATM);
+  renderATM();
+}})();
+
 const DATA = {json.dumps(payload, ensure_ascii=False)};
 const ALL_AGENCIES = "All Health agencies";
 const DEFAULT_AGENCY = ALL_AGENCIES;
@@ -746,7 +928,9 @@ def main() -> None:
     df, value_col = load_data(input_path, args.value_mode)
     payload = build_payload(df)
     html_path = output_dir / "HealthContractExplorer.html"
-    build_html(payload, html_path, args.value_mode, freshness=atlas_freshness(df))
+    atm_json, atm_timestamp, atm_status = atm_section(df, args.atm_rss_file, args.atm_timeout)
+    build_html(payload, html_path, args.value_mode, freshness=atlas_freshness(df), atm_json=atm_json, atm_timestamp=atm_timestamp, atm_status=atm_status)
+    print("ATM intelligence:", atm_status)
 
     agency_audit = (
         df.groupby([AGENCY_COL, "_division"], dropna=False)
