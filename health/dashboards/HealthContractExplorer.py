@@ -623,13 +623,78 @@ select,input{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;
 .atm-card h3{{font-size:16px;line-height:1.35;margin:8px 0}} .atm-tags{{display:flex;gap:6px;flex-wrap:wrap}} .atm-tag{{font-size:11px;padding:5px 8px;border-radius:8px;background:#f1e9ff;color:#6132a1;font-weight:700}}
 .atm-card p{{font-size:12px;line-height:1.5;color:#475467}} .atm-card a{{color:#6c22b0;font-weight:700;text-decoration:underline}} .atm-info{{color:#667085;font-size:11px}}
 @media(max-width:850px){{.atm-grid{{grid-template-columns:1fr}}}}
+
+/* OPTION A: two complete, independently filtered workspaces. */
+.explorer-heading{{display:flex;justify-content:space-between;align-items:center;gap:20px;margin:10px 0 22px}}
+.explorer-eyebrow{{font-weight:800;font-size:11px;letter-spacing:.12em;color:#7811b2;margin-bottom:9px}}
+.explorer-heading h1{{letter-spacing:-.035em}}.explorer-heading .subtitle{{margin:0}}.explorer-build-note{{white-space:nowrap;border:1px solid #e4daed;border-radius:99px;padding:8px 12px;font-size:11px;color:#694b78;background:#faf6ff}}
+.explorer-tabs{{display:flex;gap:8px;border-bottom:1px solid #e4dfea}}
+.explorer-tab{{border:1px solid #e4dfea;border-bottom:0;border-radius:12px 12px 0 0;background:#eeebf2;color:#5a5263;font-weight:750;padding:15px 26px;cursor:pointer;font-size:14px}}
+.explorer-tab.active,.explorer-tab[aria-selected="true"]{{background:#fff;color:#6b159a;border-top:3px solid var(--purple);padding-top:13px}}
+.explorer-tab:focus-visible{{outline:3px solid #9f65cf;outline-offset:2px}}
+.explorer-view{{padding-top:16px}}.explorer-view[hidden]{{display:none!important}}
+.explorer-section-heading{{display:flex;gap:18px;align-items:flex-start;justify-content:space-between;margin-bottom:18px}}
+.explorer-section-heading h2{{font-size:23px;margin:0 0 6px}}.explorer-section-heading p{{margin:0;max-width:900px}}
+.explorer-subtle{{font-size:11px;color:#786f82;white-space:nowrap;padding-top:6px}}
+#viewTenders .atm-area{{border:0;background:transparent;padding:0;margin:0}}
+#viewTenders .atm-controls{{position:sticky;top:0;z-index:14;display:flex;flex-wrap:wrap;gap:10px;padding:14px;background:#fff;border:1px solid #e4dfea;border-radius:13px;box-shadow:0 7px 22px rgba(31,11,50,.08);margin:16px 0 20px}}
+#viewTenders .atm-controls input,#viewTenders .atm-controls select{{height:42px;min-width:170px;flex:1}}
+#viewTenders .atm-controls input{{flex:1.4;min-width:240px}}
+#viewTenders .atm-controls .clear-btn{{height:42px}}
+.atm-kpis{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:13px;margin:0 0 25px}}
+.atm-stat{{background:#fff;border:1px solid var(--line);border-radius:13px;padding:18px;min-width:0}}
+.atm-stat span,.atm-stat small{{display:block;font-size:11px;color:#667085}}.atm-stat span{{font-weight:700}}.atm-stat strong{{font-size:27px;display:block;margin:7px 0 3px;color:#2e1540}}
+.explorer-list-heading{{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:0 0 12px}}.explorer-list-heading h3{{margin:0;font-size:19px}}
+#viewTenders .atm-grid{{display:block;background:white;border:1px solid var(--line);border-radius:13px;overflow:hidden}}
+#viewTenders .atm-card{{border:0;border-radius:0;border-bottom:1px solid #eee9f2;background:white;padding:0}}
+#viewTenders .atm-card:last-child{{border-bottom:0}}
+.atm-card-summary{{list-style:none;padding:17px 19px;cursor:pointer;display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1.1fr) minmax(0,1.1fr) auto;gap:12px;align-items:center}}
+.atm-card-summary::-webkit-details-marker{{display:none}}.atm-card-summary:hover{{background:#faf8fd}}
+.atm-card-title{{display:block;font-size:14px;font-weight:750;color:#24162e;margin-bottom:4px;line-height:1.35}}
+.atm-card-meta{{display:block;font-size:11px;color:#667085;line-height:1.4}}
+.atm-card-summary .atm-tag{{display:inline-block;margin:0}}.atm-expand{{color:#7529a6;font-weight:700;font-size:12px;white-space:nowrap}}
+.atm-card-details{{padding:5px 20px 19px;background:#fcfaff;border-top:1px solid #eee9f2}}
+.atm-card-details p{{max-width:1100px}}.atm-info{{line-height:1.5}}
+.explorer-method{{background:#fff;border:1px solid #e8e3ed;border-radius:12px;padding:15px 18px;margin:18px 0;color:#667085;font-size:12px}}
+.explorer-method summary{{cursor:pointer;font-weight:750;color:#6c328d;font-size:13px}}.explorer-method p{{line-height:1.65}}
+#viewHistorical .toolbar{{position:sticky;top:0;z-index:14;box-shadow:0 7px 22px rgba(31,11,50,.09)}}
+#viewHistorical .atlas-market{{margin:0 0 19px;padding:18px 21px}}
+#viewHistorical .atlas-market-copy h2{{font-size:17px}}
+#viewHistorical .insight-grid{{margin-top:20px}}
+@media(max-width:1100px){{.atm-kpis{{grid-template-columns:repeat(2,minmax(0,1fr))}}.atm-card-summary{{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) auto}}.atm-card-summary .atm-position{{display:none}}}}
+@media(max-width:700px){{.explorer-heading{{display:block}}.explorer-build-note,.explorer-subtle{{display:none}}.explorer-tabs{{gap:5px}}.explorer-tab{{flex:1;padding:13px 8px;font-size:12px}}.explorer-section-heading{{display:block}}.atm-kpis{{grid-template-columns:repeat(2,minmax(0,1fr))}}.atm-card-summary{{grid-template-columns:1fr auto}}.atm-card-summary .atm-position,.atm-card-summary .atm-address{{display:none}}#viewTenders .atm-controls{{position:relative}}#viewHistorical .toolbar{{position:relative}}}}
 </style>
 </head>
 <body>
 <div class="wrap">
-<h1>Health Contract Explorer</h1>
-<p class="subtitle">Explore Federal Health procurement by agency, supplier, Service Offering and contract in either Accenture TAM or All Market.</p>
-<section class="executive-summary"><h2>Executive summary</h2><p>This dashboard provides an interactive view of the Accenture-addressable Health market. Select an agency to understand where TAM is concentrated, which suppliers are winning addressable work, and which individual contracts underpin that spend.</p></section>
+<div class="explorer-heading"><div><div class="explorer-eyebrow">FEDERAL HEALTH INTELLIGENCE / EXPLORER</div><h1>Health Contract Explorer</h1><p class="subtitle">Find current market opportunities or investigate historical contract awards, without losing your filters.</p></div><span class="explorer-build-note">ATLAS · AusTender intelligence</span></div>
+<div class="explorer-tabs" role="tablist" aria-label="Explorer view">
+  <button type="button" id="tabTenders" class="explorer-tab active" role="tab" aria-controls="viewTenders" aria-selected="true" data-explorer-view="tenders">Open Tenders</button>
+  <button type="button" id="tabHistorical" class="explorer-tab" role="tab" aria-controls="viewHistorical" aria-selected="false" data-explorer-view="historical">Historical Contracts</button>
+</div>
+<div id="viewTenders" class="explorer-view" role="tabpanel" aria-labelledby="tabTenders">
+<section class="atm-area" id="open-tenders">
+<div class="explorer-section-heading"><div><h2>Open Tenders / Approaches to Market</h2><p class="atm-sub">Opportunity signals based on ATLAS service-offering evidence and historical Health awards. Agency mentions are <strong>not verified buyers</strong>.</p></div><span class="explorer-subtle">Current feed snapshot · status unverified</span></div>
+<p class="atm-info">ATM feed retrieved: {html_escape(atm_timestamp)} · {html_escape(atm_status)} <a href="https://www.tenders.gov.au/?event=public.ATM.list" target="_blank" rel="noopener noreferrer">Check official live ATM list</a></p>
+<div class="atm-controls" aria-label="Opportunity filters">
+ <input type="search" id="atmSearch" placeholder="Search tenders, agencies or service offerings..." aria-label="Search open tenders">
+ <select id="atmScope" aria-label="ATM scope"><option value="scope">ATLAS agency + service candidates</option><option value="agency">ATLAS agency mentioned (all)</option><option value="health">Broad Health keyword notices</option><option value="all">All feed notices</option></select>
+ <select id="atmOffering" aria-label="ATM Service Offering"><option value="all">All Service Offerings</option></select>
+ <select id="atmSignal" aria-label="Opportunity signal"><option value="all">All opportunity signals</option></select>
+ <button id="atmReset" class="clear-btn" type="button">Clear filters</button>
+</div>
+<div class="atm-kpis" aria-label="Opportunity snapshot">
+ <div class="atm-stat"><span>Feed notices</span><strong id="atmKpiFeed">—</strong><small>Not confirmed open</small></div>
+ <div class="atm-stat"><span>ATLAS agency mentions</span><strong id="atmKpiAgency">—</strong><small>Buyer unverified</small></div>
+ <div class="atm-stat"><span>Service candidates</span><strong id="atmKpiCandidate">—</strong><small>Preliminary assessment</small></div>
+ <div class="atm-stat"><span>Showing</span><strong id="atmKpiVisible">—</strong><small>Filtered notices</small></div>
+</div>
+<div class="explorer-list-heading"><h3>Opportunity watchlist</h3><span id="atmCount" class="atm-info"></span></div><div id="atmCards" class="atm-grid"></div>
+<details class="explorer-method"><summary>How opportunity categorisation works · methodology &amp; limitations</summary><p class="atm-sub">Methodology: The configured ATLAS agency names must be explicitly mentioned in RSS title/summary for the first two filters. Mentions do not prove buyer identity; missing mentions do not prove an ATM is outside scope. Addressability is preliminary: specific service keywords are "Potentially addressable", goods-only indicators are "Likely non-addressable", other cases require manual review. Service Offering inferred from published title/summary keyword evidence. Historical Accenture presence is calculated from addressable Health CNs in this build, using signed values. It is <strong>not</strong> evidence of incumbency with the ATM buyer. “Potential whitespace” means no historical Accenture value is identified for that offering; “Established Health presence” means ≥5% of historical offering value; otherwise a nonzero presence is an “Expansion opportunity”. Agency, tender closing date, budget, and current open status must be verified at the linked AusTender notice. Source: Department of Finance AusTender ATM RSS.</p></details>
+</section>
+</div>
+<div id="viewHistorical" class="explorer-view" role="tabpanel" aria-labelledby="tabHistorical" hidden>
+<div class="explorer-section-heading historical-heading"><div><h2>Historical Contracts</h2><p class="atm-sub">Explore awarded contract notices by agency, supplier, Service Offering and financial year. All original contract-level functionality is retained.</p></div><span class="explorer-subtle">Signed contract values</span></div>
 <section class="atlas-market" aria-label="Market selection">
   <div class="atlas-market-copy"><h2>Explore the Federal Health Market</h2><p id="atlasMarketDescription">Showing contracts addressable to Accenture</p></div>
   <div class="atlas-market-switch" role="group" aria-label="Choose market scope">
@@ -666,19 +731,7 @@ select,input{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;
 </section>
 
 
-<section class="atm-area" id="open-tenders">
-<h2>Open Tenders / Approaches to Market</h2>
-<p class="atm-sub">Explore AusTender ATM notices alongside ATLAS Health historical awarded contracts. The default view includes only notices that <strong>mention a configured ATLAS Health agency and show service-offering evidence</strong>. These are candidates for review, <strong>not verified purchases by the named agency</strong>. The RSS does not reliably provide issuing agency, closing date or current status. Non-addressable and unverified notices remain available via the scope selector.</p>
-<p class="atm-info">ATM feed retrieved: {html_escape(atm_timestamp)} · {html_escape(atm_status)} <a href="https://www.tenders.gov.au/?event=public.ATM.list" target="_blank" rel="noopener noreferrer">Check official live ATM list</a></p>
-<div class="atm-controls">
- <input type="search" id="atmSearch" placeholder="Search open opportunities..." aria-label="Search open tenders">
- <select id="atmScope" aria-label="ATM scope"><option value="scope">ATLAS agency + service candidates</option><option value="agency">ATLAS agency mentioned (all)</option><option value="health">Broad Health keyword notices</option><option value="all">All feed notices</option></select>
- <select id="atmOffering" aria-label="ATM Service Offering"><option value="all">All Service Offerings</option></select>
- <select id="atmSignal" aria-label="Opportunity signal"><option value="all">All opportunity signals</option></select>
-</div>
-<div id="atmCount" class="atm-info"></div><div id="atmCards" class="atm-grid"></div>
-<p class="atm-sub">Methodology: The configured ATLAS agency names must be explicitly mentioned in RSS title/summary for the first two filters. Mentions do not prove buyer identity; missing mentions do not prove an ATM is outside scope. Addressability is preliminary: specific service keywords are "Potentially addressable", goods-only indicators are "Likely non-addressable", other cases require manual review. Service Offering inferred from published title/summary keyword evidence. Historical Accenture presence is calculated from addressable Health CNs in this build, using signed values. It is <strong>not</strong> evidence of incumbency with the ATM buyer. “Potential whitespace” means no historical Accenture value is identified for that offering; “Established Health presence” means ≥5% of historical offering value; otherwise a nonzero presence is an “Expansion opportunity”. Agency, tender closing date, budget, and current open status must be verified at the linked AusTender notice. Source: Department of Finance AusTender ATM RSS.</p>
-</section>
+
 
 <div class="summary-line" id="summaryLine"></div>
 <p class="method">Dates marked (inferred) use the earliest credible recorded start and latest credible recorded end across available CN family members. This is an observed range, not confirmation of the current legal contract term.</p>
@@ -686,7 +739,8 @@ select,input{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;
 
 
 
-<p class="method">The dashboard supports both Accenture TAM and All Federal Health Market. Ongoing contracts are shown once in the top bracket; remaining contracts are grouped by their recorded financial year. Supplier and Service Offering filters are ranked by addressable spend within the current agency scope.</p>
+<details class="explorer-method"><summary>Historical contract methodology &amp; value definitions</summary><p class="method">The dashboard supports both Accenture TAM and All Federal Health Market. Ongoing contracts are shown once in the top bracket; remaining contracts are grouped by their recorded financial year. Supplier and Service Offering filters are ranked by addressable spend within the current agency scope. Negative amendments are retained as signed values.</p></details>
+</div>
 </div>
 
 <script>
@@ -709,6 +763,10 @@ const ATM_FEED_AVAILABLE = {json.dumps(atm_timestamp != "Unavailable")};
   function renderATM() {{
     const q = search.value.trim().toLowerCase();
     const rows = ATM_NOTICES.filter(n => (scope.value === 'all' || (scope.value === 'health' && n.health_candidate) || (scope.value === 'agency' && n.agency_mentions.length > 0) || (scope.value === 'scope' && n.scope_candidate)) && (offer.value==='all'||offer.value===n.offering) && (signal.value==='all'||signal.value===n.signal) && (!q||(n.title+' '+n.description+' '+n.ref).toLowerCase().includes(q)));
+    document.getElementById('atmKpiFeed').textContent = ATM_FEED_AVAILABLE ? ATM_NOTICES.length.toLocaleString() : '—';
+    document.getElementById('atmKpiAgency').textContent = ATM_FEED_AVAILABLE ? ATM_NOTICES.filter(n => n.agency_mentions.length > 0).length.toLocaleString() : '—';
+    document.getElementById('atmKpiCandidate').textContent = ATM_FEED_AVAILABLE ? ATM_NOTICES.filter(n => n.scope_candidate).length.toLocaleString() : '—';
+    document.getElementById('atmKpiVisible').textContent = ATM_FEED_AVAILABLE ? rows.length.toLocaleString() : '—';
     count.textContent = ATM_FEED_AVAILABLE
       ? `${{rows.length}} matching notices of ${{ATM_NOTICES.length}} feed records. Agency identity and open status require verification on AusTender.`
       : 'ATM feed unavailable at build time — current opportunities could not be determined.';
@@ -716,17 +774,25 @@ const ATM_FEED_AVAILABLE = {json.dumps(atm_timestamp != "Unavailable")};
     if (!ATM_FEED_AVAILABLE) {{cards.innerHTML='<p class="atm-sub"><strong>Live feed not available.</strong> This is not confirmation that no tenders are open. Check the official AusTender link above.</p>';return;}}
     if (!rows.length) {{cards.innerHTML='<p class="atm-sub">No matching notices for this scope. This does not mean there are no relevant current tenders: the RSS may omit buyer-agency names. Select “Broad Health keyword notices” or “All feed notices” to review unverified notices.</p>';return;}}
     for (const n of rows) {{
-      const article = document.createElement('article'); article.className='atm-card';
-      article.innerHTML = `<div class="atm-tags"><span class="atm-tag">${{esc(n.offering)}}</span><span class="atm-tag">${{esc(n.signal)}}</span><span class="atm-tag">${{esc(n.addressability)}}</span></div>
-      <h3>${{esc(n.title)}}</h3><p>${{esc(n.description.slice(0,260))}}</p>
+      const article = document.createElement('details'); article.className='atm-card';
+      article.innerHTML = `<summary class="atm-card-summary">
+        <span><span class="atm-card-title">${{esc(n.title)}}</span><span class="atm-card-meta">${{esc(n.ref)}} · ${{esc(n.agency_mentions.join(', ')||'Buyer not identified')}} · Unverified buyer</span></span>
+        <span class="atm-address"><span class="atm-tag">${{esc(n.offering)}}</span><span class="atm-card-meta">${{esc(n.addressability)}}</span></span>
+        <span class="atm-position"><span class="atm-tag">${{esc(n.signal)}}</span></span>
+        <span class="atm-expand">Details ▾</span>
+      </summary>
+      <div class="atm-card-details"><p>${{esc(n.description)}}</p>
       <p class="atm-info"><strong>ATLAS agency mentioned:</strong> ${{esc(n.agency_mentions.join(', ')||'None identified')}} · <strong>Buyer not verified</strong></p>
       <p class="atm-info"><strong>Addressability:</strong> ${{esc(n.addressability_reason)}}</p>
       <p><strong>Why it matters:</strong> ${{esc(n.rationale)}}</p><p class="atm-info">${{esc(n.match_evidence)}} · Published: ${{esc(n.published||'Not provided')}}</p>
-      <a href="${{esc(n.url)}}" target="_blank" rel="noopener noreferrer">Verify notice and closing date on AusTender</a>`;
+      <a href="${{esc(n.url)}}" target="_blank" rel="noopener noreferrer">Verify notice and closing date on AusTender</a></div>`;
       cards.append(article);
     }}
   }}
   for (const el of [search,scope,offer,signal]) el.addEventListener(el===search?'input':'change',renderATM);
+  document.getElementById('atmReset').addEventListener('click', () => {{
+    search.value=''; scope.value='scope'; offer.value='all'; signal.value='all'; renderATM();
+  }});
   renderATM();
 }})();
 
@@ -1006,7 +1072,28 @@ document.getElementById('marketMode').addEventListener('change',()=>{{refreshFil
 document.getElementById('agencySelect').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('searchInput').addEventListener('input',()=>{{refreshFilters();render()}});document.getElementById('capabilityFilter').addEventListener('change',()=>{{refreshFilters('capability');render()}});document.getElementById('supplierFilter').addEventListener('change',()=>{{refreshFilters('supplier');render()}});document.getElementById('minValueInput').addEventListener('input',()=>{{refreshFilters();render()}});document.getElementById('datedOnly').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('clearFiltersBtn').addEventListener('click',clearAllFilters);
 
 refreshFilters();
-render();</script>
+render();
+(function initExplorerTabs() {{
+  const tabs = [...document.querySelectorAll('[data-explorer-view]')];
+  const tender = document.getElementById('viewTenders');
+  const historical = document.getElementById('viewHistorical');
+  function activate(view, updateHash=true) {{
+    const showTenders = view !== 'historical';
+    tender.hidden = !showTenders;
+    historical.hidden = showTenders;
+    tabs.forEach(tab => {{
+      const active = tab.dataset.explorerView === (showTenders ? 'tenders' : 'historical');
+      tab.classList.toggle('active', active);
+      tab.setAttribute('aria-selected', String(active));
+      tab.tabIndex = active ? 0 : -1;
+    }});
+    if (updateHash) history.replaceState(null, '', showTenders ? '#open-tenders' : '#historical-contracts');
+  }}
+  tabs.forEach(tab => tab.addEventListener('click', () => activate(tab.dataset.explorerView)));
+  window.addEventListener('hashchange', () => activate(window.location.hash === '#historical-contracts' ? 'historical' : 'tenders', false));
+  activate(window.location.hash === '#historical-contracts' ? 'historical' : 'tenders', false);
+}})();
+</script>
 </body></html>'''
 
     output_path.write_text(atlas_navigation(html, "health", page="explorer", freshness=freshness), encoding="utf-8")
