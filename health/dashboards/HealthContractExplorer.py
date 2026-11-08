@@ -1183,7 +1183,7 @@ def atlas_navigation(html_text: str, industry: str, page: str = "overview", fres
         ("Competitive intelligence", "HealthCompetitiveIntelligence.html", "compare"),
         ("Contract explorer", "HealthContractExplorer.html", "explorer"),
         ("Agency intelligence", "HealthAgencyIntelligence.html", "agency"),
-        ("Methodology", "index.html#atlas-methodology", "methodology"),
+        ("Methodology", "Methodology.html", "methodology"),
     ]
     nav_links = "".join(
         f'<a href="{url}"' + (' aria-current="page"' if ident == page else '') + f'>{label}</a>'
