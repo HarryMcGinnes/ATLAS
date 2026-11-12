@@ -195,6 +195,7 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
     out["_value"] = pd.to_numeric(out[value_col], errors="coerce").fillna(0)
     out["_total_value"] = pd.to_numeric(out[VALUE_COL], errors="coerce").fillna(0)
     out["_fy_start"] = out[FY_COL].map(financial_year_start)
+    out["_labour_hire"] = labour_hire_mask(out)
 
 
     start_col = first_existing(out, START_DATE_CANDIDATES)
@@ -290,6 +291,26 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
     return out, value_col
 
 
+
+# Lightweight, evidence-based labour-hire overlay. Independent of TAM/SO classification.
+# Prefer explicit labour-hire wording; generic ICT and consulting are NOT sufficient.
+def labour_hire_mask(df: pd.DataFrame) -> pd.Series:
+    import re
+    category = df['Category'].fillna('').astype(str) if 'Category' in df else pd.Series('', index=df.index)
+    description = df['Description'].fillna('').astype(str) if 'Description' in df else pd.Series('', index=df.index)
+    category_signal = category.str.contains(
+        r'temporary\s+personnel\s+services?|labou?r\s+hire|staff\s+augmentation|'
+        r'contractor\s+personnel|personnel\s+placement', case=False, regex=True, na=False
+    )
+    description_signal = description.str.contains(
+        r'labou?r[\s-]+hire|staff[\s-]+augmentation|workforce[\s-]+augmentation|'
+        r'contractor[\s-]+resourc(?:e|es|ing)|contract[\s-]+personnel|'
+        r'temporary[\s-]+personnel|(?:provision|supply|engagement)\s+of\s+'
+        r'(?:ict\s+|it\s+|specialist\s+)?(?:contractors?|temporary\s+staff|personnel)',
+        case=False, regex=True, na=False
+    )
+    return (category_signal | description_signal).astype(bool)
+
 def build_payload(df: pd.DataFrame) -> dict[str, object]:
     extensions_col = first_existing(df, EXTENSIONS_CANDIDATES)
     records: list[dict[str, object]] = []
@@ -316,6 +337,7 @@ def build_payload(df: pd.DataFrame) -> dict[str, object]:
             "duration_label": fmt_duration(row.get("_duration_days")),
             "procurement_method": safe_str(row.get(PROCUREMENT_METHOD_COL)),
             "category": safe_str(row.get(CATEGORY_COL)),
+            "is_labour_hire": bool(row.get("_labour_hire", False)),
             "extensions": safe_str(row.get(extensions_col)) if extensions_col else "",
         })
 
@@ -565,6 +587,7 @@ select,input{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;
 .kpis{{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:11px;margin:10px 0 18px}} .kpi{{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px 15px;min-width:0;box-shadow:0 1px 2px rgba(16,24,40,.04)}} .kpi:first-child{{border-top:4px solid var(--purple)}}
 .kpi-label{{color:var(--muted);font-size:11px;text-transform:uppercase;font-weight:700;letter-spacing:.045em;margin-bottom:7px}} .kpi-value{{font-size:clamp(19px,1.7vw,27px);font-weight:750;line-height:1.08}} .kpi-sub{{color:var(--muted);font-size:12px;margin-top:5px;line-height:1.35}}
 .toolbar{{margin:0 0 18px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px;display:grid;grid-template-columns:1.35fr 1.25fr 1.05fr 1.05fr .72fr auto auto;gap:10px;align-items:end}}
+.toolbar{{grid-template-columns:1.35fr 1.15fr 1fr 1fr .85fr .75fr auto auto}}
 .check-wrap{{min-height:42px;display:flex;align-items:center;gap:8px;padding:0 6px;color:#344054;font-size:13px}} .check-wrap input{{width:auto}}
 .clear-btn{{min-height:42px;border:1px solid #D0D5DD;border-radius:9px;background:#fff;color:#344054;padding:0 16px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap}}
 .summary-line{{margin:14px 2px 10px;color:#475467;font-size:13px}} .year-section{{margin-top:12px;background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden}}
@@ -725,6 +748,7 @@ select,input{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;
 <div class="field"><label for="agencySelect">Agency</label><select id="agencySelect">{agency_options}</select></div>
 <div class="field"><label for="capabilityFilter">Service Offering</label><select id="capabilityFilter"><option value="All Service Offerings">All Service Offerings</option></select></div>
 <div class="field"><label for="supplierFilter">Supplier</label><select id="supplierFilter"><option value="All suppliers">All suppliers</option></select></div>
+<div class="field"><label for="labourHireFilter">Labour Hire</label><select id="labourHireFilter"><option value="all">All contracts</option><option value="yes">Labour hire only</option><option value="no">Exclude labour hire</option></select></div>
 <div class="field"><label for="minValueInput">Minimum value</label><input id="minValueInput" type="number" min="0" step="100000" placeholder="e.g. 1000000"></div>
 <label class="check-wrap"><input id="datedOnly" type="checkbox"> Dated contracts only</label>
 <button id="clearFiltersBtn" class="clear-btn" type="button">Clear all filters</button>
@@ -833,10 +857,10 @@ function median(values){{const a=values.filter(v=>Number.isFinite(v)).sort((x,y)
 function marketRows(){{return DATA.records.filter(r=>document.getElementById("marketMode").value==="all"||r.is_addressable)}}
 function agencyRows(){{const agency=document.getElementById('agencySelect').value;return marketRows().filter(r=>agency===ALL_AGENCIES||r.agency===agency)}}
 function scopeRows(){{return agencyRows()}}
-function rowsForOptions(exclude){{const search=document.getElementById('searchInput').value.trim().toLowerCase();const cap=document.getElementById('capabilityFilter').value;const sup=document.getElementById('supplierFilter').value;const min=Number(document.getElementById('minValueInput').value||0);const dated=document.getElementById('datedOnly').checked;return scopeRows().filter(r=>{{const hay=[r.description,r.supplier,r.contract_id,r.category,r.procurement_method,r.capability,r.agency].join(' ').toLowerCase();return(!search||hay.includes(search))&&(exclude==='capability'||cap==='All Service Offerings'||r.capability===cap)&&(exclude==='supplier'||sup==='All suppliers'||r.supplier===sup)&&Number(r.value||0)>=min&&(!dated||(r.start_date&&r.end_date))}})}}
+function rowsForOptions(exclude){{const search=document.getElementById('searchInput').value.trim().toLowerCase();const cap=document.getElementById('capabilityFilter').value;const sup=document.getElementById('supplierFilter').value;const min=Number(document.getElementById('minValueInput').value||0);const dated=document.getElementById('datedOnly').checked;const labour=document.getElementById('labourHireFilter').value;return scopeRows().filter(r=>{{const hay=[r.description,r.supplier,r.contract_id,r.category,r.procurement_method,r.capability,r.agency].join(' ').toLowerCase();return(!search||hay.includes(search))&&(exclude==='capability'||cap==='All Service Offerings'||r.capability===cap)&&(exclude==='supplier'||sup==='All suppliers'||r.supplier===sup)&&(labour==='all'||r.is_labour_hire===(labour==='yes'))&&Number(r.value||0)>=min&&(!dated||(r.start_date&&r.end_date))}})}}
 function setRanked(selectId,field,allLabel,exclude){{const select=document.getElementById(selectId);const prev=select.value||allLabel;const totals=new Map();rowsForOptions(exclude).forEach(r=>totals.set(r[field],(totals.get(r[field])||0)+Number(r.value||0)));const vals=[...totals.keys()].sort((a,b)=>(totals.get(b)-totals.get(a))||String(a).localeCompare(String(b)));select.innerHTML=[allLabel,...vals].map(v=>'<option value="'+esc(v)+'">'+esc(v===allLabel?v:v+' — '+money(totals.get(v)))+'</option>').join('');select.value=[...select.options].some(o=>o.value===prev)?prev:allLabel}}
 function refreshFilters(changed=null){{if(changed!=='capability')setRanked('capabilityFilter','capability','All Service Offerings','capability');if(changed!=='supplier')setRanked('supplierFilter','supplier','All suppliers','supplier')}}
-function filteredRows(){{const search=document.getElementById('searchInput').value.trim().toLowerCase();const cap=document.getElementById('capabilityFilter').value;const sup=document.getElementById('supplierFilter').value;const min=Number(document.getElementById('minValueInput').value||0);const dated=document.getElementById('datedOnly').checked;return scopeRows().filter(r=>{{const hay=[r.description,r.supplier,r.contract_id,r.category,r.procurement_method].join(' ').toLowerCase();return(!search||hay.includes(search))&&(cap==='All Service Offerings'||r.capability===cap)&&(sup==='All suppliers'||r.supplier===sup)&&Number(r.value||0)>=min&&(!dated||(r.start_date&&r.end_date))}})}}
+function filteredRows(){{const search=document.getElementById('searchInput').value.trim().toLowerCase();const cap=document.getElementById('capabilityFilter').value;const sup=document.getElementById('supplierFilter').value;const min=Number(document.getElementById('minValueInput').value||0);const dated=document.getElementById('datedOnly').checked;const labour=document.getElementById('labourHireFilter').value;return scopeRows().filter(r=>{{const hay=[r.description,r.supplier,r.contract_id,r.category,r.procurement_method].join(' ').toLowerCase();return(!search||hay.includes(search))&&(cap==='All Service Offerings'||r.capability===cap)&&(sup==='All suppliers'||r.supplier===sup)&&(labour==='all'||r.is_labour_hire===(labour==='yes'))&&Number(r.value||0)>=min&&(!dated||(r.start_date&&r.end_date))}})}}
 
 function renderContractRows(id,rows,dateLabel){{const el=document.getElementById(id);if(!rows.length){{el.innerHTML='<div class="leader-detail">No matching contracts.</div>';return}}el.innerHTML=rows.map((r,i)=>{{const title=(r.description||r.contract_id||'Contract');const supplier=r.supplier||'Unknown supplier';const agency=r.agency||'Unknown agency';const date=r.end_date||'n/a';return '<div class="leader-row"><div class="leader-rank">'+(i+1)+'</div><div class="leader-name">'+esc(supplier)+'<div class="leader-detail">'+esc(title)+'</div><div class="leader-detail">'+esc(agency)+' · '+dateLabel+' '+esc(date)+'</div></div><div class="leader-value">'+esc(money(r.value))+'</div></div>'}}).join('')}}
 function updateContractInsights(){{const agency=document.getElementById('agencySelect').value;const rows=marketRows().filter(r=>agency===ALL_AGENCIES||r.agency===agency);const today=new Date(AS_AT_DATE+'T00:00:00Z');const in12=new Date(today);in12.setUTCFullYear(in12.getUTCFullYear()+1);const ago12=new Date(today);ago12.setUTCFullYear(ago12.getUTCFullYear()-1);const parse=d=>d?new Date(d+'T00:00:00Z'):null;const active=rows.filter(r=>{{const s=parse(r.start_date_iso),e=parse(r.end_date_iso);return s&&e&&s<=today&&e>=today}}).sort((a,b)=>Number(b.value||0)-Number(a.value||0)).slice(0,5);const ending=rows.filter(r=>{{const s=parse(r.start_date_iso),e=parse(r.end_date_iso);return s&&e&&s<=today&&e>=today&&e<=in12}}).sort((a,b)=>Number(b.value||0)-Number(a.value||0)).slice(0,5);const completed=rows.filter(r=>{{const e=parse(r.end_date_iso);return e&&e<today&&e>=ago12}}).sort((a,b)=>Number(b.value||0)-Number(a.value||0)).slice(0,5);const scopeLabel=agency===ALL_AGENCIES?'all Health agencies':agency;document.getElementById('activeSubtitle').textContent='Highest-value contracts active as at today across '+scopeLabel+'.';document.getElementById('endingSubtitle').textContent='Highest-value addressable active contracts ending within the next 12 months across '+scopeLabel+'.';document.getElementById('completedSubtitle').textContent='Highest-value contracts completed within the past 12 months across '+scopeLabel+'.';renderContractRows('topActiveContracts',active,'Ends');renderContractRows('topEndingSoon',ending,'Ends');renderContractRows('topRecentlyCompleted',completed,'Ended')}}
@@ -1038,6 +1062,7 @@ function clearAllFilters() {{
   document.getElementById('searchInput').value = '';
   document.getElementById('minValueInput').value = '';
   document.getElementById('datedOnly').checked = false;
+   document.getElementById('labourHireFilter').value = 'all';
 
   document.getElementById('capabilityFilter').innerHTML =
     '<option value="All Service Offerings">All Service Offerings</option>';
@@ -1069,8 +1094,17 @@ document.getElementById('marketMode').addEventListener('change',()=>{{refreshFil
   select.addEventListener('change', syncMarketSwitch);
   syncMarketSwitch();
 }})();
-document.getElementById('agencySelect').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('searchInput').addEventListener('input',()=>{{refreshFilters();render()}});document.getElementById('capabilityFilter').addEventListener('change',()=>{{refreshFilters('capability');render()}});document.getElementById('supplierFilter').addEventListener('change',()=>{{refreshFilters('supplier');render()}});document.getElementById('minValueInput').addEventListener('input',()=>{{refreshFilters();render()}});document.getElementById('datedOnly').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('clearFiltersBtn').addEventListener('click',clearAllFilters);
+document.getElementById('agencySelect').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('searchInput').addEventListener('input',()=>{{refreshFilters();render()}});document.getElementById('capabilityFilter').addEventListener('change',()=>{{refreshFilters('capability');render()}});document.getElementById('supplierFilter').addEventListener('change',()=>{{refreshFilters('supplier');render()}});document.getElementById('minValueInput').addEventListener('input',()=>{{refreshFilters();render()}});document.getElementById('datedOnly').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('labourHireFilter').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('clearFiltersBtn').addEventListener('click',clearAllFilters);
 
+// Accept only recognised query parameters; do not alter general Explorer defaults.
+const inbound=new URLSearchParams(window.location.search);
+if(inbound.get('view')==='historical'||inbound.get('labour_hire')==='yes'){{
+  const agency=inbound.get('agency');
+  if(agency&&[...document.getElementById('agencySelect').options].some(o=>o.value===agency))document.getElementById('agencySelect').value=agency;
+  const market=inbound.get('market');
+  if(market==='tam'||market==='all'){{document.getElementById('marketMode').value=market;document.getElementById('marketMode').dispatchEvent(new Event('change',{{bubbles:true}}));}}
+  if(inbound.get('labour_hire')==='yes')document.getElementById('labourHireFilter').value='yes';
+}}
 refreshFilters();
 render();
 (function initExplorerTabs() {{
@@ -1091,7 +1125,7 @@ render();
   }}
   tabs.forEach(tab => tab.addEventListener('click', () => activate(tab.dataset.explorerView)));
   window.addEventListener('hashchange', () => activate(window.location.hash === '#historical-contracts' ? 'historical' : 'tenders', false));
-  activate(window.location.hash === '#historical-contracts' ? 'historical' : 'tenders', false);
+  activate(window.location.hash === '#historical-contracts' || new URLSearchParams(window.location.search).get('view') === 'historical' ? 'historical' : 'tenders', false);
 }})();
 </script>
 </body></html>'''
