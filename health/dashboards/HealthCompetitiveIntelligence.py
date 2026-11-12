@@ -30,6 +30,8 @@ def load(path: Path) -> pd.DataFrame:
     missing = required.difference(df.columns)
     if missing:
         raise ValueError("Missing canonical fields: " + ", ".join(sorted(missing)))
+    if df["CN ID"].isna().any() or df["CN ID"].duplicated().any():
+        raise ValueError("Missing or duplicate CN IDs in Health master")
     df = df.copy()
     df["Value"] = pd.to_numeric(df["Value"], errors="raise")
     if df["Value"].isna().any():
@@ -41,6 +43,8 @@ def load(path: Path) -> pd.DataFrame:
     df["_offering"] = df[source].fillna("Unresolved").astype(str).str.strip() if source in df else "Unresolved"
     df["_offering"] = df["_offering"].replace({"": "Unresolved"})
     df.loc[~df["is_addressable"], "_offering"] = "Non-addressable / Unclassified"
+    if "Financial Year" not in df.columns:
+        raise ValueError("Financial Year missing from Health master: FY filtering requires the canonical field")
     if "Financial Year" in df.columns:
         df["_fy"] = df["Financial Year"].fillna("Unknown FY").astype(str)
         df["_fy_start"] = pd.to_numeric(df["_fy"].str.extract(r"((?:19|20)\d{2})")[0], errors="coerce")
@@ -66,7 +70,10 @@ def build_data(df: pd.DataFrame) -> dict:
         actual = sum(x["value"] for x in scopes[scope]["by_supplier"])
         if abs(actual - scopes[scope]["total"]) > 0.01:
             raise ValueError(f"Supplier breakdown does not reconcile for {scope}: {actual}")
-    return {"scopes": scopes, "agencies": sorted(df["Agency"].unique().tolist()), "fys": fy_values}
+    now = datetime.now(ZoneInfo('Australia/Sydney'))
+    current_fy = now.year if now.month >= 7 else now.year - 1
+    return {"scopes": scopes, "agencies": sorted(df["Agency"].unique().tolist()),
+            "fys": fy_values, "current_fy": current_fy}
 
 
 PAGE = r'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -90,13 +97,13 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:11px;bord
 <div class="two"><section class="panel"><h2>Supplier leaderboard</h2><p class="note">Net recorded contract value, including negative amendments.</p><div id="leaderChart" class="chart"></div></section><section class="panel"><h2>Focus supplier by Service Offering</h2><p class="note">Selected supplier within the current agency and market scope.</p><div id="offeringChart" class="chart"></div></section></div>
 <div class="two"><section class="panel"><h2>Competitive trend by financial year</h2><div id="trendChart" class="chart"></div></section><section class="panel"><h2>Focus supplier by agency</h2><div id="agencyChart" class="chart"></div></section></div>
 <section class="panel"><h2>Supplier comparison</h2><p class="note">Ranked by net historical contract value for the selected period. Click a supplier to focus the charts above.</p><div class="table-scroll" id="supplierTable"></div></section>
-<p class="note">Source: canonical ATLAS Health master. Addressability and supplier_group are inherited, not reclassified. Financial Year is a recorded procurement classification, not annual expenditure or a pro-rata allocation of multiyear contracts. Historical contract notices and amendments are included as provided; use signed values with care.</p>
+<p class="note">The default Last 5 FYs ends with the current Australian financial year, including the partial current FY. Source: canonical ATLAS Health master. Addressability and supplier_group are inherited, not reclassified. Financial Year is a recorded procurement classification, not annual expenditure or a pro-rata allocation of multiyear contracts. Historical contract notices and amendments are included as provided; use signed values with care.</p>
 </main><script>
 const DATA=__DATA__;const $=id=>document.getElementById(id);let mode='tam';const nf=new Intl.NumberFormat('en-AU');
 function money(v){v=Number(v)||0;let a=Math.abs(v),s=v<0?'−':'';return s+'A$'+(a>=1e9?(a/1e9).toFixed(2)+'B':a>=1e6?(a/1e6).toFixed(1)+'M':nf.format(Math.round(a)))}
 function pct(v){return Number.isFinite(v)?v.toFixed(1)+'%':'n/a'}function safe(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function periodOptions(){let f=DATA.fys,latest=f[f.length-1];return [{v:'last5',l:'Last 5 FYs'},{v:'last3',l:'Last 3 FYs'},{v:'current',l:'Latest FY in data'},{v:'all',l:'All historical FYs'},...f.slice().reverse().map(y=>({v:String(y),l:'FY'+y+'–'+String((y+1)%100).padStart(2,'0')}))]}
-function inPeriod(r){let p=$('period').value,fy=Number(r._fy_start),max=DATA.fys[DATA.fys.length-1];if(p==='all')return true;if(!Number.isFinite(fy)||!DATA.fys.length)return false;if(p==='last5')return fy>=max-4&&fy<=max;if(p==='last3')return fy>=max-2&&fy<=max;if(p==='current')return fy===max;return fy===Number(p)}
+function periodOptions(){let f=DATA.fys,now=DATA.current_fy;let label=y=>'FY'+y+'–'+String((y+1)%100).padStart(2,'0');return [{v:'last5',l:'Last 5 FYs (default)'},{v:'last3',l:'Last 3 FYs'},{v:'current',l:'Current '+label(now)},{v:'all',l:'All historical FYs'},...f.slice().reverse().map(y=>({v:String(y),l:label(y)})),{v:'unknown',l:'Unknown FY'}]}
+function inPeriod(r){let p=$('period').value,fy=Number(r._fy_start),current=DATA.current_fy;if(p==='all')return true;if(p==='unknown')return !Number.isInteger(fy)||fy<1900;if(!Number.isInteger(fy)||fy<1900)return false;if(p==='last5')return fy>=current-4&&fy<=current;if(p==='last3')return fy>=current-2&&fy<=current;if(p==='current')return fy===current;return fy===Number(p)}
 function scoped(){let agency=$('agency').value;return DATA.scopes[mode].by_supplier.filter(r=>inPeriod(r)&&(agency==='__ALL__'||r.Agency===agency))}
 function rank(rows,key){let m=new Map();rows.forEach(r=>m.set(r[key],(m.get(r[key])||0)+r.value));return [...m].map(([name,value])=>({name,value})).sort((a,b)=>b.value-a.value)}
 function bar(id,rows){let d=rows.filter(r=>r.value!==0).slice(0,12).reverse();if(!window.Plotly)return;Plotly.react(id,[{type:'bar',orientation:'h',x:d.map(r=>r.value/1e6),y:d.map(r=>r.name),marker:{color:'#8750b7'},customdata:d.map(r=>r.value),hovertemplate:'<b>%{y}</b><br>A$%{customdata:,.0f}<extra></extra>'}],{margin:{l:210,r:25,t:12,b:55},height:Math.max(350,d.length*34+90),xaxis:{title:'Net value (A$ millions)',zeroline:true},yaxis:{automargin:true},paper_bgcolor:'transparent',plot_bgcolor:'transparent'},{responsive:true,displayModeBar:false})}
