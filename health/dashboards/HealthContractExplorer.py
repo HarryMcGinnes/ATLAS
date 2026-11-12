@@ -701,7 +701,7 @@ select,input{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;
 <p class="atm-info">ATM feed retrieved: {html_escape(atm_timestamp)} · {html_escape(atm_status)} <a href="https://www.tenders.gov.au/?event=public.ATM.list" target="_blank" rel="noopener noreferrer">Check official live ATM list</a></p>
 <div class="atm-controls" aria-label="Opportunity filters">
  <input type="search" id="atmSearch" placeholder="Search tenders, agencies or service offerings..." aria-label="Search open tenders">
- <select id="atmScope" aria-label="ATM scope"><option value="scope">ATLAS agency + service candidates</option><option value="agency">ATLAS agency mentioned (all)</option><option value="health">Broad Health keyword notices</option><option value="all">All feed notices</option></select>
+ <select id="atmScope" aria-label="ATM scope"><option value="scope">Health Agency + Addressable</option><option value="agency">Health Agency</option><option value="health">Health Mentioned</option><option value="all">All Feed Notices</option></select>
  <select id="atmOffering" aria-label="ATM Service Offering"><option value="all">All Service Offerings</option></select>
  <select id="atmSignal" aria-label="Opportunity signal"><option value="all">All opportunity signals</option></select>
  <button id="atmReset" class="clear-btn" type="button">Clear filters</button>
@@ -796,7 +796,7 @@ const ATM_FEED_AVAILABLE = {json.dumps(atm_timestamp != "Unavailable")};
       : 'ATM feed unavailable at build time — current opportunities could not be determined.';
     cards.replaceChildren();
     if (!ATM_FEED_AVAILABLE) {{cards.innerHTML='<p class="atm-sub"><strong>Live feed not available.</strong> This is not confirmation that no tenders are open. Check the official AusTender link above.</p>';return;}}
-    if (!rows.length) {{cards.innerHTML='<p class="atm-sub">No matching notices for this scope. This does not mean there are no relevant current tenders: the RSS may omit buyer-agency names. Select “Broad Health keyword notices” or “All feed notices” to review unverified notices.</p>';return;}}
+    if (!rows.length) {{cards.innerHTML='<p class="atm-sub">No matching notices for this scope. This does not mean there are no relevant current tenders: the RSS may omit buyer-agency names. Select “Health Mentioned” or “All Feed Notices” to review unverified notices.</p>';return;}}
     for (const n of rows) {{
       const article = document.createElement('details'); article.className='atm-card';
       article.innerHTML = `<summary class="atm-card-summary">
