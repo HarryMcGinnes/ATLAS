@@ -119,8 +119,17 @@ def main():
     parser = argparse.ArgumentParser(description="Build ATLAS Federal Health Competitive Intelligence")
     parser.add_argument("--input", default="health/data/processed/master_health_contracts.parquet")
     parser.add_argument("--output-dir", default="docs/health")
+    parser.add_argument("--value-mode", choices=["total", "annualised"], default="total",
+                        help="Use total contract value or annualised contract value.")
     args = parser.parse_args()
     df = load(Path(args.input))
+    if args.value_mode == "annualised":
+        if "Value Per Year" not in df.columns:
+            parser.error("--value-mode annualised requires the Value Per Year column")
+        annual = pd.to_numeric(df["Value Per Year"], errors="raise")
+        if annual.isna().any():
+            parser.error("Value Per Year contains null values")
+        df["Value"] = annual
     data = build_data(df)
     stamp = html.escape(datetime.now(ZoneInfo("Australia/Sydney")).strftime("%d %b %Y %H:%M %Z"))
     page = PAGE.replace("__STAMP__", stamp).replace("__DATA__", json.dumps(data, ensure_ascii=False, allow_nan=False).replace("<", "\\u003c"))
