@@ -543,8 +543,9 @@ body{font-family:Arial,Helvetica,sans-serif;margin:0;background:#f6f8fb;color:#1
 .flow-head{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;text-align:center;margin:14px 0 0}.flow-head b{font-size:17px;line-height:1.25}.flow-head span{display:block;color:#667085;font-size:12px;margin-top:5px}.donut-stage{position:relative;height:430px;min-width:980px}#donutChart{height:430px;width:100%;margin:0 auto}.flow-transition{position:absolute;top:45%;width:118px;transform:translate(-50%,-50%);z-index:5;text-align:center;color:#5B21B6;pointer-events:none}.flow-transition.one{left:33.5%}.flow-transition.two{left:66.5%}.flow-transition .pct{font-size:18px;font-weight:800;line-height:1}.flow-transition .lbl{font-size:11px;line-height:1.2;margin-top:4px}.flow-transition .val{font-size:15px;font-weight:700;margin-top:4px}.flow-arrow{height:18px;position:relative;margin-top:8px}.flow-arrow:before{content:'';position:absolute;left:0;right:12px;top:8px;height:3px;border-radius:999px;background:#5B21B6}.flow-arrow:after{content:'';position:absolute;right:0;top:1px;border-top:8px solid transparent;border-bottom:8px solid transparent;border-left:13px solid #5B21B6}.donut-legends{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;padding:0 24px 10px;min-width:980px}.donut-legend{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 16px;align-items:start;padding:12px 14px 14px;border:1px solid #E2E8F0;border-radius:10px;background:#FAFBFD;min-height:70px}.donut-legend-title{grid-column:1/-1;font-size:12px;font-weight:800;color:#475467;text-transform:uppercase;letter-spacing:.04em;padding-bottom:6px;border-bottom:1px solid #E9EDF3;margin-bottom:2px}.legend-item{display:grid;grid-template-columns:14px minmax(0,1fr);gap:8px;align-items:start;font-size:12px;color:#344054}.legend-swatch{width:14px;height:14px;border-radius:3px;margin-top:1px}.legend-item b{display:block;font-size:12px;line-height:1.2}.legend-item small{display:block;color:#667085;margin-top:2px;line-height:1.2}.note{font-size:12px;color:#667085;margin-top:8px}@media(max-width:800px){.cards{grid-template-columns:1fr}.flow-scroll{overflow:auto}.atlas-market-actions{width:100%}.atlas-market-choice,#atlasClearFilters{flex:1;text-align:center}}
 </style></head><body><div class="wrap">
 <h1>__PAGE_TITLE__</h1><p class="subtitle">__PAGE_SUBTITLE__</p>
-<section class="summary"><h2>Executive Summary</h2><p>Explore contracted value across the Federal Health portfolio, the addressable share, Accenture wins and the agencies, Service Offerings and suppliers underpinning the market.</p><div class="warning"><b>Classifier status:</b> classification decisions are read from the canonical Health master. ATLAS does not reclassify contracts in the dashboard. Review classification audit and methodology before treating TAM as a definitive addressable market estimate.</div></section>
 __MARKET_CONTROLS__
+<div class="panel"><h3>Total Addressable Market Overview</h3><div class="controls">__DONUT_CONTROLS__</div><div class="flow-scroll"><div class="flow-head"><div><b>1. __FIRST_STAGE_TITLE__</b><span>__FIRST_STAGE_SUBTITLE__</span></div><div><b>2. Within Addressable Market (TAM)</b><span>Accenture vs competitor-owned TAM</span></div><div><b>3. Accenture Wins</b><span>Accenture wins within the addressable Health market</span></div></div><div class="donut-stage"><div id="donutChart"></div><div id="flowTransitionOne" class="flow-transition one"></div><div id="flowTransitionTwo" class="flow-transition two"></div></div><div class="donut-legends"><div id="donutLegend1" class="donut-legend"></div><div id="donutLegend2" class="donut-legend"></div><div id="donutLegend3" class="donut-legend"></div></div></div></div>
+<section class="summary"><h2>Executive Summary</h2><p>Explore contracted value across the Federal Health portfolio, the addressable share, Accenture wins and the agencies, Service Offerings and suppliers underpinning the market.</p><div class="warning"><b>Classifier status:</b> classification decisions are read from the canonical Health master. ATLAS does not reclassify contracts in the dashboard. Review classification audit and methodology before treating TAM as a definitive addressable market estimate.</div></section>
 <div class="cards">
 <div class="card"><div class="ct">Selected market</div><div class="cv">__SELECTED_TOTAL__</div><div class="cs">__SELECTED_NOTE__</div></div>
 <div class="card"><div class="ct">Addressable TAM</div><div class="cv">__ADDRESSABLE__</div><div class="cs">__ADDRESSABLE_PCT__% of selected market</div></div>
@@ -553,7 +554,6 @@ __MARKET_CONTROLS__
 <div class="card"><div class="ct">Avg annual addressable</div><div class="cv">__AVG_ADDRESSABLE__</div><div class="cs">Across __YEARS__ financial years</div></div>
 <div class="card"><div class="ct">Avg annual Accenture wins</div><div class="cv">__AVG_ACCENTURE__</div><div class="cs">Across __YEARS__ financial years</div></div>
 </div>
-<div class="panel"><h3>Total Addressable Market Overview</h3><div class="controls">__DONUT_CONTROLS__</div><div class="flow-scroll"><div class="flow-head"><div><b>1. __FIRST_STAGE_TITLE__</b><span>__FIRST_STAGE_SUBTITLE__</span></div><div><b>2. Within Addressable Market (TAM)</b><span>Accenture vs competitor-owned TAM</span></div><div><b>3. Accenture Wins</b><span>Accenture wins within the addressable Health market</span></div></div><div class="donut-stage"><div id="donutChart"></div><div id="flowTransitionOne" class="flow-transition one"></div><div id="flowTransitionTwo" class="flow-transition two"></div></div><div class="donut-legends"><div id="donutLegend1" class="donut-legend"></div><div id="donutLegend2" class="donut-legend"></div><div id="donutLegend3" class="donut-legend"></div></div></div></div>
 <div class="panel"><h3>__SERVICE_TITLE__</h3><p>__SERVICE_COPY__</p><div class="controls">__SERVICE_CONTROLS__</div><div id="serviceChart"></div></div>
 <div class="panel"><h3>__SUPPLIER_TITLE__</h3><div class="controls">__SUPPLIER_CONTROLS__</div><div id="supplierChart"></div></div>
 <p class="note">Source: filtered AusTender Health portfolio dataset. Every visual uses the selected __MARKET_LABEL__ population unless a narrower TAM subset is explicitly labelled. Total contract value is used unless --value-mode annualised is selected.</p>
@@ -956,9 +956,12 @@ def atlas_agency_breakdown(html_text: str, df: pd.DataFrame, value_col: str, mar
       document.querySelectorAll('input[name="donutRange"]').forEach(el=>el.addEventListener('change',renderAgency));
       renderAgency();
     })();</script>""".replace('__DATA__', json.dumps(per_period, ensure_ascii=False, allow_nan=False))
-    position = '<div class="panel"><h3>'
-    if position in html_text:
-        html_text = html_text.replace(position, panel + position, 1)
+    # Keep the three-donut TAM Overview first; place agency analysis after it.
+    donut_anchor = 'id="donutChart"'
+    donut_at = html_text.find(donut_anchor)
+    next_panel = html_text.find('<div class="panel"><h3>', donut_at + len(donut_anchor)) if donut_at >= 0 else -1
+    if next_panel >= 0:
+        html_text = html_text[:next_panel] + panel + html_text[next_panel:]
     else:
         html_text = html_text.replace('</body>', panel + '</body>', 1)
     return html_text.replace('</body>', script + '</body>', 1)
@@ -989,11 +992,10 @@ def atlas_overview_extras(html_text: str, df: pd.DataFrame, value_col: str, mark
     </style>"""
     html_text = html_text.replace('</head>', css+'</head>', 1)
     quality = atlas_quality_panel(df, value_col, market_mode)
-    # Put data-quality indicators before the KPI cards so they are visible immediately.
-    html_text = html_text.replace('<div class="cards">', quality+'<div class="cards">', 1)
     html_text = atlas_agency_breakdown(html_text, df, value_col, market_mode)
     methodology = atlas_methodology_panel()
-    html_text = html_text.replace('</body>', methodology+'</body>', 1)
+    # Keep executive-facing analysis at the top; data-quality diagnostics are last.
+    html_text = html_text.replace('</body>', methodology + quality + '</body>', 1)
     return html_text
 
 
