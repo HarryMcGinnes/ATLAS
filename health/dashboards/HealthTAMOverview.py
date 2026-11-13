@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from health_agency_groups import add_agency_groups, write_agency_audit
+
 VALUE_COL = "Value"
 ANNUALISED_VALUE_COL = "Value Per Year"
 FY_COL = "Financial Year"
@@ -252,6 +254,8 @@ def classify(df: pd.DataFrame) -> pd.DataFrame:
     # Enforce the Health classifier invariant in the dashboard too:
     # non-addressable contracts must not display a Service Offering.
     out.loc[~out["is_addressable"], "Service Offering"] = pd.NA
+    # Reporting-only historical agency consolidation; original Agency stays intact.
+    out = add_agency_groups(out)
     return out
 
 
@@ -682,6 +686,7 @@ def main() -> None:
         raise SystemExit(f"Missing value column: {value_col}")
 
     validate_health_tam_reconciliation(df, value_col)
+    write_agency_audit(df, outdir / "health_agency_grouping_audit.csv")
 
     audit_cols = [
         c for c in [
@@ -904,14 +909,14 @@ def atlas_methodology_panel() -> str:
 
 def atlas_agency_breakdown(html_text: str, df: pd.DataFrame, value_col: str, market_mode: str = 'tam') -> str:
     """Add an FY-linked agency chart using exactly the market population displayed."""
-    if 'Agency' not in df.columns:
-        return html_text
+    if 'agency_group' not in df.columns:
+        raise ValueError('Agency reporting groups missing from Health TAM input')
     per_period = []
     for label, subset in fy_options(df):
         summary_frame = subset.copy()
-        summary_frame['Agency'] = summary_frame['Agency'].fillna('Unspecified agency').astype(str).str.strip().replace('', 'Unspecified agency')
+        summary_frame['agency_group'] = summary_frame['agency_group'].fillna('Unspecified agency').astype(str).str.strip().replace('', 'Unspecified agency')
         summary_frame[value_col] = pd.to_numeric(summary_frame[value_col], errors='coerce').fillna(0)
-        grouped = summary_frame.groupby('Agency', dropna=False)[value_col].agg(['sum', 'size'])
+        grouped = summary_frame.groupby('agency_group', dropna=False)[value_col].agg(['sum', 'size'])
         per_period.append({
             'period': label,
             'rows': [{'agency': str(a), 'value': float(row['sum']), 'contracts': int(row['size'])}
@@ -1005,7 +1010,7 @@ def build_health_home(df: pd.DataFrame, value_col: str, output_path: Path) -> No
         frame = frame.copy()
         amount = pd.to_numeric(frame[value_col], errors="coerce").fillna(0)
         total = float(amount.sum())
-        agencies = frame.get("Agency", pd.Series("Unspecified", index=frame.index))
+        agencies = frame["agency_group"]
         agency_frame = pd.DataFrame({
             "agency": agencies.fillna("Unspecified agency").astype(str).str.strip().replace("", "Unspecified agency"),
             "value": amount,
@@ -1232,4 +1237,3 @@ def atlas_option_a_style(html_text: str, page: str) -> str:
 
 if __name__ == "__main__":
     main()
-
