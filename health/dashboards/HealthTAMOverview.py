@@ -1101,18 +1101,64 @@ def build_health_home(df: pd.DataFrame, value_col: str, output_path: Path) -> No
     <a class="tile" href="HealthContractExplorer.html"><h3>Contract explorer</h3><p>Investigate the specific contracts, amendments and suppliers underpinning the numbers.</p><strong>Explore contracts</strong></a>
     <a class="tile" href="HealthAgencyIntelligence.html"><h3>Agency intelligence</h3><p>Explore each agency by supplier, Service Offering and contracted value.</p><strong>Explore agencies</strong></a>
     </div></section>
-    <section class="panel" id="atlas-methodology"><p class="eyebrow">TRANSPARENT CLASSIFICATION</p><h2>How ATLAS defines the Health market</h2>
-    <p class="foot">Classification is performed upstream in the Health pipeline, not inside the dashboards. This view explains the decision stages and verified aggregation formulas.</p>
-    <div class="steps"><div class="step"><span class="num">01</span><h3>Agency scope</h3><p>Keep the configured Federal Health agencies and their historical aliases.</p></div>
-    <div class="step"><span class="num">02</span><h3>Addressability</h3><p>Assess Category, Contract Type and Description against exclusion rules and service evidence, using supplier context where supported.</p></div>
-    <div class="step"><span class="num">03</span><h3>Service Offering</h3><p>Allocate addressable records to Strategy, SI, Managed Services, Data & AI, Cloud & Cyber or retain as Unclassified.</p></div>
-    <div class="step"><span class="num">04</span><h3>Audit & report</h3><p>Preserve contract notices, values and evidence. Aggregate only the canonical classified records.</p></div></div>
-    <div class="formulas"><div class="formula"><h3>Addressable TAM</h3><code>Σ Value(CN), where is_addressable = True</code><p>Value is the amount reported for each contract notice.</p></div>
-    <div class="formula"><h3>Service Offering market</h3><code>Σ Value(CN), where is_addressable = True and service_offering = X</code><p>One canonical Service Offering decision per included record.</p></div></div>
-    <details><summary>What do category, description and supplier signals mean?</summary><p>Physical clinical and commodity purchases can be excluded by category/type rules. Positive signals can include consulting, transformation, integration, software, digital, cloud, cyber, data and managed-service delivery. The authoritative ordering and exceptions are defined in the upstream classifier.</p></details>
-    <details><summary>What numerical weights and scoring thresholds are used?</summary><p>Exact weights and thresholds are not included in the dashboard code available for this build. They must be verified directly against the current Health classifier before we publish an exact scoring formula.</p></details>
-    <details><summary>Why do some amendments have inferred dates?</summary><p>ATLAS may calculate the earliest credible start and latest credible end from available CN family records when the original is absent. This represents an observed range, not independent verification of the legally current contract period.</p></details>
-    </section>
+     <section class="panel atlas-faq" id="atlas-methodology" aria-labelledby="faq-title">
+     <style>
+     .atlas-faq{max-width:1060px;margin:0 auto 24px}.atlas-faq h2{font-size:23px;margin:0 0 9px}.atlas-faq .faq-intro{color:#667085;font-size:14px;line-height:1.6;margin:0 0 19px}
+     .atlas-faq details{border:1px solid #e7e1ef;border-radius:11px;margin:9px 0;padding:0;background:#fff;overflow:hidden}
+     .atlas-faq details[open]{border-color:#cbb5df;background:#fff}
+     .atlas-faq summary{padding:17px 18px;cursor:pointer;font-size:15px;font-weight:750;color:#241b30;display:flex;align-items:center;justify-content:space-between;gap:16px;list-style:none}
+     .atlas-faq summary::-webkit-details-marker{display:none}.atlas-faq summary:after{content:'+';font-size:23px;line-height:1;color:#7a34a9;font-weight:400}.atlas-faq details[open] summary:after{content:'−'}
+     .atlas-faq summary:focus-visible{outline:3px solid #a100ff;outline-offset:-3px}.atlas-faq .faq-body{padding:0 18px 18px;border-top:1px solid #f0ebf4}
+     .atlas-faq .faq-body p{font-size:14px;line-height:1.65;color:#475467;margin:14px 0 0}
+     .atlas-faq .faq-example{background:#f7f4fb;border-left:3px solid #a100ff;padding:12px 14px;border-radius:0 8px 8px 0;margin-top:14px;font-size:13px;line-height:1.65;color:#43344d}
+     .atlas-faq .faq-example strong{color:#532082}.atlas-faq .faq-note{font-size:12px;color:#667085;line-height:1.65;margin:19px 0 0}
+     @media(max-width:600px){.atlas-faq summary{font-size:14px;padding:15px}.atlas-faq .faq-body{padding:0 15px 15px}}
+     </style>
+     <p class="eyebrow">METHODOLOGY &amp; CALCULATIONS</p>
+     <h2 id="faq-title">How does ATLAS work?</h2>
+     <p class="faq-intro">Select a question for a short explanation and an example. These answers describe the current rules-based Federal Health methodology.</p>
+
+     <details><summary>How is contract addressability determined?</summary><div class="faq-body">
+     <p>ATLAS reviews each Health contract's procurement category, category type and description. It first excludes research, clinical products and certain services (such as recruitment and labour hire). Goods are normally excluded unless there is explicit software, licence, subscription or cloud evidence. Remaining contracts are included when they contain relevant consulting, transformation, technology or managed-services evidence. If there is no recognised evidence, they are excluded.</p>
+     <p><strong>Important exception:</strong> Recorded Accenture awards are always included in Accenture's addressable market. This is an explicit rule in the classifier, not an independent assessment of their service content.</p>
+     <div class="faq-example"><strong>Example:</strong> A software licence subscription can be addressable even when recorded as Goods. A medical equipment purchase is excluded. A contract described as labour hire is excluded unless it is an observed Accenture award.</div>
+     </div></details>
+
+     <details><summary>How is each contract assigned to a Service Offering?</summary><div class="faq-body">
+     <p>Only addressable contracts receive a Service Offering. ATLAS searches the description and category for keywords associated with five offerings: Strategy, Transformation &amp; Advisory; SI &amp; Engineering; Data, AI &amp; Automation; Cloud Infrastructure &amp; Cyber; and Managed Services &amp; Operations.</p>
+     <p>Description matches carry more weight than category matches. The offering with the highest score is selected. If no offering has matching evidence, the contract remains unclassified and is flagged for review.</p>
+     <div class="faq-example"><strong>Example:</strong> “Application development and systems integration” supports SI &amp; Engineering; “Data analytics and automation” supports Data, AI &amp; Automation; “Software licence renewal” supports Managed Services &amp; Operations. A contract may contain evidence for multiple offerings; the strongest overall match wins.</div>
+     </div></details>
+
+     <details><summary>How is Total Addressable Market (TAM) calculated?</summary><div class="faq-body">
+     <p>ATLAS adds the reported contract notice values of all contracts marked addressable within the selected Health scope and filters. The All Federal Health Market includes both addressable and non-addressable notices. These are recorded contract values, not annual expenditure or a future sales forecast.</p>
+     <div class="faq-example"><strong>Example:</strong> If three in-scope notices have values of A$2m, A$3m and A$5m, but only the first two are addressable, the addressable TAM is A$5m; the All Market total is A$10m.</div>
+     </div></details>
+
+     <details><summary>How are suppliers grouped?</summary><div class="faq-body">
+     <p>ATLAS uses a standardised supplier-group field from its shared Silver data. This helps combine recognised variations of a supplier's name for reporting. The Health classifier preserves that grouping rather than creating a separate Health-specific supplier identity.</p>
+     <div class="faq-example"><strong>Example:</strong> Supplier records recognised as “Ernst &amp; Young” and “EY” can be shown together under a single supplier group. Grouping depends on the configured identity mappings; it does not guarantee that every subsidiary or legal entity is consolidated.</div>
+     </div></details>
+
+     <details><summary>How are amendments and contract dates handled?</summary><div class="faq-body">
+     <p>ATLAS retains contract notice records, including amendments, when calculating recorded market value. Negative amendment values can reduce totals. Where dates are missing, the wider ATLAS pipeline may infer a contract-family date range from available related notices; that range is a data-quality estimate, not proof of the current legal term.</p>
+     <p>An active-contract view relies on the available contract-period dates and can be affected by missing or inconsistent source records.</p>
+     <div class="faq-example"><strong>Example:</strong> A contract notice of A$1m followed by an amendment of −A$100k contributes A$900k when both recorded values are included. An inferred end date should not be treated as a verified expiry date.</div>
+     </div></details>
+
+     <details><summary>How are market share and growth calculated?</summary><div class="faq-body">
+     <p>Market share is a supplier's recorded contract value divided by the total value of the same selected market, expressed as a percentage. The selected financial years, agency scope and TAM versus All Market setting must be consistent between numerator and denominator.</p>
+     <p>Growth compares contract values between reporting periods. The precise growth measure (for example, year-on-year percentage change versus average annual change) depends on the dashboard metric and should be read from that dashboard's definition.</p>
+     <div class="faq-example"><strong>Example:</strong> A supplier with A$20m in awards in an A$200m selected market has 10% share. If its annual recorded award value increases from A$10m to A$12m, that is A$2m, or 20%, year-on-year growth.</div>
+     </div></details>
+
+     <details><summary>How confident are the classifications?</summary><div class="faq-body">
+     <p>ATLAS records rule-based confidence indicators based on the type and strength of evidence found. Clear exclusions and strong matching evidence generally receive higher confidence; weak evidence, closely competing Service Offerings or no offering match can require review. Confidence is a classification-quality indicator, not a statistical probability that a decision is correct.</p>
+     <div class="faq-example"><strong>Example:</strong> A description explicitly naming “data engineering” is easier to categorise than a generic “professional services” description. The latter may be unresolved even if the contract is addressable.</div>
+     </div></details>
+
+     <p class="faq-note">Source: AusTender contract notices, filtered to configured Federal Health agencies. Classification is performed upstream in the Health master build; dashboards consume the resulting fields. Examples are illustrative, not specific awarded contracts. Figures may reflect amendments and source-data limitations.</p>
+     </section>
     <section class="panel"><h2>Data confidence</h2><p class="foot">Counts below refer to the selected market and are derived from the current canonical dataset.</p>
     <div class="qbar"><div class="q"><b id="qReview">–</b><span>Contract-family date review flags</span></div><div class="q"><b id="qInferred">–</b><span>Inferred family dates</span></div><div class="q"><b id="qUnclassified">–</b><span>Unclassified Service Offerings</span></div></div></section>
     <p class="foot">ATLAS is a historical procurement intelligence tool. The addressable market is a rules-based estimate, not a forecast or a statement of procurement eligibility. The source data and classifier should be audited for high-value decisions.</p></main>
@@ -1161,7 +1207,7 @@ def atlas_separate_methodology(page: str) -> tuple[str, str]:
     logic, figures, or source dates. The homepage retains a compact CTA.
     """
     import re
-    start_marker = '<section class="panel" id="atlas-methodology">'
+    start_marker = '<section class="panel atlas-faq" id="atlas-methodology" aria-labelledby="faq-title">'
     end_marker = '<section class="panel"><h2>Data confidence</h2>'
     start = page.find(start_marker)
     end = page.find(end_marker, start)
