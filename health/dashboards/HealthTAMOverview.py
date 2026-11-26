@@ -359,7 +359,7 @@ def validate_health_tam_reconciliation(
 
 
 
-def build_payloads(df: pd.DataFrame, value_col: str, market_mode: str = "tam") -> dict:
+def build_payloads(df: pd.DataFrame, value_col: str, market_mode: str = "tam", donut_df: pd.DataFrame | None = None) -> dict:
     """Build one complete payload from the already-selected market population.
 
     ``df`` is addressable-only for the Accenture TAM page and contains every
@@ -372,7 +372,9 @@ def build_payloads(df: pd.DataFrame, value_col: str, market_mode: str = "tam") -
         raise ValueError(f"Unsupported market mode: {market_mode}")
 
     donut_sets, service_sets, supplier_sets = [], [], []
-    for label, sub in fy_options(df):
+    # Donut flow is always All market -> TAM -> Accenture wins, whatever page is shown.
+    donut_source = donut_df if donut_df is not None else df
+    for label, sub in fy_options(donut_source):
         selected = sub.copy()
         s = summary(selected, value_col)
 
@@ -404,6 +406,8 @@ def build_payloads(df: pd.DataFrame, value_col: str, market_mode: str = "tam") -
             ],
         })
 
+    for label, sub in fy_options(df):
+        selected = sub.copy()
         accenture_selected = selected[selected["is_accenture"]].copy()
 
         def _chart_so(frame: pd.DataFrame) -> pd.Series:
@@ -478,11 +482,13 @@ def build_html(
     value_col: str,
     output: Path,
     market_mode: str = "tam",
+    full_df: pd.DataFrame | None = None,
 ) -> None:
     if market_mode not in {"tam", "all"}:
         raise ValueError(f"Unsupported market mode: {market_mode}")
+    full = full_df if full_df is not None else df
 
-    payload = build_payloads(df, value_col, market_mode=market_mode)
+    payload = build_payloads(df, value_col, market_mode=market_mode, donut_df=full)
     s = summary(df, value_col)
     data = json.dumps(payload, ensure_ascii=False)
 
@@ -498,12 +504,8 @@ def build_html(
         if is_tam
         else "Showing every procurement contract in the Federal Health industry scope."
     )
-    first_stage_title = "Accenture TAM" if is_tam else "Total Health Procurement Market"
-    first_stage_subtitle = (
-        "Selected addressable Health contracts"
-        if is_tam
-        else "All Federal Health procurement in scope"
-    )
+    first_stage_title = "Total Health Procurement Market"
+    first_stage_subtitle = "All recorded Federal Health contracts"
     service_title = (
         "Accenture Wins by Service Offering"
         if is_tam
@@ -677,6 +679,7 @@ renderAll();
         df,
         value_col,
         market_mode,
+        full_df=full,
     )
     output.write_text(atlas_option_a_style(final_html, "overview"), encoding="utf-8")
 
@@ -754,8 +757,8 @@ def main() -> None:
 
     tam_dashboard = outdir / "AccentureHealthTAMOverview.html"
     all_dashboard = outdir / "AccentureHealthTAMOverview_AllMarket.html"
-    build_html(tam_df, value_col, tam_dashboard, market_mode="tam")
-    build_html(df, value_col, all_dashboard, market_mode="all")
+    build_html(tam_df, value_col, tam_dashboard, market_mode="tam", full_df=df)
+    build_html(df, value_col, all_dashboard, market_mode="all", full_df=df)
     if not args.skip_health_home:
         build_health_home(df, VALUE_COL, Path(args.health_home))
 
@@ -923,56 +926,120 @@ def atlas_methodology_panel() -> str:
     </section>"""
 
 
-def atlas_agency_breakdown(html_text: str, df: pd.DataFrame, value_col: str, market_mode: str = 'tam') -> str:
-    """Add an FY-linked agency chart using exactly the market population displayed."""
-    if 'agency_group' not in df.columns:
-        raise ValueError('Agency reporting groups missing from Health TAM input')
+def period_labels() -> list[str]:
+    """Fixed period labels, identical to fy_options() labels, always three entries."""
+    l5 = calendar_fy_window(5)
+    l3 = calendar_fy_window(3)
+    return ["All years", f"Last 5 FY ({l5[0]} to {l5[-1]})", f"Last 3 FY ({l3[0]} to {l3[-1]})"]
+
+
+def _agency_totals(frame: pd.DataFrame, value_col: str) -> dict:
+    if frame.empty:
+        return {}
+    f = frame.copy()
+    f["agency_group"] = f["agency_group"].fillna("Unspecified agency").astype(str).str.strip().replace("", "Unspecified agency")
+    f[value_col] = pd.to_numeric(f[value_col], errors="coerce").fillna(0)
+    g = f.groupby("agency_group", dropna=False)[value_col].agg(["sum", "size"])
+    return {str(a): (float(r["sum"]), int(r["size"])) for a, r in g.iterrows()}
+
+
+def atlas_agency_breakdown(html_text: str, df: pd.DataFrame, value_col: str, market_mode: str = "tam", full_df: pd.DataFrame | None = None) -> str:
+    """FY-linked agency chart.
+
+    Light bars: the base market by agency (TAM on the TAM page; all market on the All Market page).
+    Dark bars: Accenture wins within that base (on the TAM page); the TAM on the All Market page.
+    """
+    if "agency_group" not in df.columns:
+        raise ValueError("Agency reporting groups missing from Health TAM input")
+    is_tam = market_mode == "tam"
+    full = full_df if full_df is not None else df
+    base_label = "Accenture TAM (addressable)" if is_tam else "All Federal Health Market"
+    overlay_label = "Accenture wins" if is_tam else "Accenture TAM (addressable)"
+    if is_tam:
+        base_frame = df
+        overlay_frame = df[df["is_accenture"].astype(bool)]
+    else:
+        base_frame = full
+        overlay_frame = full[full["is_addressable"].astype(bool)]
+
+    fy_col = FY_COL
+    def subsets(frame: pd.DataFrame) -> list[pd.DataFrame]:
+        fy = frame[fy_col].astype(str)
+        return [frame, frame[fy.isin(calendar_fy_window(5))], frame[fy.isin(calendar_fy_window(3))]]
+
+    base_subsets = subsets(base_frame)
+    overlay_subsets = subsets(overlay_frame)
     per_period = []
-    for label, subset in fy_options(df):
-        summary_frame = subset.copy()
-        summary_frame['agency_group'] = summary_frame['agency_group'].fillna('Unspecified agency').astype(str).str.strip().replace('', 'Unspecified agency')
-        summary_frame[value_col] = pd.to_numeric(summary_frame[value_col], errors='coerce').fillna(0)
-        grouped = summary_frame.groupby('agency_group', dropna=False)[value_col].agg(['sum', 'size'])
+    for label, b_sub, o_sub in zip(period_labels(), base_subsets, overlay_subsets):
+        base = _agency_totals(b_sub, value_col)
+        over = _agency_totals(o_sub, value_col)
+        names = sorted(set(base) | set(over), key=lambda a: -base.get(a, (0, 0))[0])
         per_period.append({
-            'period': label,
-            'rows': [{'agency': str(a), 'value': float(row['sum']), 'contracts': int(row['size'])}
-                     for a, row in grouped.iterrows()]
+            "period": label,
+            "rows": [{
+                "agency": a,
+                "base": base.get(a, (0.0, 0))[0],
+                "base_contracts": base.get(a, (0.0, 0))[1],
+                "overlay": over.get(a, (0.0, 0))[0],
+                "overlay_contracts": over.get(a, (0.0, 0))[1],
+            } for a in names],
         })
-    label = 'Accenture TAM' if market_mode == 'tam' else 'All Federal Health Market'
+
     from html import escape
+    heading = f"{base_label} by Agency, with {overlay_label} overlaid"
     panel = f"""<section class="atlas-health-agencies" aria-labelledby="atlasAgencyHeading">
-      <div class="atlas-agency-heading"><div><p class="atlas-eyebrow">FEDERAL HEALTH SPENDING</p><h2 id="atlasAgencyHeading">{escape(label)} by Agency</h2>
-      <p>Share of recorded contract value by agency. Follows the TAM overview financial-year selection above.</p></div>
+      <div class="atlas-agency-heading"><div><p class="atlas-eyebrow">FEDERAL HEALTH SPENDING</p><h2 id="atlasAgencyHeading">{escape(heading)}</h2>
+      <p>Light bars show {escape(base_label.lower())} by agency; dark bars show {escape(overlay_label.lower())} within it. Follows the financial-year selection above.</p></div>
       <div class="atlas-agency-total" id="atlasAgencyTotal">-</div></div>
       <div id="atlasAgencyChart" style="width:100%;min-height:400px"></div>
-      <p class="atlas-chart-note">Shares use the selected market's total value as the denominator. Values are AusTender contract awards, not annual expenditure.</p>
+      <p class="atlas-chart-note">Values are AusTender contract awards, not annual expenditure. Shares use the light (base) total as the denominator.</p>
     </section>"""
     script = r"""<script>(function(){
       const periods = __DATA__;
+      const BASE_LABEL = __BASE_LABEL__;
+      const OVERLAY_LABEL = __OVERLAY_LABEL__;
+      const fmt = v => { v = Number(v||0); const a = Math.abs(v);
+        if (a >= 1e9) return 'A$' + (v/1e9).toFixed(2) + 'B';
+        if (a >= 1e6) return 'A$' + (v/1e6).toFixed(1) + 'M';
+        return 'A$' + v.toFixed(0); };
       function renderAgency(){
         const control = document.querySelector('input[name="donutRange"]:checked');
         const i = control ? Number(control.value) : 0;
         const p = periods[i] || periods[0];
         if(!p){return;}
-        const list = p.rows.map(r=>({agency:String(r.agency),value:Number(r.value||0),contracts:Number(r.contracts||0)}))
-          .filter(r=>r.value!==0).sort((a,b)=>b.value-a.value);
-        const total = list.reduce((s,r)=>s+r.value,0);
+        const rows = p.rows.map(r=>({agency:String(r.agency),base:Number(r.base||0),bc:Number(r.base_contracts||0),
+                                     overlay:Number(r.overlay||0),oc:Number(r.overlay_contracts||0)}))
+          .filter(r=>r.base!==0||r.overlay!==0).sort((a,b)=>b.base-a.base);
+        const baseTotal = rows.reduce((s,r)=>s+r.base,0);
+        const overTotal = rows.reduce((s,r)=>s+r.overlay,0);
         const el = document.getElementById('atlasAgencyTotal');
-        if(el){el.textContent = 'Total: A$' + (Math.abs(total)>=1e9 ? (total/1e9).toFixed(2)+'B' : (total/1e6).toFixed(1)+'M');}
+        if(el){el.textContent = BASE_LABEL + ': ' + fmt(baseTotal) + '  ·  ' + OVERLAY_LABEL + ': ' + fmt(overTotal);}
         if(!window.Plotly){return;}
-        const ascending = list.slice().reverse();
-        const height = Math.max(390,ascending.length*42+100);
-        Plotly.react('atlasAgencyChart',[{type:'bar',orientation:'h',x:ascending.map(r=>r.value/1e9),y:ascending.map(r=>r.agency),
-          marker:{color:'#7951ae'},text:ascending.map(r=>total?((r.value/total)*100).toFixed(1)+'%':'n/a'),textposition:'outside',cliponaxis:false,
-          customdata:ascending.map(r=>[r.value,r.contracts]),
-          hovertemplate:'<b>%{y}</b><br>Contract value: A$%{customdata[0]:,.0f}<br>CNs: %{customdata[1]:,}<br>Market share: %{text}<extra></extra>'}],
-          {template:'plotly_white',height,margin:{t:22,b:54,l:330,r:100},xaxis:{title:'Contract value (A$ billions)',zeroline:true},
-           yaxis:{automargin:true},showlegend:false},{responsive:true,displayModeBar:false});
+        const asc = rows.slice().reverse();
+        const names = asc.map(r=>r.agency);
+        const basePct = asc.map(r=>baseTotal ? (r.base/baseTotal*100) : 0);
+        const overPct = asc.map(r=>r.base ? (r.overlay/r.base*100) : 0);
+        const height = Math.max(420, asc.length*46 + 120);
+        Plotly.react('atlasAgencyChart', [
+          {type:'bar', orientation:'h', name:BASE_LABEL, y:names, x:asc.map(r=>r.base/1e9),
+           marker:{color:'#D9C8F0'}, text:basePct.map(p=>p.toFixed(1)+'% of total'), textposition:'outside', cliponaxis:false,
+           customdata:asc.map(r=>[r.base, r.bc]),
+           hovertemplate:'<b>%{y}</b><br>'+BASE_LABEL+': A$%{customdata[0]:,.0f}<br>Contract notices: %{customdata[1]:,}<br>%{text}<extra></extra>'},
+          {type:'bar', orientation:'h', name:OVERLAY_LABEL, y:names, x:asc.map(r=>r.overlay/1e9),
+           marker:{color:'#4C1D95'},
+           customdata:asc.map((r,k)=>[r.overlay, r.oc, overPct[k]]),
+           hovertemplate:'<b>%{y}</b><br>'+OVERLAY_LABEL+': A$%{customdata[0]:,.0f}<br>Contract notices: %{customdata[1]:,}<br>Share of this agency\'s '+BASE_LABEL+': %{customdata[2]:.1f}%<extra></extra>'}
+        ], {template:'plotly_white', height, barmode:'overlay', showlegend:true,
+            legend:{orientation:'h', x:0, y:1.07},
+            margin:{t:40,b:54,l:330,r:100},
+            xaxis:{title:'Recorded contract value (A$ billions)', zeroline:true},
+            yaxis:{automargin:true}}, {responsive:true, displayModeBar:false});
       }
       document.querySelectorAll('input[name="donutRange"]').forEach(el=>el.addEventListener('change',renderAgency));
       renderAgency();
-    })();</script>""".replace('__DATA__', json.dumps(per_period, ensure_ascii=False, allow_nan=False))
-    # Keep the three-donut TAM Overview first; place agency analysis after it.
+    })();</script>""".replace('__DATA__', json.dumps(per_period, ensure_ascii=False, allow_nan=False)) \
+        .replace('__BASE_LABEL__', json.dumps(base_label)) \
+        .replace('__OVERLAY_LABEL__', json.dumps(overlay_label))
     donut_anchor = 'id="donutChart"'
     donut_at = html_text.find(donut_anchor)
     next_panel = html_text.find('<div class="panel"><h3>', donut_at + len(donut_anchor)) if donut_at >= 0 else -1
@@ -983,7 +1050,7 @@ def atlas_agency_breakdown(html_text: str, df: pd.DataFrame, value_col: str, mar
     return html_text.replace('</body>', script + '</body>', 1)
 
 
-def atlas_overview_extras(html_text: str, df: pd.DataFrame, value_col: str, market_mode: str) -> str:
+def atlas_overview_extras(html_text: str, df: pd.DataFrame, value_col: str, market_mode: str, full_df: pd.DataFrame | None = None) -> str:
     css = """<style>
     .atlas-health-quality,.atlas-health-agencies,.atlas-health-methodology{max-width:1480px;margin:22px auto;background:white;border:1px solid #e6e8f0;border-radius:16px;padding:24px;box-shadow:0 1px 3px #11182708}
     .atlas-health-quality h2,.atlas-health-agencies h2,.atlas-health-methodology h2{margin:0 0 6px;font-size:22px;color:#171326}
@@ -1008,7 +1075,7 @@ def atlas_overview_extras(html_text: str, df: pd.DataFrame, value_col: str, mark
     </style>"""
     html_text = html_text.replace('</head>', css+'</head>', 1)
     quality = atlas_quality_panel(df, value_col, market_mode)
-    html_text = atlas_agency_breakdown(html_text, df, value_col, market_mode)
+    html_text = atlas_agency_breakdown(html_text, df, value_col, market_mode, full_df=full_df)
     methodology = atlas_methodology_panel()
     # Keep executive-facing analysis at the top; data-quality diagnostics are last.
     html_text = html_text.replace('</body>', methodology + quality + '</body>', 1)
