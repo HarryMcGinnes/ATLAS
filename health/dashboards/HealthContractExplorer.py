@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from health_agency_groups import add_agency_groups
+
 AGENCY_COL = "Agency"
 DIVISION_CANDIDATES = ["Agency Division", "Agency Divison", "Division"]
 FY_COL = "Financial Year"
@@ -183,6 +185,7 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
 
     out = df.copy()
     out[AGENCY_COL] = clean_text(out[AGENCY_COL], "Unknown agency")
+    out = add_agency_groups(out)
     division_col = first_existing(out, DIVISION_CANDIDATES)
     if division_col:
         out["_division"] = clean_text(out[division_col], "Unspecified division")
@@ -318,7 +321,8 @@ def build_payload(df: pd.DataFrame) -> dict[str, object]:
     for _, row in df.iterrows():
         records.append({
             "is_addressable": bool(row.get("is_addressable", False)),
-            "agency": safe_str(row.get(AGENCY_COL), "Unknown agency"),
+            "agency": safe_str(row.get("agency_group"), "Unknown agency"),
+            "agency_original": safe_str(row.get(AGENCY_COL), "Unknown agency"),
             "division": safe_str(row.get("_division"), "Unspecified division"),
             "financial_year": safe_str(row.get(FY_COL), "Unknown FY"),
             "fy_start": int(row["_fy_start"]) if pd.notna(row.get("_fy_start")) else None,
@@ -341,7 +345,7 @@ def build_payload(df: pd.DataFrame) -> dict[str, object]:
             "extensions": safe_str(row.get(extensions_col)) if extensions_col else "",
         })
 
-    agencies = sorted(df[AGENCY_COL].dropna().astype(str).unique().tolist())
+    agencies = sorted(df["agency_group"].dropna().astype(str).unique().tolist())
     return {"records": records, "agencies": agencies}
 
 
@@ -558,6 +562,20 @@ def atm_section(df: pd.DataFrame, rss_file: str, timeout: int) -> tuple[str, str
 
 def build_html(payload: dict[str, object], output_path: Path, value_mode: str, freshness: str = "", atm_json: str = "[]", atm_timestamp: str = "Unavailable", atm_status: str = "") -> None:
     all_agencies = "All Health agencies"
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    _now = datetime.now(ZoneInfo("Australia/Sydney"))
+    current_fy = _now.year if _now.month >= 7 else _now.year - 1
+    fy_years = sorted({int(r["fy_start"]) for r in payload["records"] if r.get("fy_start") is not None}, reverse=True)
+    _fy_label = lambda y: f"FY{y}\u2013{str(y + 1)[-2:]}"
+    fy_option_html = "\n".join([
+        '<option value="all">All historical FYs (default)</option>',
+        '<option value="last5">Last 5 FYs</option>',
+        '<option value="last3">Last 3 FYs</option>',
+        f'<option value="current">Current {_fy_label(current_fy)}</option>',
+        *[f'<option value="{y}">{_fy_label(y)}</option>' for y in fy_years],
+        '<option value="unknown">Unknown FY</option>',
+    ])
     agency_options = "\n".join(
         [f'<option value="{html_escape(all_agencies)}">{html_escape(all_agencies)}</option>']
         + [f'<option value="{html_escape(a)}">{html_escape(a)}</option>' for a in payload["agencies"]]
@@ -746,6 +764,8 @@ select,input{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;
 <section class="toolbar">
 <div class="field"><label for="searchInput">Search description, supplier, contract ID or category</label><input id="searchInput" type="text" placeholder="Search contracts..."></div>
 <div class="field"><label for="agencySelect">Agency</label><select id="agencySelect">{agency_options}</select></div>
+<div class="field"><label for="fyFilter">Financial year</label><select id="fyFilter">{fy_option_html}</select></div>
+<div class="field"><label for="statusFilter">Contract status</label><select id="statusFilter"><option value="all">All contracts</option><option value="active">Active contracts</option></select></div>
 <div class="field"><label for="capabilityFilter">Service Offering</label><select id="capabilityFilter"><option value="All Service Offerings">All Service Offerings</option></select></div>
 <div class="field"><label for="supplierFilter">Supplier</label><select id="supplierFilter"><option value="All suppliers">All suppliers</option></select></div>
 <div class="field"><label for="labourHireFilter">Labour Hire</label><select id="labourHireFilter"><option value="all">All contracts</option><option value="yes">Labour hire only</option><option value="no">Exclude labour hire</option></select></div>
@@ -823,6 +843,7 @@ const ATM_FEED_AVAILABLE = {json.dumps(atm_timestamp != "Unavailable")};
 const DATA = {json.dumps(payload, ensure_ascii=False)};
 const ALL_AGENCIES = "All Health agencies";
 const DEFAULT_AGENCY = ALL_AGENCIES;
+const CURRENT_FY = {current_fy};
 const VALUE_BASIS = {json.dumps(value_basis)};
 const AS_AT_DATE = new Date().toISOString().slice(0,10);
 const YEAR_ROWS = new Map();
@@ -856,7 +877,9 @@ function median(values){{const a=values.filter(v=>Number.isFinite(v)).sort((x,y)
 
 function marketRows(){{return DATA.records.filter(r=>document.getElementById("marketMode").value==="all"||r.is_addressable)}}
 function agencyRows(){{const agency=document.getElementById('agencySelect').value;return marketRows().filter(r=>agency===ALL_AGENCIES||r.agency===agency)}}
-function scopeRows(){{return agencyRows()}}
+function fyStatusPass(r){{const v=document.getElementById('fyFilter').value;const y=r.fy_start;if(v==='all')return true;if(v==='unknown')return y===null||y===undefined;if(y===null||y===undefined)return false;if(v==='last5')return y>=CURRENT_FY-4&&y<=CURRENT_FY;if(v==='last3')return y>=CURRENT_FY-2&&y<=CURRENT_FY;if(v==='current')return y===CURRENT_FY;return String(y)===v}}
+function statusPass(r){{return document.getElementById('statusFilter').value!=='active'||contractStatus(r)==='Active contracts'}}
+function scopeRows(){{return agencyRows().filter(r=>fyStatusPass(r)&&statusPass(r))}}
 function rowsForOptions(exclude){{const search=document.getElementById('searchInput').value.trim().toLowerCase();const cap=document.getElementById('capabilityFilter').value;const sup=document.getElementById('supplierFilter').value;const min=Number(document.getElementById('minValueInput').value||0);const dated=document.getElementById('datedOnly').checked;const labour=document.getElementById('labourHireFilter').value;return scopeRows().filter(r=>{{const hay=[r.description,r.supplier,r.contract_id,r.category,r.procurement_method,r.capability,r.agency].join(' ').toLowerCase();return(!search||hay.includes(search))&&(exclude==='capability'||cap==='All Service Offerings'||r.capability===cap)&&(exclude==='supplier'||sup==='All suppliers'||r.supplier===sup)&&(labour==='all'||r.is_labour_hire===(labour==='yes'))&&Number(r.value||0)>=min&&(!dated||(r.start_date&&r.end_date))}})}}
 function setRanked(selectId,field,allLabel,exclude){{const select=document.getElementById(selectId);const prev=select.value||allLabel;const totals=new Map();rowsForOptions(exclude).forEach(r=>totals.set(r[field],(totals.get(r[field])||0)+Number(r.value||0)));const vals=[...totals.keys()].sort((a,b)=>(totals.get(b)-totals.get(a))||String(a).localeCompare(String(b)));select.innerHTML=[allLabel,...vals].map(v=>'<option value="'+esc(v)+'">'+esc(v===allLabel?v:v+' — '+money(totals.get(v)))+'</option>').join('');select.value=[...select.options].some(o=>o.value===prev)?prev:allLabel}}
 function refreshFilters(changed=null){{if(changed!=='capability')setRanked('capabilityFilter','capability','All Service Offerings','capability');if(changed!=='supplier')setRanked('supplierFilter','supplier','All suppliers','supplier')}}
@@ -1063,6 +1086,8 @@ function clearAllFilters() {{
   document.getElementById('minValueInput').value = '';
   document.getElementById('datedOnly').checked = false;
    document.getElementById('labourHireFilter').value = 'all';
+  document.getElementById('fyFilter').value = 'all';
+  document.getElementById('statusFilter').value = 'all';
 
   document.getElementById('capabilityFilter').innerHTML =
     '<option value="All Service Offerings">All Service Offerings</option>';
@@ -1094,7 +1119,7 @@ document.getElementById('marketMode').addEventListener('change',()=>{{refreshFil
   select.addEventListener('change', syncMarketSwitch);
   syncMarketSwitch();
 }})();
-document.getElementById('agencySelect').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('searchInput').addEventListener('input',()=>{{refreshFilters();render()}});document.getElementById('capabilityFilter').addEventListener('change',()=>{{refreshFilters('capability');render()}});document.getElementById('supplierFilter').addEventListener('change',()=>{{refreshFilters('supplier');render()}});document.getElementById('minValueInput').addEventListener('input',()=>{{refreshFilters();render()}});document.getElementById('datedOnly').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('labourHireFilter').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('clearFiltersBtn').addEventListener('click',clearAllFilters);
+document.getElementById('agencySelect').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('searchInput').addEventListener('input',()=>{{refreshFilters();render()}});document.getElementById('capabilityFilter').addEventListener('change',()=>{{refreshFilters('capability');render()}});document.getElementById('supplierFilter').addEventListener('change',()=>{{refreshFilters('supplier');render()}});document.getElementById('minValueInput').addEventListener('input',()=>{{refreshFilters();render()}});document.getElementById('datedOnly').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('labourHireFilter').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('clearFiltersBtn').addEventListener('click',clearAllFilters);document.getElementById('fyFilter').addEventListener('change',()=>{{refreshFilters();render()}});document.getElementById('statusFilter').addEventListener('change',()=>{{refreshFilters();render()}});
 
 // Accept only recognised query parameters; do not alter general Explorer defaults.
 const inbound=new URLSearchParams(window.location.search);
@@ -1104,6 +1129,8 @@ if(inbound.get('view')==='historical'||inbound.get('labour_hire')==='yes'){{
   const market=inbound.get('market');
   if(market==='tam'||market==='all'){{document.getElementById('marketMode').value=market;document.getElementById('marketMode').dispatchEvent(new Event('change',{{bubbles:true}}));}}
   if(inbound.get('labour_hire')==='yes')document.getElementById('labourHireFilter').value='yes';
+  const fyParam=inbound.get('fy');if(fyParam&&[...document.getElementById('fyFilter').options].some(o=>o.value===fyParam))document.getElementById('fyFilter').value=fyParam;
+  if(inbound.get('status')==='active')document.getElementById('statusFilter').value='active';
 }}
 refreshFilters();
 render();
