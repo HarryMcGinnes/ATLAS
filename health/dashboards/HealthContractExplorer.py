@@ -15,7 +15,7 @@ from pathlib import Path
 import pandas as pd
 
 from health_agency_groups import add_agency_groups
-from health_contract_families import add_family_fields, apply_family_fy, FAMILY_COL
+from health_contract_families import add_family_fields, apply_family_fy, drop_beyond_horizon, family_first, FAMILY_COL
 
 AGENCY_COL = "Agency"
 DIVISION_CANDIDATES = ["Agency Division", "Agency Divison", "Division"]
@@ -187,6 +187,7 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
     out = df.copy()
     out[AGENCY_COL] = clean_text(out[AGENCY_COL], "Unknown agency")
     out = add_agency_groups(out)
+    out, _excluded_future = drop_beyond_horizon(out)
     out = apply_family_fy(out)
     division_col = first_existing(out, DIVISION_CANDIDATES)
     if division_col:
@@ -200,7 +201,8 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
     out["_value"] = pd.to_numeric(out[value_col], errors="coerce").fillna(0)
     out["_total_value"] = pd.to_numeric(out[VALUE_COL], errors="coerce").fillna(0)
     out["_fy_start"] = out[FY_COL].map(financial_year_start)
-    out["_labour_hire"] = labour_hire_mask(out)
+    out["_labour_notice"] = labour_hire_mask(out)
+    out["_labour_hire"] = family_first(out, "_labour_notice").astype(bool)
 
 
     start_col = first_existing(out, START_DATE_CANDIDATES)
@@ -367,7 +369,7 @@ def build_payload(df: pd.DataFrame) -> dict[str, object]:
             "duration_label": fmt_duration(duration),
             "procurement_method": safe_str(base.get(PROCUREMENT_METHOD_COL)),
             "category": safe_str(base.get(CATEGORY_COL)),
-            "is_labour_hire": bool(grp["_labour_hire"].any()),
+            "is_labour_hire": bool(base.get("_labour_hire", False)),
             "extensions": safe_str(base.get(extensions_col)) if extensions_col else "",
         })
 
@@ -1205,7 +1207,9 @@ def main() -> None:
         .reset_index()
         .sort_values("value", ascending=False)
     )
-    agency_audit.to_csv(output_dir / "agency_division_procurement_audit.csv", index=False)
+    _audit_dir = Path(__file__).resolve().parents[2] / "audits" / "austender" / "health_explorer"
+    _audit_dir.mkdir(parents=True, exist_ok=True)
+    agency_audit.to_csv(_audit_dir / "agency_division_procurement_audit.csv", index=False)
 
     print("Health TAM Exploratory Analysis dashboard complete")
     print(f"Input: {input_path}")

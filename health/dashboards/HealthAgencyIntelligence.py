@@ -5,9 +5,13 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
+
+# Published docs/ must not carry CSV audits: they are written here instead.
+AGENCY_AUDIT_DIR = Path(__file__).resolve().parents[2] / 'audits' / 'austender' / 'health_agency'
+AGENCY_AUDIT_DIR.mkdir(parents=True, exist_ok=True)
 from zoneinfo import ZoneInfo
 import pandas as pd
-from health_contract_families import add_family_fields, apply_family_fy, count_families, FAMILY_COL
+from health_contract_families import add_family_fields, apply_family_fy, count_families, drop_beyond_horizon, family_first, FAMILY_COL
 from health_active_contracts import add_contract_status
 from health_agency_groups import add_agency_groups, write_agency_audit
 
@@ -35,6 +39,7 @@ def read_master(path):
     if so not in df: raise ValueError('Missing canonical Service Offering')
     df['_offering'] = df[so].fillna('Unresolved').astype(str).str.strip().replace({'':'Unresolved','Uncategorised':'Unresolved'})
     df.loc[~df['is_addressable'], '_offering'] = 'Non-addressable / Unclassified'
+    df, _excluded_future = drop_beyond_horizon(df)
     # Family rule: the original notice sets the financial year for the whole contract family.
     df = apply_family_fy(df)
     # Financial Year is the recorded AusTender notice FY, NOT a pro-rata spending year.
@@ -44,9 +49,53 @@ def read_master(path):
     df['_fy_start'] = pd.to_numeric(starts, errors='coerce').astype('Int64')
     df['_fy_key'] = df['_fy_start'].astype('string').fillna('unknown').astype(str)
     df = add_agency_groups(df)
-    df['_labour_hire'] = labour_hire_mask(df)
+    df['_labour_notice'] = labour_hire_mask(df)
+    df['_labour_hire'] = family_first(df, '_labour_notice').astype(bool)
     df = add_contract_status(df)
     return df
+
+
+LABOUR_TREND_YEARS = list(range(2012, 2028))
+
+
+def labour_trend_payload(frame: pd.DataFrame) -> dict:
+    """Labour hire value by commencement year, one value per contract family.
+
+    A family's full value (all its notices) is placed in the financial year its original
+    contract commenced. Values are not spread across contract terms.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from health_contract_families import family_first, FAMILY_COL
+
+    years = LABOUR_TREND_YEARS
+    now = datetime.now(ZoneInfo("Australia/Sydney"))
+    current_fy = now.year if now.month >= 7 else now.year - 1
+    lab = frame.loc[frame["_labour_hire"].astype(bool)].copy()
+    if lab.empty:
+        return {"years": years, "current_fy": current_fy, "series": {}, "coverage_pct": 0.0}
+    credible = lab["cn_family_date_status"].astype(str).str.startswith(("valid", "inferred"))
+    lab["_trend_start"] = family_first(
+        lab.assign(_raw=pd.to_datetime(lab["cn_family_start_date"], errors="coerce").where(credible)), "_raw"
+    )
+    fam = lab.groupby(FAMILY_COL).agg(
+        value=("Value", "sum"), start=("_trend_start", "first"), agency=("agency_group", "first")
+    )
+    total = float(fam["value"].sum())
+    dated = fam.loc[fam["start"].notna()].copy()
+    dated["fy"] = [d.year if d.month >= 7 else d.year - 1 for d in dated["start"]]
+    dated = dated.loc[dated["fy"].between(years[0], years[-1])]
+    covered = float(dated["value"].sum())
+    series = {}
+    for key, sub in [("__ALL__", dated)] + [(str(a), g) for a, g in dated.groupby("agency")]:
+        by = sub.groupby("fy")["value"].sum()
+        series[key] = [round(float(by.get(y, 0.0)) / 1e6, 3) for y in years]
+    return {
+        "years": years,
+        "current_fy": current_fy,
+        "series": series,
+        "coverage_pct": round(100 * covered / total, 1) if total else 0.0,
+    }
 
 
 # Lightweight, evidence-based labour-hire overlay. Independent of TAM/SO classification.
@@ -104,7 +153,7 @@ def payload(df):
         accenture_mask = bools(frame['is_accenture'])
         accenture_agencies = rows(frame.loc[accenture_mask], ['agency_group','_fy_key','_contract_status'])
         result[mode] = dict(accenture_agencies=accenture_agencies,relationships=relationships, expiring=expiring, total=total,contracts=count_families(frame),agencies=agencies,suppliers=suppliers,offerings=offerings,matrix=matrix,
-                            labour_agencies=labour_agencies, labour_suppliers=labour_suppliers)
+                            labour_agencies=labour_agencies, labour_suppliers=labour_suppliers, labour_trend=labour_trend_payload(frame))
     if 'is_accenture' not in df:
         raise ValueError('Missing is_accenture: cannot reconcile the donut wins with canonical master')
     if (bools(df['is_accenture']) & ~df['is_addressable']).any():
@@ -127,18 +176,45 @@ HTML = r'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name
 <div class="panel toolbar"><div class="field"><label for="agency">Agency</label><select id="agency"></select></div><div class="field" style="flex:0 1 225px;min-width:190px"><label for="fyFilter">Financial year</label><select id="fyFilter" aria-label="Financial year"></select></div><div class="field atlas-status-field" style="flex:0 1 auto;min-width:240px"><label>Contract status</label><div class="atlas-status-toggle" role="group" aria-label="Contract status"><button type="button" id="statusAll" class="active" aria-pressed="true">All contracts</button><button type="button" id="statusActive" aria-pressed="false">Active contracts</button></div></div><div class="modes"><button id="tam" aria-pressed="false">Accenture TAM</button><button id="all" class="active" aria-pressed="true">All Federal Health Market</button><button id="clear">Clear filters</button></div></div>
 <div class="kpis"><div class="kpi"><span>Agency contract value</span><strong id="value">–</strong></div><div class="kpi"><span>Contracts</span><strong id="contracts">–</strong></div><div class="kpi"><span>Suppliers</span><strong id="suppliers">–</strong></div><div class="kpi"><span>Largest supplier share</span><strong id="topshare">–</strong></div></div>
 <div class="two"><section class="panel"><h2>What this agency buys</h2><div id="offerChart" class="chart"></div></section><section class="panel"><h2>Who wins the contracts</h2><div id="supplierChart" class="chart"></div></section></div>
-<section class="panel" id="labourHireInsights"><div class="labour-head"><div><h2>Labour Hire Insights</h2><p class="note">Labour hire listings are generally too vague to reliably assess addressability, so they are excluded from TAM unless awarded to Accenture. All Federal Health Market includes these listings. Values are indicative contracted amounts, not headcount or actual expenditure.</p></div><a id="labourExplore" class="labour-link" href="HealthContractExplorer.html?view=historical&amp;labour_hire=yes#historical-contracts" target="_blank" rel="noopener noreferrer">View labour hire contracts ↗</a></div><div class="labour-layout"><div class="labour-kpis"><div><span>Contract value</span><strong id="labourValue">–</strong></div><div><span>Contracts</span><strong id="labourCount">–</strong></div><div><span>Share of selected market</span><strong id="labourShare">–</strong></div></div><div class="labour-suppliers"><h3>Top labour hire suppliers</h3><div id="labourSuppliers"></div></div></div><p class="note">Uses the selected agency, financial year, market and contract status. Under Accenture TAM, only labour hire notices already classified as addressable (including observed Accenture awards) appear. Under All Federal Health Market, excluded labour hire notices remain visible. The link opens Historical Contracts with the selected filters and Labour Hire = Yes.</p></section>
+<section class="panel" id="labourHireInsights"><div class="labour-head"><div><h2>Labour Hire Insights</h2><p class="note">Labour hire listings are generally too vague to reliably assess addressability, so they are excluded from TAM unless awarded to Accenture. All Federal Health Market includes these listings. Values are indicative contracted amounts, not headcount or actual expenditure.</p></div><a id="labourExplore" class="labour-link" href="HealthContractExplorer.html?view=historical&amp;labour_hire=yes#historical-contracts" target="_blank" rel="noopener noreferrer">View labour hire contracts ↗</a></div><div class="labour-layout"><div class="labour-kpis"><div><span>Contract value</span><strong id="labourValue">–</strong></div><div><span>Contracts</span><strong id="labourCount">–</strong></div><div><span>Share of selected market</span><strong id="labourShare">–</strong></div></div><div class="labour-suppliers"><h3>Top labour hire suppliers</h3><div id="labourSuppliers"></div></div></div><p class="note">Uses the selected agency, financial year, market and contract status. Under Accenture TAM, only labour hire notices already classified as addressable (including observed Accenture awards) appear. Under All Federal Health Market, excluded labour hire notices remain visible. The link opens Historical Contracts with the selected filters and Labour Hire = Yes.</p></section><section class='panel' id='labourTrend'><div><h2>Labour hire contract value by commencement year</h2><p class='note'>Each labour-hire contract is shown in the financial year its original contract commenced, with its full value. Values are not spread across contract terms. Recent years may be understated, because publication lags and most records have no usable start date. Follows the agency and market selections; ignores the financial-year and contract-status filters.</p></div><div id='labourTrendChart' style='width:100%;min-height:380px'></div><p class='note' id='labourTrendCoverage'></p></section>
 <section class="panel"><h2>Current agency–supplier relationships</h2><p class="note">Verified active contracts as at <span id="relationshipAsAt"></span>. Uses Contract Explorer's validated CN-family dates. The table shows active relationships even when All Contracts is selected; FY, agency and market selections still apply. Recorded values are not remaining contract value.</p><div id="relationships" class="matrix"></div></section>
 <section class="panel"><h2>Supplier × Service Offering breakdown</h2><p class="note">Each cell shows signed contract value. The count of contract notices is available on hover. Select a supplier row to focus on its offering mix.</p><div id="matrix" class="matrix"></div></section>
 <p class="note">Financial year is set by the original contract notice: the year it was published on AusTender. Amendments take their original's year, so each contract appears in one financial year. Financial-year filters are not annual cash expenditure; multiyear contract values are not spread across years. Historical contract values and negative amendments are retained. Source: canonical ATLAS Health master; supplier grouping and addressability are inherited unchanged. No independent reclassification is performed. Contract notices and amendments remain separate records.</p>
 </main><script>
 const DATA=__DATA__;let mode='all';let contractStatus='all';const $=id=>document.getElementById(id);const nf=new Intl.NumberFormat('en-AU');function money(x){let a=Math.abs(Number(x)||0);return (x<0?'−':'')+'A$'+(a>=1e9?(a/1e9).toFixed(2)+'B':a>=1e6?(a/1e6).toFixed(1)+'M':nf.format(Math.round(a)))}function pct(v){return Number.isFinite(v)?v.toFixed(1)+'%':'n/a'}function total(a){return a.reduce((s,x)=>s+x.value,0)}function group(data,k){let m=new Map();data.forEach(r=>{let n=r[k];if(!m.has(n))m.set(n,{name:n,value:0,contracts:0});let x=m.get(n);x.value+=r.value;x.contracts+=r.contracts});return [...m.values()].sort((a,b)=>b.value-a.value)}function setText(id,v){$(id).textContent=v}function chart(id,data){if(!window.Plotly)return;let d=data.filter(x=>x.value!==0).slice(0,15).reverse();Plotly.react(id,[{type:'bar',orientation:'h',x:d.map(x=>x.value/1e6),y:d.map(x=>x.name),marker:{color:'#8252b6'},customdata:d.map(x=>[x.contracts,x.value]),hovertemplate:'<b>%{y}</b><br>Value: A$%{customdata[1]:,.0f}<br>CNs: %{customdata[0]}<extra></extra>'}],{margin:{l:220,r:30,t:15,b:55},height:Math.max(370,d.length*35+90),xaxis:{title:'Net contract value (A$ millions)',zeroline:true},yaxis:{automargin:true},paper_bgcolor:'transparent',plot_bgcolor:'transparent'} ,{responsive:true,displayModeBar:false})}function matchesFY(r){let choice=$('fyFilter').value;let key=String(r._fy_key);if(choice==='all')return true;if(choice==='unknown')return key==='unknown';if(!/^\d{4}$/.test(key))return false;let y=Number(key),now=DATA.current_fy;if(choice==='last5')return y>=now-4&&y<=now;if(choice==='last3')return y>=now-2&&y<=now;if(choice==='current')return y===now;return key===choice}
 function fyOptions(){let year=DATA.current_fy;let label=y=>'FY'+y+'–'+String((y+1)%100).padStart(2,'0');return [{v:'all',l:'All historical FYs (default)'},{v:'last5',l:'Last 5 FYs'},{v:'last3',l:'Last 3 FYs'},{v:'current',l:'Current '+label(year)},...DATA.fys.slice().reverse().map(y=>({v:String(y),l:label(y)})),{v:'unknown',l:'Unknown FY'}]}
-function render(){let d=DATA[mode],agency=$('agency').value;let filter=a=>a.filter(r=>(agency==='__ALL__'||r.agency_group===agency)&&matchesFY(r)&&(contractStatus!=='active'||r._contract_status==='Active contracts'));let aa=filter(d.agencies),ss=filter(d.suppliers),oo=filter(d.offerings),mm=filter(d.matrix);let v=total(aa),c=aa.reduce((s,r)=>s+r.contracts,0);let sup=group(ss,'supplier_group'),off=group(oo,'_offering');setText('value',money(v));setText('contracts',nf.format(c));setText('suppliers',nf.format(sup.length));setText('topshare',v>0&&sup.length?pct(sup[0].value/v*100):'n/a');chart('offerChart',off);chart('supplierChart',sup);let labourAg=filter(d.labour_agencies),labourSup=filter(d.labour_suppliers);let lv=total(labourAg),lc=labourAg.reduce((s,r)=>s+r.contracts,0),ls=group(labourSup,'supplier_group');setText('labourValue',money(lv));setText('labourCount',nf.format(lc));setText('labourShare',v>0?pct(lv/v*100):'n/a');$('labourSuppliers').innerHTML=ls.length?ls.slice(0,5).map(x=>'<div class="labour-supplier"><span>'+esc(x.name)+'</span><b>'+money(x.value)+'</b></div>').join(''):'<span class="note">No matching labour hire contracts.</span>';let relationshipRows=d.relationships.filter(r=>(agency==='__ALL__'||r.agency_group===agency)&&matchesFY(r));
+function renderLabourTrend(){
+  const el=document.getElementById('labourTrendChart');
+  if(!el||!window.Plotly)return;
+  const t=(DATA[mode]&&DATA[mode].labour_trend)||{years:[],series:{},current_fy:2026,coverage_pct:0};
+  const agency=document.getElementById('agency').value;
+  const series=t.series||{};
+  const vals=series[agency]||series['__ALL__']||[];
+  const years=t.years||[];
+  const cur=Number(t.current_fy)||2026;
+  const label=y=>'FY'+y+'-'+String(y+1).slice(-2);
+  const idx=years.map((y,i)=>i);
+  const actualIdx=idx.filter(i=>years[i]<cur);
+  const partIdx=idx.filter(i=>years[i]>=cur&&years[i]<=cur+1);
+  const fit=idx.filter(i=>years[i]>=2019&&years[i]<=2024);
+  const n=fit.length;let sx=0,sy=0,sxx=0,sxy=0;
+  fit.forEach(i=>{const x=years[i],y=Number(vals[i]||0);sx+=x;sy+=y;sxx+=x*x;sxy+=x*y});
+  const denom=n*sxx-sx*sx;const b=denom?(n*sxy-sx*sy)/denom:0;const a=n?(sy-b*sx)/n:0;
+  const trendYears=years.filter(y=>y>=2019&&y<=cur+1);
+  const traces=[
+    {type:'scatter',mode:'lines+markers',name:'Recorded (complete years)',x:actualIdx.map(i=>label(years[i])),y:actualIdx.map(i=>Number(vals[i]||0)),line:{color:'#a100ff'},marker:{color:'#a100ff'},hovertemplate:'%{x}<br>A$%{y:,.1f}M<extra></extra>'},
+    {type:'scatter',mode:'markers',name:'Part year (in progress)',x:partIdx.map(i=>label(years[i])),y:partIdx.map(i=>Number(vals[i]||0)),marker:{color:'#ffffff',size:10,line:{color:'#a100ff',width:2}},hovertemplate:'%{x}<br>A$%{y:,.1f}M (part year)<extra></extra>'},
+    {type:'scatter',mode:'lines',name:'Trend (fitted FY2019-FY2024)',x:trendYears.map(label),y:trendYears.map(y=>a+b*y),line:{color:'#6b7280',dash:'dash'},hovertemplate:'%{x}<br>Trend A$%{y:,.1f}M<extra></extra>'}
+  ];
+  Plotly.react('labourTrendChart',traces,{template:'plotly_white',height:380,margin:{t:30,b:90,l:90,r:20},legend:{orientation:'h',y:1.12},xaxis:{title:'Financial year the contract commenced',tickangle:-45},yaxis:{title:'Recorded contract value (A$ millions)',tickformat:',.0f',rangemode:'tozero'}},{responsive:true,displayModeBar:false});
+  const c=document.getElementById('labourTrendCoverage');
+  if(c)c.textContent='Covers '+t.coverage_pct+'% of labour hire value with a usable start date.';
+}
+function render(){renderLabourTrend();let d=DATA[mode],agency=$('agency').value;let filter=a=>a.filter(r=>(agency==='__ALL__'||r.agency_group===agency)&&matchesFY(r)&&(contractStatus!=='active'||r._contract_status==='Active contracts'));let aa=filter(d.agencies),ss=filter(d.suppliers),oo=filter(d.offerings),mm=filter(d.matrix);let v=total(aa),c=aa.reduce((s,r)=>s+r.contracts,0);let sup=group(ss,'supplier_group'),off=group(oo,'_offering');setText('value',money(v));setText('contracts',nf.format(c));setText('suppliers',nf.format(sup.length));setText('topshare',v>0&&sup.length?pct(sup[0].value/v*100):'n/a');chart('offerChart',off);chart('supplierChart',sup);let labourAg=filter(d.labour_agencies),labourSup=filter(d.labour_suppliers);let lv=total(labourAg),lc=labourAg.reduce((s,r)=>s+r.contracts,0),ls=group(labourSup,'supplier_group');setText('labourValue',money(lv));setText('labourCount',nf.format(lc));setText('labourShare',v>0?pct(lv/v*100):'n/a');$('labourSuppliers').innerHTML=ls.length?ls.slice(0,5).map(x=>'<div class="labour-supplier"><span>'+esc(x.name)+'</span><b>'+money(x.value)+'</b></div>').join(''):'<span class="note">No matching labour hire contracts.</span>';let relationshipRows=d.relationships.filter(r=>(agency==='__ALL__'||r.agency_group===agency)&&matchesFY(r));
 let byRel=new Map();relationshipRows.forEach(r=>{let key=r.agency_group+'\u0001'+r.supplier_group;let old=byRel.get(key);if(!old){old={name:r.supplier_group,agency:r.agency_group,value:0,contracts:0,next_expiry:r.next_expiry};byRel.set(key,old)}old.value+=r.value;old.contracts+=r.contracts;if(r.next_expiry&&(!old.next_expiry||r.next_expiry<old.next_expiry))old.next_expiry=r.next_expiry});
 let ranked=[...byRel.values()].sort((a,b)=>b.value-a.value).slice(0,35);$('relationshipAsAt').textContent=DATA.as_at;
 $('relationships').innerHTML=ranked.length?'<table><thead><tr><th>Supplier</th><th>Agency</th><th>Active contracts</th><th>Recorded value</th><th>Next expiry</th></tr></thead><tbody>'+ranked.map(r=>'<tr><td>'+esc(r.name)+'</td><td>'+esc(r.agency)+'</td><td>'+nf.format(r.contracts)+'</td><td>'+money(r.value)+'</td><td>'+esc(r.next_expiry||'Unknown')+'</td></tr>').join('')+'</tbody></table>':'<p class="note">No verified active contract relationships in this selection.</p>';
-let query=new URLSearchParams({view:'historical',labour_hire:'yes',market:mode});if(agency!=='__ALL__'){query.set('agency',agency);query.set('agency_group',agency)}query.set('fy',$('fyFilter').value);if(contractStatus==='active')query.set('status','active');$('labourExplore').href='HealthContractExplorer.html?'+query.toString()+'#historical-contracts';let offerings=[...new Set(mm.map(x=>x._offering))].sort(), suppliers=group(ss,'supplier_group').slice(0,25);let matrixMap=new Map();mm.forEach(x=>{let k=x.supplier_group+'\u0001'+x._offering;let old=matrixMap.get(k);if(old){old.value+=x.value;old.contracts+=x.contracts}else matrixMap.set(k,{...x})});let h='<table><thead><tr><th>Supplier</th>'+offerings.map(x=>'<th>'+esc(x)+'</th>').join('')+'<th>Total</th></tr></thead><tbody>';suppliers.forEach(s=>{h+='<tr><td>'+esc(s.name)+'</td>';offerings.forEach(o=>{let r=matrixMap.get(s.name+'\u0001'+o);h+='<td title="'+(r?r.contracts:0)+' CNs">'+(r?money(r.value):'–')+'</td>'});h+='<td><b>'+money(s.value)+'</b></td></tr>'});h+='</tbody></table>';$('matrix').innerHTML=h}function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}$('fyFilter').innerHTML=fyOptions().map(x=>'<option value="'+x.v+'">'+x.l+'</option>').join('');$('fyFilter').value='all';let agencies=[...new Set(DATA.all.agencies.map(x=>x.agency_group))].sort();$('agency').innerHTML='<option value="__ALL__">All Federal Health agencies</option>'+agencies.map(x=>'<option value="'+esc(x)+'">'+esc(x)+'</option>').join('');function setMode(m){mode=m;['tam','all'].forEach(x=>{$(x).classList.toggle('active',x===m);$(x).setAttribute('aria-pressed',String(x===m))});render()}$('agency').addEventListener('change',render);$('fyFilter').addEventListener('change',render);function setContractStatus(s){contractStatus=s;[['statusAll','all'],['statusActive','active']].forEach(([id,value])=>{$(id).classList.toggle('active',s===value);$(id).setAttribute('aria-pressed',String(s===value))});render()}$('statusAll').onclick=()=>setContractStatus('all');$('statusActive').onclick=()=>setContractStatus('active');$('tam').onclick=()=>setMode('tam');$('all').onclick=()=>setMode('all');$('clear').onclick=()=>{$('agency').value='__ALL__';$('fyFilter').value='all';contractStatus='all';$('statusAll').classList.add('active');$('statusActive').classList.remove('active');$('statusAll').setAttribute('aria-pressed','true');$('statusActive').setAttribute('aria-pressed','false');setMode('all')};render();
+let query=new URLSearchParams({view:'historical',labour_hire:'yes',market:mode});if(agency!=='__ALL__'){query.set('agency',agency);query.set('agency_group',agency)}query.set('fy',$('fyFilter').value);if(contractStatus==='active')query.set('status','active');$('labourExplore').href='HealthContractExplorer.html?'+query.toString()+'#historical-contracts';let offerings=[...new Set(mm.map(x=>x._offering))].sort(), suppliers=group(ss,'supplier_group').slice(0,25);let matrixMap=new Map();mm.forEach(x=>{let k=x.supplier_group+'\u0001'+x._offering;let old=matrixMap.get(k);if(old){old.value+=x.value;old.contracts+=x.contracts}else matrixMap.set(k,{...x})});let h='<table><thead><tr><th>Supplier</th>'+offerings.map(x=>'<th>'+esc(x)+'</th>').join('')+'<th>Total</th></tr></thead><tbody>';suppliers.forEach(s=>{h+='<tr><td>'+esc(s.name)+'</td>';offerings.forEach(o=>{let r=matrixMap.get(s.name+'\u0001'+o);h+='<td title="'+(r?r.contracts:0)+' CNs">'+(r?money(r.value):'–')+'</td>'});h+='<td><b>'+money(s.value)+'</b></td></tr>'});h+='</tbody></table>';$('matrix').innerHTML=h}function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}$('fyFilter').innerHTML=fyOptions().map(x=>'<option value="'+x.v+'">'+x.l+'</option>').join('');$('fyFilter').value='all';let agencies=[...new Set(DATA.all.agencies.map(x=>x.agency_group))].sort();$('agency').innerHTML='<option value="__ALL__">All Federal Health agencies</option>'+agencies.map(x=>'<option value="'+esc(x)+'">'+esc(x)+'</option>').join('');function setMode(m){mode=m;['tam','all'].forEach(x=>{$(x).classList.toggle('active',x===m);$(x).setAttribute('aria-pressed',String(x===m))});render()}$('agency').addEventListener('change',render);$('fyFilter').addEventListener('change',render);function setContractStatus(s){contractStatus=s;[['statusAll','all'],['statusActive','active']].forEach(([id,value])=>{$(id).classList.toggle('active',s===value);$(id).setAttribute('aria-pressed',String(s===value))});render()}$('statusAll').onclick=()=>setContractStatus('all');$('statusActive').onclick=()=>setContractStatus('active');$('tam').onclick=()=>setMode('tam');$('all').onclick=()=>setMode('all');$('clear').onclick=()=>{$('agency').value='__ALL__';$('fyFilter').value='all';contractStatus='all';$('statusAll').classList.add('active');$('statusActive').classList.remove('active');$('statusAll').setAttribute('aria-pressed','true');$('statusActive').setAttribute('aria-pressed','false');render()};render();
 </script></body></html>'''
 
 def main():
@@ -149,7 +225,7 @@ def main():
     df=read_master(Path(args.input))
     data=payload(df)
     out=Path(args.output_dir);out.mkdir(parents=True,exist_ok=True)
-    audit=write_agency_audit(df, out/'HealthAgencyGroupingAudit.csv')
+    audit=write_agency_audit(df, AGENCY_AUDIT_DIR / 'HealthAgencyGroupingAudit.csv')
     print(f'Health agency grouping audit: {audit}')
     stamp=datetime.now(ZoneInfo('Australia/Sydney')).strftime('%d %b %Y %H:%M %Z')
     rendered=HTML.replace('__STAMP__',html.escape(stamp)).replace('__DATA__',json.dumps(data,ensure_ascii=False,allow_nan=False).replace('<','\\u003c'))

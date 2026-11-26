@@ -11,9 +11,13 @@ import json
 import math
 from datetime import datetime
 from pathlib import Path
+
+# Published docs/ must not carry CSV audits: they are written here instead.
+AGENCY_AUDIT_DIR = Path(__file__).resolve().parents[2] / 'audits' / 'austender' / 'health_agency'
+AGENCY_AUDIT_DIR.mkdir(parents=True, exist_ok=True)
 from zoneinfo import ZoneInfo
 import pandas as pd
-from health_contract_families import add_family_fields, apply_family_fy, count_families, FAMILY_COL
+from health_contract_families import add_family_fields, apply_family_fy, count_families, drop_beyond_horizon, FAMILY_COL
 from health_active_contracts import add_contract_status
 from health_agency_groups import add_agency_groups, write_agency_audit
 
@@ -50,6 +54,7 @@ def load(path: Path) -> pd.DataFrame:
         raise ValueError('Some Accenture contracts are not addressable: investigate classification')
     df['Agency'] = df['Agency'].fillna('Unspecified agency').astype(str).str.strip().replace('', 'Unspecified agency')
     df['supplier_group'] = df['supplier_group'].fillna('Unknown supplier').astype(str).str.strip().replace('', 'Unknown supplier')
+    df, _excluded_future = drop_beyond_horizon(df)
     df = apply_family_fy(df)
     col = 'service_offering' if 'service_offering' in df else 'Service Offering'
     if col not in df:
@@ -154,7 +159,7 @@ function setStatus(status){statusMode=status;[['statusAll','all'],['statusActive
 $('agency').innerHTML='<option value="__ALL__">All Federal Health agencies</option>'+DATA.agencies.map(x=>'<option value="'+escapeHtml(x)+'">'+escapeHtml(x)+'</option>').join('');
 $('period').innerHTML=periodOptions().map(x=>'<option value="'+x.v+'">'+escapeHtml(x.l)+'</option>').join('');$('period').value='all';
 $('agency').onchange=()=>render();$('period').onchange=()=>render();$('selected').onchange=()=>render(false);$('compare').onchange=()=>render(false);$('tam').onclick=()=>setMode('tam');$('all').onclick=()=>setMode('all');$('statusAll').onclick=()=>setStatus('all');$('statusActive').onclick=()=>setStatus('active');
-$('clear').onclick=()=>{$('agency').value='__ALL__';$('period').value='all';$('selected').value='';$('compare').value='';setStatus('all');setMode('all')};render();
+$('clear').onclick=()=>{$('agency').value='__ALL__';$('period').value='all';$('selected').value='';$('compare').value='';setStatus('all')};render();
 </script></body></html>'''
 
 def main():
@@ -172,7 +177,7 @@ def main():
             parser.error('Value Per Year contains null values')
     data=build_data(df)
     out=Path(args.output_dir);out.mkdir(parents=True,exist_ok=True)
-    audit=write_agency_audit(df,out/'HealthAgencyGroupingAudit.csv')
+    audit=write_agency_audit(df, AGENCY_AUDIT_DIR / 'HealthAgencyGroupingAudit.csv')
     stamp=datetime.now(ZoneInfo('Australia/Sydney')).strftime('%d %b %Y %H:%M %Z')
     html_page=PAGE.replace('__DATA__',json.dumps(data,ensure_ascii=False,allow_nan=False).replace('<','\\u003c')).replace('__STAMP__',html.escape(stamp)).replace('__AS_AT__',html.escape(data['as_at']))
     path=out/'HealthCompetitiveIntelligence.html';path.write_text(html_page,encoding='utf-8')

@@ -70,3 +70,51 @@ def apply_family_fy(df: pd.DataFrame, fy_col: str = "Financial Year", cn_col: st
     first = ordered.groupby(FAMILY_COL, sort=False).head(1).set_index(FAMILY_COL)[fy_col]
     out[fy_col] = out[FAMILY_COL].map(first).fillna("").astype(str)
     return out
+
+
+HORIZON_MONTHS = 6
+
+
+def family_first(df: pd.DataFrame, col: str) -> pd.Series:
+    """Value of `col` taken from each notice's family original (earliest notice if no original).
+
+    The result is aligned to df's index, so every notice in a family gets the same value.
+    """
+    work = add_family_fields(df)
+    version = (
+        work["CN ID"].astype("string").str.extract(r"-A(\d+)$", expand=False).fillna("0").astype(int).to_numpy()
+    )
+    ordered = work.assign(_version=version)[[FAMILY_COL, "_version", col]].sort_values(
+        "_version", kind="stable"
+    )
+    first = ordered.groupby(FAMILY_COL, sort=False).head(1).set_index(FAMILY_COL)[col]
+    return work[FAMILY_COL].map(first)
+
+
+def horizon_cutoff(months: int = HORIZON_MONTHS) -> pd.Timestamp:
+    """Latest start date allowed: today (Sydney) plus `months`."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    today = datetime.now(ZoneInfo("Australia/Sydney")).date()
+    return pd.Timestamp(today) + pd.DateOffset(months=months)
+
+
+def drop_beyond_horizon(df: pd.DataFrame, months: int = HORIZON_MONTHS) -> tuple[pd.DataFrame, int]:
+    """Remove contract families that start more than `months` in the future.
+
+    Start date: the family's credible start (valid or inferred), otherwise the notice's
+    own start date. Returns (kept rows, number of notices removed).
+    """
+    work = add_family_fields(df)
+    cutoff = horizon_cutoff(months)
+    if "cn_family_start_date" in work.columns and "cn_family_date_status" in work.columns:
+        credible = work["cn_family_date_status"].astype(str).str.startswith(("valid", "inferred"))
+        start = pd.to_datetime(work["cn_family_start_date"], errors="coerce").where(credible)
+    else:
+        start = pd.Series(pd.NaT, index=work.index)
+    if "Start Date" in work.columns:
+        start = start.fillna(pd.to_datetime(work["Start Date"], errors="coerce"))
+    fam_start = family_first(work.assign(_horizon_start=start), "_horizon_start")
+    keep = ~(fam_start > cutoff)
+    return df.loc[keep].copy(), int((~keep).sum())

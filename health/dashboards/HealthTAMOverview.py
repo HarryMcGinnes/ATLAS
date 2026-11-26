@@ -5,10 +5,13 @@ import json
 import re
 from pathlib import Path
 
+# Audit CSVs and parquet are written here, outside the published docs/ folder.
+AUDIT_DIR = Path(__file__).resolve().parents[2] / "audits" / "austender" / "health_tam"
+
 import pandas as pd
 
 from health_agency_groups import add_agency_groups, write_agency_audit
-from health_contract_families import add_family_fields, apply_family_fy, count_families, FAMILY_COL
+from health_contract_families import add_family_fields, apply_family_fy, count_families, drop_beyond_horizon, FAMILY_COL
 
 VALUE_COL = "Value"
 ANNUALISED_VALUE_COL = "Value Per Year"
@@ -215,6 +218,7 @@ def _as_bool_series(series: pd.Series) -> pd.Series:
 
 
 def classify(df: pd.DataFrame) -> pd.DataFrame:
+    df, _excluded_future = drop_beyond_horizon(df)
     """Prepare the dashboard from the canonical Health master dataset.
 
     Addressability and Service Offering are now produced upstream by
@@ -634,16 +638,16 @@ document.getElementById('donutLegend3').innerHTML=legendTitle('3 · Accenture Wi
 function renderService(){
   const d=DATA.service[selected('serviceRange')];
   const r=(d.rows||[]).slice().sort((a,b)=>(a.accenture-b.accenture)||(a.total-b.total));
-  const accenture=r.map(x=>Number(x.accenture_b||0));
-  const others=r.map(x=>Math.max(0,Number(x.total_b||0)-Number(x.accenture_b||0)));
-  const mx=Math.max(.1,...r.map((x,i)=>Math.max(accenture[i],others[i])));
-  function shortMoney(v){v=Number(v||0)*1e9;const a=Math.abs(v);if(a>=1e9)return '$'+(v/1e9).toFixed(2)+'B';if(a>=1e6)return '$'+(v/1e6).toFixed(1)+'M';if(a>=1e3)return '$'+(v/1e3).toFixed(1)+'K';return '$'+v.toFixed(0);}
+  const accenture=r.map(x=>Number(x.accenture_b||0)*1000);
+  const others=r.map(x=>Math.max(0,Number(x.total_b||0)-Number(x.accenture_b||0))*1000);
+  const mx=Math.max(100,...r.map((x,i)=>Math.max(accenture[i],others[i])));
+  function shortMoney(v){v=Number(v||0)*1e6;const a=Math.abs(v);if(a>=1e9)return '$'+(v/1e9).toFixed(2)+'B';if(a>=1e6)return '$'+(v/1e6).toFixed(1)+'M';if(a>=1e3)return '$'+(v/1e3).toFixed(1)+'K';return '$'+v.toFixed(0);}
   function sharePct(x){return x.total>0?(x.accenture/x.total*100):0;}
   const otherName=MARKET_MODE==='tam'?'Other addressable market':'Other selected market';
   const segmentLabel=MARKET_MODE==='tam'?'Total addressable segment':'Total selected-market segment';
   const accTrace={type:'bar',orientation:'h',y:r.map(x=>x.name),x:accenture,name:'Accenture awards',marker:{color:'#A100FF'},offsetgroup:'accenture',text:r.map((x,i)=>{const share=x.total>0?(x.accenture/x.total*100):0;return shortMoney(accenture[i])+'  ·  '+share.toFixed(1)+'% share';}),textposition:'outside',cliponaxis:false,textfont:{size:12,color:'#6B00B6'},customdata:r.map((x,i)=>[x.total_label,sharePct(x),shortMoney(others[i])]),hovertemplate:'<b>%{y}</b><br>Accenture awards: %{text}<br>'+segmentLabel+': %{customdata[0]}<br>'+otherName+': %{customdata[2]}<extra></extra>'};
   const othersTrace={type:'bar',orientation:'h',y:r.map(x=>x.name),x:others,name:otherName,marker:{color:'#D9DEE8'},offsetgroup:'others',text:others.map(v=>shortMoney(v)),textposition:'outside',cliponaxis:false,textfont:{size:12,color:'#344054'},customdata:r.map(x=>x.total_label),hovertemplate:'<b>%{y}</b><br>'+otherName+': %{text}<br>'+segmentLabel+': %{customdata}<extra></extra>'};
-  Plotly.react('serviceChart',[accTrace,othersTrace],{height:Math.max(560,r.length*105+170),barmode:'group',bargap:.30,bargroupgap:.08,margin:{l:300,r:155,t:28,b:92},xaxis:{title:'Contract value (A$ billions)',range:[0,mx*1.30],showgrid:true,gridcolor:'#EEF1F5',zeroline:true,zerolinecolor:'#98A2B3',tickfont:{size:12},titlefont:{size:12,color:'#475467'}},yaxis:{title:'',automargin:true,tickfont:{size:13,color:'#1F2937'},categoryorder:'array',categoryarray:r.map(x=>x.name)},legend:{orientation:'h',x:0,y:-0.14,xanchor:'left',yanchor:'top',font:{size:12}},paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)'},{responsive:true,displayModeBar:false,staticPlot:true,scrollZoom:false,doubleClick:false});
+  Plotly.react('serviceChart',[accTrace,othersTrace],{height:Math.max(560,r.length*105+170),barmode:'group',bargap:.30,bargroupgap:.08,margin:{l:300,r:155,t:28,b:92},xaxis:{title:'Contract value (A$ millions)',tickformat:',.0f',range:[0,mx*1.30],showgrid:true,gridcolor:'#EEF1F5',zeroline:true,zerolinecolor:'#98A2B3',tickfont:{size:12},titlefont:{size:12,color:'#475467'}},yaxis:{title:'',automargin:true,tickfont:{size:13,color:'#1F2937'},categoryorder:'array',categoryarray:r.map(x=>x.name)},legend:{orientation:'h',x:0,y:-0.14,xanchor:'left',yanchor:'top',font:{size:12}},paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)'},{responsive:true,displayModeBar:false,staticPlot:true,scrollZoom:false,doubleClick:false});
 }
 function renderSupplier(){const d=DATA.supplier[selected('supplierRange')],r=(d.rows||[]).slice().sort((a,b)=>a.share-b.share),mx=Math.max(.1,...r.map(x=>x.share));Plotly.react('supplierChart',[{type:'bar',orientation:'h',y:r.map(x=>x.name),x:r.map(x=>x.share),marker:{color:r.map(x=>x.name==='Accenture'?'#A100FF':'#667785')},text:r.map(x=>fmtPct(x.share)),textposition:'outside',cliponaxis:false,customdata:r.map(x=>[x.value_label,x.contracts]),hovertemplate:'<b>%{y}</b><br>Share: %{x:.1f}%<br>Value: %{customdata[0]}<br>Contracts: %{customdata[1]}<extra></extra>'}],{height:760,margin:{l:260,r:100,t:20,b:70},xaxis:{title:SUPPLIER_AXIS_TITLE,range:[0,mx*1.18],ticksuffix:'%'}},{responsive:true,displayModeBar:false});}
 function renderAll(){renderDonut();renderService();renderSupplier();}
@@ -718,7 +722,8 @@ def main() -> None:
         raise SystemExit(f"Missing value column: {value_col}")
 
     validate_health_tam_reconciliation(df, value_col)
-    write_agency_audit(df, outdir / "health_agency_grouping_audit.csv")
+    AUDIT_DIR.mkdir(parents=True, exist_ok=True)
+    write_agency_audit(df, AUDIT_DIR / "health_agency_grouping_audit.csv")
 
     audit_cols = [
         c for c in [
@@ -740,13 +745,13 @@ def main() -> None:
         if c in df.columns
     ]
     df[audit_cols].sort_values(VALUE_COL, ascending=False).to_csv(
-        outdir / "health_tam_classification_audit.csv",
+        AUDIT_DIR / "health_tam_classification_audit.csv",
         index=False,
     )
     try:
-        df.to_parquet(outdir / "health_tam_classified.parquet", index=False)
+        df.to_parquet(AUDIT_DIR / "health_tam_classified.parquet", index=False)
     except ImportError:
-        df.to_csv(outdir / "health_tam_classified.csv", index=False)
+        df.to_csv(AUDIT_DIR / "health_tam_classified.csv", index=False)
         print("Parquet engine not installed; wrote classified CSV instead.")
 
     all_summary = summary(df, value_col)
@@ -756,15 +761,15 @@ def main() -> None:
     tam_summary = summary(tam_df, value_col)
 
     pd.DataFrame([all_summary]).to_csv(
-        outdir / "health_market_summary.csv",
+        AUDIT_DIR / "health_market_summary.csv",
         index=False,
     )
     pd.DataFrame([tam_summary]).to_csv(
-        outdir / "health_market_summary_tam.csv",
+        AUDIT_DIR / "health_market_summary_tam.csv",
         index=False,
     )
     pd.DataFrame([all_summary]).to_csv(
-        outdir / "health_market_summary_all_market.csv",
+        AUDIT_DIR / "health_market_summary_all_market.csv",
         index=False,
     )
 
@@ -790,7 +795,7 @@ def main() -> None:
     )
     print(f"TAM dashboard:            {tam_dashboard}")
     print(f"All Market dashboard:     {all_dashboard}")
-    print(f"Classification audit:     {outdir / 'health_tam_classification_audit.csv'}")
+    print(f"Classification audit:     {AUDIT_DIR / 'health_tam_classification_audit.csv'}")
     print("=" * 72)
 
 
@@ -1034,18 +1039,18 @@ def atlas_agency_breakdown(html_text: str, df: pd.DataFrame, value_col: str, mar
         const overPct = asc.map(r=>r.base ? (r.overlay/r.base*100) : 0);
         const height = Math.max(420, asc.length*46 + 120);
         Plotly.react('atlasAgencyChart', [
-          {type:'bar', orientation:'h', name:BASE_LABEL, y:names, x:asc.map(r=>r.base/1e9),
+          {type:'bar', orientation:'h', name:BASE_LABEL, y:names, x:asc.map(r=>r.base/1e6),
            marker:{color:'#D9C8F0'}, text:basePct.map(p=>p.toFixed(1)+'% of total'), textposition:'outside', cliponaxis:false,
            customdata:asc.map(r=>[r.base, r.bc]),
            hovertemplate:'<b>%{y}</b><br>'+BASE_LABEL+': A$%{customdata[0]:,.0f}<br>Contracts: %{customdata[1]:,}<br>%{text}<extra></extra>'},
-          {type:'bar', orientation:'h', name:OVERLAY_LABEL, y:names, x:asc.map(r=>r.overlay/1e9),
+          {type:'bar', orientation:'h', name:OVERLAY_LABEL, y:names, x:asc.map(r=>r.overlay/1e6),
            marker:{color:'#4C1D95'},
            customdata:asc.map((r,k)=>[r.overlay, r.oc, overPct[k]]),
            hovertemplate:'<b>%{y}</b><br>'+OVERLAY_LABEL+': A$%{customdata[0]:,.0f}<br>Contracts: %{customdata[1]:,}<br>Share of this agency\'s '+BASE_LABEL+': %{customdata[2]:.1f}%<extra></extra>'}
         ], {template:'plotly_white', height, barmode:'overlay', showlegend:true,
             legend:{orientation:'h', x:0, y:1.07},
             margin:{t:40,b:54,l:330,r:100},
-            xaxis:{title:'Recorded contract value (A$ billions)', zeroline:true},
+            xaxis:{title:'Recorded contract value (A$ millions)', zeroline:true, tickformat:',.0f', ticksuffix:''},
             yaxis:{automargin:true}}, {responsive:true, displayModeBar:false});
       }
       document.querySelectorAll('input[name="donutRange"]').forEach(el=>el.addEventListener('change',renderAgency));
