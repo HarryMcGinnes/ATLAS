@@ -962,17 +962,17 @@ def _agency_totals(frame: pd.DataFrame, value_col: str) -> dict:
 
 
 def atlas_agency_breakdown(html_text: str, df: pd.DataFrame, value_col: str, market_mode: str = "tam", full_df: pd.DataFrame | None = None) -> str:
-    """FY-linked agency chart.
+    """FY-linked agency rows, styled to match the Federal Health home page.
 
-    Light bars: the base market by agency (TAM on the TAM page; all market on the All Market page).
-    Dark bars: Accenture wins within that base (on the TAM page); the TAM on the All Market page.
+    Bar: the base market by agency (TAM on the TAM page; all market on the All Market page).
+    Dark segment inside each bar: Accenture wins within that base (TAM on the All Market page).
     """
     if "agency_group" not in df.columns:
         raise ValueError("Agency reporting groups missing from Health TAM input")
     is_tam = market_mode == "tam"
     full = full_df if full_df is not None else df
-    base_label = "Accenture TAM (addressable)" if is_tam else "All Federal Health Market"
-    overlay_label = "Accenture wins" if is_tam else "Accenture TAM (addressable)"
+    base_label = "Accenture TAM" if is_tam else "All Federal Health Market"
+    overlay_label = "Accenture wins" if is_tam else "Accenture TAM"
     if is_tam:
         base_frame = df
         overlay_frame = df[df["is_accenture"].astype(bool)]
@@ -980,15 +980,12 @@ def atlas_agency_breakdown(html_text: str, df: pd.DataFrame, value_col: str, mar
         base_frame = full
         overlay_frame = full[full["is_addressable"].astype(bool)]
 
-    fy_col = FY_COL
     def subsets(frame: pd.DataFrame) -> list[pd.DataFrame]:
-        fy = frame[fy_col].astype(str)
+        fy = frame[FY_COL].astype(str)
         return [frame, frame[fy.isin(calendar_fy_window(5))], frame[fy.isin(calendar_fy_window(3))]]
 
-    base_subsets = subsets(base_frame)
-    overlay_subsets = subsets(overlay_frame)
     per_period = []
-    for label, b_sub, o_sub in zip(period_labels(), base_subsets, overlay_subsets):
+    for label, b_sub, o_sub in zip(period_labels(), subsets(base_frame), subsets(overlay_frame)):
         base = _agency_totals(b_sub, value_col)
         over = _agency_totals(o_sub, value_col)
         names = sorted(set(base) | set(over), key=lambda a: -base.get(a, (0, 0))[0])
@@ -1004,22 +1001,33 @@ def atlas_agency_breakdown(html_text: str, df: pd.DataFrame, value_col: str, mar
         })
 
     from html import escape
-    heading = f"{base_label} by Agency, with {overlay_label} overlaid"
-    panel = f"""<section class="atlas-health-agencies" aria-labelledby="atlasAgencyHeading">
-      <div class="atlas-agency-heading"><div><p class="atlas-eyebrow">FEDERAL HEALTH SPENDING</p><h2 id="atlasAgencyHeading">{escape(heading)}</h2>
-      <p>Light bars show {escape(base_label.lower())} by agency; dark bars show {escape(overlay_label.lower())} within it. Follows the financial-year selection above.</p></div>
-      <div class="atlas-agency-total" id="atlasAgencyTotal">-</div></div>
-      <div id="atlasAgencyChart" style="width:100%;min-height:400px"></div>
-      <p class="atlas-chart-note">Values are AusTender contract awards, not annual expenditure. Shares use the light (base) total as the denominator.</p>
-    </section>"""
+    heading = f"{base_label} by Agency"
+    panel = f"""<style>
+      .atlas-agency-panel .eyebrow{{font-size:11px;color:#7535ac;font-weight:900;letter-spacing:.13em;margin:0 0 8px}}
+      .atlas-agency-panel .section-head{{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;flex-wrap:wrap}}
+      .atlas-agency-panel .rows{{margin-top:19px;display:flex;flex-direction:column;gap:13px}}
+      .atlas-agency-panel .agency-row{{display:grid;grid-template-columns:minmax(160px,1.35fr) minmax(100px,2fr) 165px;gap:16px;align-items:center}}
+      .atlas-agency-panel .agency-name{{font-size:12px;font-weight:800;line-height:1.35}}
+      .atlas-agency-panel .agency-bar{{height:16px;background:#f0eaf5;border-radius:5px;overflow:hidden}}
+      .atlas-agency-panel .agency-bar>div{{height:100%;background:#8756c2;border-radius:5px;overflow:hidden}}
+      .atlas-agency-panel .agency-bar>div>div{{height:100%;background:#2e1065;border-radius:5px}}
+      .atlas-agency-panel .agency-num{{text-align:right;font-size:13px;font-weight:800;white-space:nowrap}}
+      .atlas-agency-panel .agency-num span{{display:block;color:#6b7280;font-size:11px;font-weight:400;margin-top:3px}}
+      .atlas-agency-panel .foot{{font-size:12px;color:#6b7280;line-height:1.6}}
+      @media (max-width:900px){{.atlas-agency-panel .agency-row{{grid-template-columns:1fr}}}}
+    </style>
+    <section class="panel atlas-agency-panel" id="atlas-agency"><div class="section-head"><div><p class="eyebrow">MARKET CONCENTRATION</p><h2 id="atlasAgencyHeading">{escape(heading)}</h2>
+    <p>Light bars show {escape(base_label.lower())} by agency; the dark segment shows {escape(overlay_label.lower())} within it. Follows the financial-year selection above.</p></div>
+    <div class="agency-total" id="atlasAgencyTotal">-</div></div>
+    <div class="rows" id="atlasAgencyRows"></div>
+    <p class="foot">Values are AusTender contract awards, not annual expenditure. Contracts are counted as families (an original notice and its amendments).</p></section>"""
     script = r"""<script>(function(){
       const periods = __DATA__;
       const BASE_LABEL = __BASE_LABEL__;
       const OVERLAY_LABEL = __OVERLAY_LABEL__;
-      const fmt = v => { v = Number(v||0); const a = Math.abs(v);
-        if (a >= 1e9) return 'A$' + (v/1e9).toFixed(2) + 'B';
-        if (a >= 1e6) return 'A$' + (v/1e6).toFixed(1) + 'M';
-        return 'A$' + v.toFixed(0); };
+      const nf = new Intl.NumberFormat('en-AU');
+      function money(n){ n=Number(n||0); const x=Math.abs(n);
+        return (n<0?'-':'')+'A$'+(x>=1e9?(x/1e9).toFixed(2)+'B':x>=1e6?(x/1e6).toFixed(1)+'M':nf.format(Math.round(x))); }
       function renderAgency(){
         const control = document.querySelector('input[name="donutRange"]:checked');
         const i = control ? Number(control.value) : 0;
@@ -1027,31 +1035,30 @@ def atlas_agency_breakdown(html_text: str, df: pd.DataFrame, value_col: str, mar
         if(!p){return;}
         const rows = p.rows.map(r=>({agency:String(r.agency),base:Number(r.base||0),bc:Number(r.base_contracts||0),
                                      overlay:Number(r.overlay||0),oc:Number(r.overlay_contracts||0)}))
-          .filter(r=>r.base!==0||r.overlay!==0).sort((a,b)=>b.base-a.base);
-        const baseTotal = rows.reduce((s,r)=>s+r.base,0);
-        const overTotal = rows.reduce((s,r)=>s+r.overlay,0);
-        const el = document.getElementById('atlasAgencyTotal');
-        if(el){el.textContent = BASE_LABEL + ': ' + fmt(baseTotal) + '  ·  ' + OVERLAY_LABEL + ': ' + fmt(overTotal);}
-        if(!window.Plotly){return;}
-        const asc = rows.slice().reverse();
-        const names = asc.map(r=>r.agency);
-        const basePct = asc.map(r=>baseTotal ? (r.base/baseTotal*100) : 0);
-        const overPct = asc.map(r=>r.base ? (r.overlay/r.base*100) : 0);
-        const height = Math.max(420, asc.length*46 + 120);
-        Plotly.react('atlasAgencyChart', [
-          {type:'bar', orientation:'h', name:BASE_LABEL, y:names, x:asc.map(r=>r.base/1e6),
-           marker:{color:'#D9C8F0'}, text:basePct.map(p=>p.toFixed(1)+'% of total'), textposition:'outside', cliponaxis:false,
-           customdata:asc.map(r=>[r.base, r.bc]),
-           hovertemplate:'<b>%{y}</b><br>'+BASE_LABEL+': A$%{customdata[0]:,.0f}<br>Contracts: %{customdata[1]:,}<br>%{text}<extra></extra>'},
-          {type:'bar', orientation:'h', name:OVERLAY_LABEL, y:names, x:asc.map(r=>r.overlay/1e6),
-           marker:{color:'#4C1D95'},
-           customdata:asc.map((r,k)=>[r.overlay, r.oc, overPct[k]]),
-           hovertemplate:'<b>%{y}</b><br>'+OVERLAY_LABEL+': A$%{customdata[0]:,.0f}<br>Contracts: %{customdata[1]:,}<br>Share of this agency\'s '+BASE_LABEL+': %{customdata[2]:.1f}%<extra></extra>'}
-        ], {template:'plotly_white', height, barmode:'overlay', showlegend:true,
-            legend:{orientation:'h', x:0, y:1.07},
-            margin:{t:40,b:54,l:330,r:100},
-            xaxis:{title:'Recorded contract value (A$ millions)', zeroline:true, tickformat:',.0f', ticksuffix:''},
-            yaxis:{automargin:true}}, {responsive:true, displayModeBar:false});
+          .filter(r=>r.base>0).sort((a,b)=>b.base-a.base);
+        const total = rows.reduce((s,r)=>s+r.base,0);
+        const wins = rows.reduce((s,r)=>s+r.overlay,0);
+        const max = Math.max(0,...rows.map(r=>r.base));
+        const head = document.getElementById('atlasAgencyTotal');
+        if(head){head.textContent = BASE_LABEL+': '+money(total)+'  ·  '+OVERLAY_LABEL+': '+money(wins);}
+        const target = document.getElementById('atlasAgencyRows');
+        if(!target){return;}
+        target.replaceChildren();
+        rows.forEach(r=>{
+          const row=document.createElement('div'); row.className='agency-row';
+          const name=document.createElement('div'); name.className='agency-name'; name.textContent=r.agency;
+          const bar=document.createElement('div'); bar.className='agency-bar';
+          const fill=document.createElement('div'); fill.style.width=(max>0?(r.base/max*100):0).toFixed(2)+'%';
+          const inner=document.createElement('div'); inner.style.width=(r.base>0?(r.overlay/r.base*100):0).toFixed(2)+'%';
+          fill.appendChild(inner); bar.appendChild(fill);
+          const num=document.createElement('div'); num.className='agency-num'; num.textContent=money(r.base);
+          const sub=document.createElement('span');
+          const share=total>0?(r.base/total*100):0;
+          const wshare=r.base>0?(r.overlay/r.base*100):0;
+          sub.textContent=share.toFixed(1)+'% · '+nf.format(r.bc)+' contracts · '+OVERLAY_LABEL+' '+money(r.overlay)+' ('+wshare.toFixed(1)+'%)';
+          num.appendChild(sub);
+          row.append(name,bar,num); target.appendChild(row);
+        });
       }
       document.querySelectorAll('input[name="donutRange"]').forEach(el=>el.addEventListener('change',renderAgency));
       renderAgency();
@@ -1277,7 +1284,7 @@ def build_health_home(df: pd.DataFrame, value_col: str, output_path: Path) -> No
       const bar=document.createElement('div');bar.className='agency-bar';const fill=document.createElement('div');
       fill.style.width=(max>0?Math.max(0,(Math.max(0,r.value)/max)*100):0).toFixed(2)+'%';bar.appendChild(fill);
       const number=document.createElement('div');number.className='agency-num';number.textContent=money(r.value);
-      const share=document.createElement('span');share.textContent=(total?r.value/total*100:0).toFixed(1)+'% · '+nf.format(r.count)+' CNs';number.appendChild(share);
+      const share=document.createElement('span');share.textContent=(total?r.value/total*100:0).toFixed(1)+'% · '+nf.format(r.count)+' contracts';number.appendChild(share);
       row.append(label,bar,number);target.appendChild(row);
     }
     function render(){

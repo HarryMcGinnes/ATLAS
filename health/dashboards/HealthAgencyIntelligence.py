@@ -10,6 +10,7 @@ from pathlib import Path
 AGENCY_AUDIT_DIR = Path(__file__).resolve().parents[2] / 'audits' / 'austender' / 'health_agency'
 AGENCY_AUDIT_DIR.mkdir(parents=True, exist_ok=True)
 from zoneinfo import ZoneInfo
+import numpy as np
 import pandas as pd
 from health_contract_families import add_family_fields, apply_family_fy, count_families, drop_beyond_horizon, family_first, FAMILY_COL
 from health_active_contracts import add_contract_status
@@ -78,22 +79,43 @@ def labour_trend_payload(frame: pd.DataFrame) -> dict:
     lab["_trend_start"] = family_first(
         lab.assign(_raw=pd.to_datetime(lab["cn_family_start_date"], errors="coerce").where(credible)), "_raw"
     )
+    lab["_trend_end"] = family_first(
+        lab.assign(_raw=pd.to_datetime(lab["cn_family_end_date"], errors="coerce").where(credible)), "_raw"
+    )
     fam = lab.groupby(FAMILY_COL).agg(
-        value=("Value", "sum"), start=("_trend_start", "first"), agency=("agency_group", "first")
+        value=("Value", "sum"), start=("_trend_start", "first"), end=("_trend_end", "first"),
+        agency=("agency_group", "first"),
     )
     total = float(fam["value"].sum())
     dated = fam.loc[fam["start"].notna()].copy()
     dated["fy"] = [d.year if d.month >= 7 else d.year - 1 for d in dated["start"]]
     dated = dated.loc[dated["fy"].between(years[0], years[-1])]
     covered = float(dated["value"].sum())
-    series = {}
+
+    # Annualised view: each family's value spread evenly over its term; value in force per FY.
+    timed = dated.loc[dated["end"].notna() & (dated["end"] >= dated["start"])].copy()
+    days = ((timed["end"] - timed["start"]).dt.days + 1).clip(lower=1)
+    timed["rate"] = timed["value"] / (days / 365.25)
+
+    def in_force(frame: pd.DataFrame, year: int) -> float:
+        if frame.empty:
+            return 0.0
+        fy_start = pd.Timestamp(year, 7, 1)
+        fy_end = pd.Timestamp(year + 1, 6, 30)
+        overlap = (np.minimum(frame["end"], fy_end) - np.maximum(frame["start"], fy_start)).dt.days + 1
+        return float((frame["rate"] * overlap.clip(lower=0) / 365.25).sum())
+
+    series, annualised = {}, {}
     for key, sub in [("__ALL__", dated)] + [(str(a), g) for a, g in dated.groupby("agency")]:
         by = sub.groupby("fy")["value"].sum()
         series[key] = [round(float(by.get(y, 0.0)) / 1e6, 3) for y in years]
+        tsub = timed if key == "__ALL__" else timed[timed["agency"] == key]
+        annualised[key] = [round(in_force(tsub, y) / 1e6, 3) for y in years]
     return {
         "years": years,
         "current_fy": current_fy,
         "series": series,
+        "annualised": annualised,
         "coverage_pct": round(100 * covered / total, 1) if total else 0.0,
     }
 
@@ -176,20 +198,23 @@ HTML = r'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name
 <div class="panel toolbar"><div class="field"><label for="agency">Agency</label><select id="agency"></select></div><div class="field" style="flex:0 1 225px;min-width:190px"><label for="fyFilter">Financial year</label><select id="fyFilter" aria-label="Financial year"></select></div><div class="field atlas-status-field" style="flex:0 1 auto;min-width:240px"><label>Contract status</label><div class="atlas-status-toggle" role="group" aria-label="Contract status"><button type="button" id="statusAll" class="active" aria-pressed="true">All contracts</button><button type="button" id="statusActive" aria-pressed="false">Active contracts</button></div></div><div class="modes"><button id="tam" aria-pressed="false">Accenture TAM</button><button id="all" class="active" aria-pressed="true">All Federal Health Market</button><button id="clear">Clear filters</button></div></div>
 <div class="kpis"><div class="kpi"><span>Agency contract value</span><strong id="value">–</strong></div><div class="kpi"><span>Contracts</span><strong id="contracts">–</strong></div><div class="kpi"><span>Suppliers</span><strong id="suppliers">–</strong></div><div class="kpi"><span>Largest supplier share</span><strong id="topshare">–</strong></div></div>
 <div class="two"><section class="panel"><h2>What this agency buys</h2><div id="offerChart" class="chart"></div></section><section class="panel"><h2>Who wins the contracts</h2><div id="supplierChart" class="chart"></div></section></div>
-<section class="panel" id="labourHireInsights"><div class="labour-head"><div><h2>Labour Hire Insights</h2><p class="note">Labour hire listings are generally too vague to reliably assess addressability, so they are excluded from TAM unless awarded to Accenture. All Federal Health Market includes these listings. Values are indicative contracted amounts, not headcount or actual expenditure.</p></div><a id="labourExplore" class="labour-link" href="HealthContractExplorer.html?view=historical&amp;labour_hire=yes#historical-contracts" target="_blank" rel="noopener noreferrer">View labour hire contracts ↗</a></div><div class="labour-layout"><div class="labour-kpis"><div><span>Contract value</span><strong id="labourValue">–</strong></div><div><span>Contracts</span><strong id="labourCount">–</strong></div><div><span>Share of selected market</span><strong id="labourShare">–</strong></div></div><div class="labour-suppliers"><h3>Top labour hire suppliers</h3><div id="labourSuppliers"></div></div></div><p class="note">Uses the selected agency, financial year, market and contract status. Under Accenture TAM, only labour hire notices already classified as addressable (including observed Accenture awards) appear. Under All Federal Health Market, excluded labour hire notices remain visible. The link opens Historical Contracts with the selected filters and Labour Hire = Yes.</p></section><section class='panel' id='labourTrend'><div><h2>Labour hire contract value by commencement year</h2><p class='note'>Each labour-hire contract is shown in the financial year its original contract commenced, with its full value. Values are not spread across contract terms. Recent years may be understated, because publication lags and most records have no usable start date. Follows the agency and market selections; ignores the financial-year and contract-status filters.</p></div><div id='labourTrendChart' style='width:100%;min-height:380px'></div><p class='note' id='labourTrendCoverage'></p></section>
+<section class="panel" id="labourHireInsights"><div class="labour-head"><div><h2>Labour Hire Insights</h2><p class="note">Labour hire listings are generally too vague to reliably assess addressability, so they are excluded from TAM unless awarded to Accenture. All Federal Health Market includes these listings. Values are indicative contracted amounts, not headcount or actual expenditure.</p></div><a id="labourExplore" class="labour-link" href="HealthContractExplorer.html?view=historical&amp;labour_hire=yes#historical-contracts" target="_blank" rel="noopener noreferrer">View labour hire contracts ↗</a></div><div class="labour-layout"><div class="labour-kpis"><div><span>Contract value</span><strong id="labourValue">–</strong></div><div><span>Contracts</span><strong id="labourCount">–</strong></div><div><span>Share of selected market</span><strong id="labourShare">–</strong></div></div><div class="labour-suppliers"><h3>Top labour hire suppliers</h3><div id="labourSuppliers"></div></div></div><p class="note">Uses the selected agency, financial year, market and contract status. Under Accenture TAM, only labour hire notices already classified as addressable (including observed Accenture awards) appear. Under All Federal Health Market, excluded labour hire notices remain visible. The link opens Historical Contracts with the selected filters and Labour Hire = Yes.</p></section><section class='panel' id='labourTrend'><div><h2>Labour hire contract value by commencement year</h2><div class='labour-toggle' role='group' aria-label='Labour trend view'><button type='button' data-labour-mode='commencement' aria-pressed='true'>Commencement year</button><button type='button' data-labour-mode='annualised' aria-pressed='false'>Annualised value in force</button></div><p class='note' id='labourTrendNote'></p></div><div id='labourTrendChart' style='width:100%;min-height:380px'></div><p class='note' id='labourTrendCoverage'></p></section>
 <section class="panel"><h2>Current agency–supplier relationships</h2><p class="note">Verified active contracts as at <span id="relationshipAsAt"></span>. Uses Contract Explorer's validated CN-family dates. The table shows active relationships even when All Contracts is selected; FY, agency and market selections still apply. Recorded values are not remaining contract value.</p><div id="relationships" class="matrix"></div></section>
 <section class="panel"><h2>Supplier × Service Offering breakdown</h2><p class="note">Each cell shows signed contract value. The count of contract notices is available on hover. Select a supplier row to focus on its offering mix.</p><div id="matrix" class="matrix"></div></section>
 <p class="note">Financial year is set by the original contract notice: the year it was published on AusTender. Amendments take their original's year, so each contract appears in one financial year. Financial-year filters are not annual cash expenditure; multiyear contract values are not spread across years. Historical contract values and negative amendments are retained. Source: canonical ATLAS Health master; supplier grouping and addressability are inherited unchanged. No independent reclassification is performed. Contract notices and amendments remain separate records.</p>
 </main><script>
 const DATA=__DATA__;let mode='all';let contractStatus='all';const $=id=>document.getElementById(id);const nf=new Intl.NumberFormat('en-AU');function money(x){let a=Math.abs(Number(x)||0);return (x<0?'−':'')+'A$'+(a>=1e9?(a/1e9).toFixed(2)+'B':a>=1e6?(a/1e6).toFixed(1)+'M':nf.format(Math.round(a)))}function pct(v){return Number.isFinite(v)?v.toFixed(1)+'%':'n/a'}function total(a){return a.reduce((s,x)=>s+x.value,0)}function group(data,k){let m=new Map();data.forEach(r=>{let n=r[k];if(!m.has(n))m.set(n,{name:n,value:0,contracts:0});let x=m.get(n);x.value+=r.value;x.contracts+=r.contracts});return [...m.values()].sort((a,b)=>b.value-a.value)}function setText(id,v){$(id).textContent=v}function chart(id,data){if(!window.Plotly)return;let d=data.filter(x=>x.value!==0).slice(0,15).reverse();Plotly.react(id,[{type:'bar',orientation:'h',x:d.map(x=>x.value/1e6),y:d.map(x=>x.name),marker:{color:'#8252b6'},customdata:d.map(x=>[x.contracts,x.value]),hovertemplate:'<b>%{y}</b><br>Value: A$%{customdata[1]:,.0f}<br>CNs: %{customdata[0]}<extra></extra>'}],{margin:{l:220,r:30,t:15,b:55},height:Math.max(370,d.length*35+90),xaxis:{title:'Net contract value (A$ millions)',zeroline:true},yaxis:{automargin:true},paper_bgcolor:'transparent',plot_bgcolor:'transparent'} ,{responsive:true,displayModeBar:false})}function matchesFY(r){let choice=$('fyFilter').value;let key=String(r._fy_key);if(choice==='all')return true;if(choice==='unknown')return key==='unknown';if(!/^\d{4}$/.test(key))return false;let y=Number(key),now=DATA.current_fy;if(choice==='last5')return y>=now-4&&y<=now;if(choice==='last3')return y>=now-2&&y<=now;if(choice==='current')return y===now;return key===choice}
 function fyOptions(){let year=DATA.current_fy;let label=y=>'FY'+y+'–'+String((y+1)%100).padStart(2,'0');return [{v:'all',l:'All historical FYs (default)'},{v:'last5',l:'Last 5 FYs'},{v:'last3',l:'Last 3 FYs'},{v:'current',l:'Current '+label(year)},...DATA.fys.slice().reverse().map(y=>({v:String(y),l:label(y)})),{v:'unknown',l:'Unknown FY'}]}
+let labourMode='commencement';
+function setLabourMode(m){labourMode=m;renderLabourTrend();}
 function renderLabourTrend(){
+  if(!renderLabourTrend._bound){renderLabourTrend._bound=true;document.querySelectorAll('[data-labour-mode]').forEach(b=>b.addEventListener('click',()=>setLabourMode(b.dataset.labourMode)));}
   const el=document.getElementById('labourTrendChart');
   if(!el||!window.Plotly)return;
   const t=(DATA[mode]&&DATA[mode].labour_trend)||{years:[],series:{},current_fy:2026,coverage_pct:0};
   const agency=document.getElementById('agency').value;
   const series=t.series||{};
-  const vals=series[agency]||series['__ALL__']||[];
+  const seriesSet=(labourMode==='annualised')?(t.annualised||{}):series;const vals=seriesSet[agency]||seriesSet['__ALL__']||[];
   const years=t.years||[];
   const cur=Number(t.current_fy)||2026;
   const label=y=>'FY'+y+'-'+String(y+1).slice(-2);
@@ -207,6 +232,9 @@ function renderLabourTrend(){
     {type:'scatter',mode:'lines',name:'Trend (fitted FY2019-FY2024)',x:trendYears.map(label),y:trendYears.map(y=>a+b*y),line:{color:'#6b7280',dash:'dash'},hovertemplate:'%{x}<br>Trend A$%{y:,.1f}M<extra></extra>'}
   ];
   Plotly.react('labourTrendChart',traces,{template:'plotly_white',height:380,margin:{t:30,b:90,l:90,r:20},legend:{orientation:'h',y:1.12},xaxis:{title:'Financial year the contract commenced',tickangle:-45},yaxis:{title:'Recorded contract value (A$ millions)',tickformat:',.0f',rangemode:'tozero'}},{responsive:true,displayModeBar:false});
+  const note=document.getElementById('labourTrendNote');
+  if(note)note.textContent=(labourMode==='annualised')?'Annualised view: each contract\'s value is spread evenly over its term, showing the value of labour-hire contracts in force in each financial year. The current year includes committed future months. This is not expenditure.':'Commencement view: each labour-hire contract is shown in the financial year its original contract commenced, with its full value, not spread across terms. Recent years may be understated because most records have no usable start date.';
+  document.querySelectorAll('[data-labour-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.labourMode===labourMode)));
   const c=document.getElementById('labourTrendCoverage');
   if(c)c.textContent='Covers '+t.coverage_pct+'% of labour hire value with a usable start date.';
 }
