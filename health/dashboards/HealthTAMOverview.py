@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from health_agency_groups import add_agency_groups, write_agency_audit
+from health_contract_families import add_family_fields, apply_family_fy, count_families, FAMILY_COL
 
 VALUE_COL = "Value"
 ANNUALISED_VALUE_COL = "Value Per Year"
@@ -256,6 +257,7 @@ def classify(df: pd.DataFrame) -> pd.DataFrame:
     out.loc[~out["is_addressable"], "Service Offering"] = pd.NA
     # Reporting-only historical agency consolidation; original Agency stays intact.
     out = add_agency_groups(out)
+    out = apply_family_fy(out)
     return out
 
 
@@ -304,11 +306,18 @@ def money(v: float) -> str:
     return f"${v:,.0f}"
 
 
+def fy_span_years(df: pd.DataFrame) -> int:
+    """Number of recorded financial years: excludes the blank FY and years that have not started."""
+    current = current_fy_start()
+    values = {str(v) for v in df[FY_COL].dropna().astype(str) if str(v).strip()}
+    return max(1, sum(1 for v in values if 0 < fy_start(v) <= current))
+
+
 def summary(df: pd.DataFrame, value_col: str) -> dict:
     total = float(df[value_col].sum())
     addr = float(df.loc[df["is_addressable"], value_col].sum())
     acc = float(df.loc[df["is_addressable"] & df["is_accenture"], value_col].sum())
-    years = max(1, df[FY_COL].astype(str).nunique())
+    years = fy_span_years(df)
     return {
         "total": total,
         "addressable": addr,
@@ -447,8 +456,8 @@ def build_payloads(df: pd.DataFrame, value_col: str, market_mode: str = "tam", d
             selected.groupby("supplier_group", dropna=False)
             .agg(
                 value=(value_col, "sum"),
-                contracts=(CN_ID_COL, "nunique")
-                if CN_ID_COL in selected.columns
+                contracts=(FAMILY_COL, "nunique")
+                if FAMILY_COL in selected.columns
                 else (value_col, "size"),
             )
             .reset_index()
@@ -490,6 +499,10 @@ def build_html(
 
     payload = build_payloads(df, value_col, market_mode=market_mode, donut_df=full)
     s = summary(df, value_col)
+    years = fy_span_years(full)
+    s["years"] = years
+    s["avg_addressable"] = s["addressable"] / years
+    s["avg_accenture"] = s["accenture"] / years
     data = json.dumps(payload, ensure_ascii=False)
 
     is_tam = market_mode == "tam"
@@ -574,7 +587,7 @@ __MARKET_CONTROLS__
 </div>
 <div class="panel"><h3>__SERVICE_TITLE__</h3><p>__SERVICE_COPY__</p><div class="controls">__SERVICE_CONTROLS__</div><div id="serviceChart"></div></div>
 <div class="panel"><h3>__SUPPLIER_TITLE__</h3><div class="controls">__SUPPLIER_CONTROLS__</div><div id="supplierChart"></div></div>
-<p class="note">Source: filtered AusTender Health portfolio dataset. Every visual uses the selected __MARKET_LABEL__ population unless a narrower TAM subset is explicitly labelled. Total contract value is used unless --value-mode annualised is selected.</p>
+<p class="note">Source: filtered AusTender Health portfolio dataset. Financial year is set by the original contract notice: the year it was published on AusTender. Amendments take their original's year, so each contract appears in one financial year. Every visual uses the selected __MARKET_LABEL__ population unless a narrower TAM subset is explicitly labelled. Total contract value is used unless --value-mode annualised is selected.</p>
 </div><script>
 const DATA=__DATA__;
 const MARKET_MODE=__MARKET_MODE__;
@@ -939,8 +952,8 @@ def _agency_totals(frame: pd.DataFrame, value_col: str) -> dict:
     f = frame.copy()
     f["agency_group"] = f["agency_group"].fillna("Unspecified agency").astype(str).str.strip().replace("", "Unspecified agency")
     f[value_col] = pd.to_numeric(f[value_col], errors="coerce").fillna(0)
-    g = f.groupby("agency_group", dropna=False)[value_col].agg(["sum", "size"])
-    return {str(a): (float(r["sum"]), int(r["size"])) for a, r in g.iterrows()}
+    g = f.groupby("agency_group", dropna=False).agg(total=(value_col, "sum"), families=(FAMILY_COL, "nunique"))
+    return {str(a): (float(r["total"]), int(r["families"])) for a, r in g.iterrows()}
 
 
 def atlas_agency_breakdown(html_text: str, df: pd.DataFrame, value_col: str, market_mode: str = "tam", full_df: pd.DataFrame | None = None) -> str:
@@ -1024,11 +1037,11 @@ def atlas_agency_breakdown(html_text: str, df: pd.DataFrame, value_col: str, mar
           {type:'bar', orientation:'h', name:BASE_LABEL, y:names, x:asc.map(r=>r.base/1e9),
            marker:{color:'#D9C8F0'}, text:basePct.map(p=>p.toFixed(1)+'% of total'), textposition:'outside', cliponaxis:false,
            customdata:asc.map(r=>[r.base, r.bc]),
-           hovertemplate:'<b>%{y}</b><br>'+BASE_LABEL+': A$%{customdata[0]:,.0f}<br>Contract notices: %{customdata[1]:,}<br>%{text}<extra></extra>'},
+           hovertemplate:'<b>%{y}</b><br>'+BASE_LABEL+': A$%{customdata[0]:,.0f}<br>Contracts: %{customdata[1]:,}<br>%{text}<extra></extra>'},
           {type:'bar', orientation:'h', name:OVERLAY_LABEL, y:names, x:asc.map(r=>r.overlay/1e9),
            marker:{color:'#4C1D95'},
            customdata:asc.map((r,k)=>[r.overlay, r.oc, overPct[k]]),
-           hovertemplate:'<b>%{y}</b><br>'+OVERLAY_LABEL+': A$%{customdata[0]:,.0f}<br>Contract notices: %{customdata[1]:,}<br>Share of this agency\'s '+BASE_LABEL+': %{customdata[2]:.1f}%<extra></extra>'}
+           hovertemplate:'<b>%{y}</b><br>'+OVERLAY_LABEL+': A$%{customdata[0]:,.0f}<br>Contracts: %{customdata[1]:,}<br>Share of this agency\'s '+BASE_LABEL+': %{customdata[2]:.1f}%<extra></extra>'}
         ], {template:'plotly_white', height, barmode:'overlay', showlegend:true,
             legend:{orientation:'h', x:0, y:1.07},
             margin:{t:40,b:54,l:330,r:100},
@@ -1117,7 +1130,7 @@ def build_health_home(df: pd.DataFrame, value_col: str, output_path: Path) -> No
         unknown_count = (int(((cls.isna() | cls.astype(str).str.strip().str.lower().isin(["", "unclassified", "uncategorised", "unresolved", "none"])) & frame["is_addressable"]).sum()) if cls is not None else None)
         return {
             "total": total,
-            "count": len(frame),
+            "count": count_families(frame),
             "agency_count": int(len(grouped)),
             "accenture_value": acc_value,
             "agencies": agency_data,
@@ -1172,7 +1185,7 @@ def build_health_home(df: pd.DataFrame, value_col: str, output_path: Path) -> No
     <section class="panel" aria-label="Market snapshot"><div class="section-head"><div><h2>Health market snapshot</h2><p>Historical AusTender contract values, not annual budget expenditure.</p></div>
     <div class="switch" role="group" aria-label="Market scope"><button type="button" data-scope="tam" aria-pressed="true">Accenture TAM</button><button type="button" data-scope="all" aria-pressed="false">All Federal Health Market</button></div></div>
     <div class="kpis"><div class="kpi"><small>Selected market value</small><strong id="kValue">–</strong><small>Aggregate recorded contract value</small></div>
-    <div class="kpi"><small>Contract notices</small><strong id="kContracts">–</strong><small>Distinct CN records</small></div>
+    <div class="kpi"><small>Contracts</small><strong id="kContracts">–</strong><small>Families: original notice plus amendments</small></div>
     <div class="kpi"><small>Accenture awards</small><strong id="kAccenture">–</strong><small>Value in selected market</small></div>
     <div class="kpi"><small>Federal Health agencies</small><strong id="kAgencies">–</strong><small>Agencies with contracts</small></div></div></section>
     <section class="panel" id="atlas-agency"><div class="section-head"><div><p class="eyebrow">MARKET CONCENTRATION</p><h2 id="agencyTitle">TAM by Agency</h2>

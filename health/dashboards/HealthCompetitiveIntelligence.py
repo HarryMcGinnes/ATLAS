@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import pandas as pd
+from health_contract_families import add_family_fields, apply_family_fy, count_families, FAMILY_COL
 from health_active_contracts import add_contract_status
 from health_agency_groups import add_agency_groups, write_agency_audit
 
@@ -49,6 +50,7 @@ def load(path: Path) -> pd.DataFrame:
         raise ValueError('Some Accenture contracts are not addressable: investigate classification')
     df['Agency'] = df['Agency'].fillna('Unspecified agency').astype(str).str.strip().replace('', 'Unspecified agency')
     df['supplier_group'] = df['supplier_group'].fillna('Unknown supplier').astype(str).str.strip().replace('', 'Unknown supplier')
+    df = apply_family_fy(df)
     col = 'service_offering' if 'service_offering' in df else 'Service Offering'
     if col not in df:
         raise ValueError('Missing canonical Service Offering')
@@ -62,7 +64,7 @@ def load(path: Path) -> pd.DataFrame:
 
 def grouped(frame: pd.DataFrame, columns: list[str]) -> list[dict]:
     g=(frame.groupby(columns, dropna=False, sort=False)
-       .agg(value=('Value','sum'),contracts=('CN ID','nunique')).reset_index())
+       .agg(value=('Value','sum'),contracts=(FAMILY_COL,'nunique')).reset_index())
     return [{**{col: str(row[col]) for col in columns},'value':float(row['value']),
              'contracts':int(row['contracts'])} for row in g.to_dict('records')]
 
@@ -74,7 +76,7 @@ def build_data(df: pd.DataFrame) -> dict:
         if abs(sum(r['value'] for r in cells)-value)>0.01:
             raise ValueError(f'Competitive Intelligence {mode} cells do not reconcile')
         wins=float(frame.loc[frame['is_accenture'],'Value'].sum())
-        out[mode]={'by_supplier':cells,'total':value,'wins':wins,'contracts':len(frame)}
+        out[mode]={'by_supplier':cells,'total':value,'wins':wins,'contracts':count_families(frame)}
     if abs(out['all']['wins']-out['tam']['wins'])>0.01:
         raise ValueError('Accenture wins differ between All Market and TAM')
     now=datetime.now(ZoneInfo('Australia/Sydney'))
@@ -117,7 +119,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:11px;bord
 <section class="panel"><h2>Service Offering Supplier Leaderboards</h2><p class="note">Shares and ranks are calculated separately for each of the five addressable Service Offerings, using the current filters. All Market includes non-addressable value in overall KPIs; that value has no Service Offering leaderboard.</p><div id="leaderboards" class="leaderboard-grid"></div></section>
 <div class="two"><section class="panel"><h2>Competitive trend by financial year</h2><p class="note">Signed award value attributed to notice FY, not annual spending.</p><div id="trendChart" class="chart"></div></section><section class="panel"><h2>Selected supplier by agency</h2><p class="note">Names consolidated only for confirmed historical renames.</p><div id="agencyChart" class="chart"></div></section></div>
 <section class="panel"><h2>Overall supplier comparison</h2><p class="note">Click a supplier to focus the comparison. Market shares use all suppliers in the selected scope.</p><div id="supplierTable" class="table-scroll"></div></section>
-<p class="note">Source: canonical ATLAS Federal Health master. The original Agency field, supplier groups, addressability, and Service Offering classification remain unchanged. The reporting-only agency_group consolidates confirmed name changes. Active Contracts uses validated CN-family dates as at __AS_AT__. Negative amendments are retained. Values are contract notices, not current cash expenditure or remaining obligation.</p>
+<p class="note">Source: canonical ATLAS Federal Health master. Financial year is set by the original contract notice: the year it was published on AusTender. Amendments take their original's year, so each contract appears in one financial year. The original Agency field, supplier groups, addressability, and Service Offering classification remain unchanged. The reporting-only agency_group consolidates confirmed name changes. Active Contracts uses validated CN-family dates as at __AS_AT__. Negative amendments are retained. Values are contract notices, not current cash expenditure or remaining obligation.</p>
 </main><script>
 const DATA=__DATA__;
 const $=id=>document.getElementById(id);const nf=new Intl.NumberFormat('en-AU');

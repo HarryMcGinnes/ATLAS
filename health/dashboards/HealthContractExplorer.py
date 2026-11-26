@@ -15,6 +15,7 @@ from pathlib import Path
 import pandas as pd
 
 from health_agency_groups import add_agency_groups
+from health_contract_families import add_family_fields, apply_family_fy, FAMILY_COL
 
 AGENCY_COL = "Agency"
 DIVISION_CANDIDATES = ["Agency Division", "Agency Divison", "Division"]
@@ -186,6 +187,7 @@ def load_data(path: Path, value_mode: str) -> tuple[pd.DataFrame, str]:
     out = df.copy()
     out[AGENCY_COL] = clean_text(out[AGENCY_COL], "Unknown agency")
     out = add_agency_groups(out)
+    out = apply_family_fy(out)
     division_col = first_existing(out, DIVISION_CANDIDATES)
     if division_col:
         out["_division"] = clean_text(out[division_col], "Unspecified division")
@@ -315,39 +317,62 @@ def labour_hire_mask(df: pd.DataFrame) -> pd.Series:
     return (category_signal | description_signal).astype(bool)
 
 def build_payload(df: pd.DataFrame) -> dict[str, object]:
+    """One record per contract family: the original notice plus its amendments.
+
+    value is the sum of the family's notices. AusTender amendment values are signed
+    changes, so this equals the family's current contract value. Attributes come
+    from the original notice, or from the earliest notice if the original is not in
+    the dataset. notices lists each notice so amendments remain visible.
+    """
     extensions_col = first_existing(df, EXTENSIONS_CANDIDATES)
+    work = add_family_fields(df)
+    work["_amend_no"] = (
+        work[CN_ID_COL].astype(str).str.extract(r"-A(\d+)$", expand=False).fillna(0).astype(int)
+    )
     records: list[dict[str, object]] = []
 
-    for _, row in df.iterrows():
+    for _family, grp in work.groupby(FAMILY_COL, sort=False):
+        grp = grp.sort_values("_amend_no", kind="stable")
+        originals = grp[grp["_amend_no"] == 0]
+        has_original = len(originals) > 0
+        base = originals.iloc[0] if has_original else grp.iloc[0]
+        start = base.get("_start")
+        end = base.get("_end")
+        duration = base.get("_duration_days")
         records.append({
-            "is_addressable": bool(row.get("is_addressable", False)),
-            "agency": safe_str(row.get("agency_group"), "Unknown agency"),
-            "agency_original": safe_str(row.get(AGENCY_COL), "Unknown agency"),
-            "division": safe_str(row.get("_division"), "Unspecified division"),
-            "financial_year": safe_str(row.get(FY_COL), "Unknown FY"),
-            "fy_start": int(row["_fy_start"]) if pd.notna(row.get("_fy_start")) else None,
-            "contract_id": safe_str(row.get(CN_ID_COL)),
-            "description": safe_str(row.get(DESCRIPTION_COL)),
-            "supplier": safe_str(row.get(SUPPLIER_GROUP_COL), "Unknown supplier"),
-            "capability": safe_str(row.get(CAPABILITY_COL), "Unclassified"),
-            "is_addressable": bool(row.get("is_addressable", False)),
-            "value": float(row.get("_value", 0) or 0),
-            "total_value": float(row.get("_total_value", 0) or 0),
-            "start_date": fmt_date(row.get("_start")) + (" (inferred)" if safe_str(row.get("_date_status")).startswith("inferred_") else ""),
-            "end_date": fmt_date(row.get("_end")),
-            "start_date_iso": pd.Timestamp(row.get("_start")).strftime("%Y-%m-%d") if pd.notna(row.get("_start")) else "",
-            "end_date_iso": pd.Timestamp(row.get("_end")).strftime("%Y-%m-%d") if pd.notna(row.get("_end")) else "",
-            "duration_days": float(row["_duration_days"]) if pd.notna(row.get("_duration_days")) else None,
-            "duration_label": fmt_duration(row.get("_duration_days")),
-            "procurement_method": safe_str(row.get(PROCUREMENT_METHOD_COL)),
-            "category": safe_str(row.get(CATEGORY_COL)),
-            "is_labour_hire": bool(row.get("_labour_hire", False)),
-            "extensions": safe_str(row.get(extensions_col)) if extensions_col else "",
+            "contract_id": safe_str(base.get(FAMILY_COL)),
+            "original_present": bool(has_original),
+            "notice_count": int(len(grp)),
+            "amendment_count": int(grp["is_amendment"].sum()),
+            "notices": [
+                {"cn_id": safe_str(n.get(CN_ID_COL)), "value": float(n.get("_value", 0) or 0)}
+                for _, n in grp.iterrows()
+            ],
+            "is_addressable": bool(base.get("is_addressable", False)),
+            "agency": safe_str(base.get("agency_group"), "Unknown agency"),
+            "agency_original": safe_str(base.get(AGENCY_COL), "Unknown agency"),
+            "division": safe_str(base.get("_division"), "Unspecified division"),
+            "financial_year": safe_str(base.get(FY_COL), "Unknown FY"),
+            "fy_start": int(base["_fy_start"]) if pd.notna(base.get("_fy_start")) else None,
+            "description": safe_str(base.get(DESCRIPTION_COL)),
+            "supplier": safe_str(base.get(SUPPLIER_GROUP_COL), "Unknown supplier"),
+            "capability": safe_str(base.get(CAPABILITY_COL), "Unclassified"),
+            "value": float(grp["_value"].sum()),
+            "total_value": float(grp["_total_value"].sum()),
+            "start_date": fmt_date(start) + (" (inferred)" if safe_str(base.get("_date_status")).startswith("inferred_") else ""),
+            "end_date": fmt_date(end),
+            "start_date_iso": pd.Timestamp(start).strftime("%Y-%m-%d") if pd.notna(start) else "",
+            "end_date_iso": pd.Timestamp(end).strftime("%Y-%m-%d") if pd.notna(end) else "",
+            "duration_days": float(duration) if pd.notna(duration) else None,
+            "duration_label": fmt_duration(duration),
+            "procurement_method": safe_str(base.get(PROCUREMENT_METHOD_COL)),
+            "category": safe_str(base.get(CATEGORY_COL)),
+            "is_labour_hire": bool(grp["_labour_hire"].any()),
+            "extensions": safe_str(base.get(extensions_col)) if extensions_col else "",
         })
 
     agencies = sorted(df["agency_group"].dropna().astype(str).unique().tolist())
     return {"records": records, "agencies": agencies}
-
 
 def html_escape(value: object) -> str:
     return (
@@ -783,7 +808,7 @@ select,input{{width:100%;height:34px;border:1px solid #d0d5dd;border-radius:8px;
 
 
 
-<details class="explorer-method"><summary>Historical contract methodology &amp; value definitions</summary><p class="method">The dashboard supports both Accenture TAM and All Federal Health Market. Ongoing contracts are shown once in the top bracket; remaining contracts are grouped by their recorded financial year. Supplier and Service Offering filters are ranked by addressable spend within the current agency scope. Negative amendments are retained as signed values.</p></details>
+<details class="explorer-method"><summary>Historical contract methodology &amp; value definitions</summary><p class="method">Financial year is set by the original contract notice: the year it was published on AusTender. Amendments take their original's year, so each contract appears in one financial year. The dashboard supports both Accenture TAM and All Federal Health Market. Ongoing contracts are shown once in the top bracket; remaining contracts are grouped by their recorded financial year. Supplier and Service Offering filters are ranked by addressable spend within the current agency scope. Negative amendments are retained as signed values.</p></details>
 </div>
 </div>
 
@@ -925,7 +950,8 @@ function updateKpis(rows) {{
 }}
 
 
-function rowHtml(r){{const large=Number(r.value||0)>=20000000?'<span class="badge badge-large">Large</span>':'',long=Number(r.duration_days||0)>=1826?'<span class="badge badge-long">5+ years</span>':'',sc=String(r.supplier||'').toLowerCase().includes('accenture')?'supplier-accent':'';return`<tr><td class="nowrap">${{esc(r.contract_id)}}</td><td class="desc">${{esc(r.description)}}</td><td>${{esc(r.agency)}}</td><td>${{esc(r.division)}}</td><td class="${{sc}}">${{esc(r.supplier)}}</td><td>${{esc(r.capability)}}</td><td class="money">${{money(r.value)}} ${{large}}</td><td class="nowrap">${{esc(r.start_date)}}</td><td class="nowrap">${{esc(r.end_date)}}</td><td>${{esc(r.duration_label)}} ${{long}}</td><td>${{esc(r.category)}}</td><td class="nowrap">${{esc(r.extensions)}}</td></tr>`}}
+function famBadge(r){{let h='';if(r.amendment_count>0){{const t=(r.notices||[]).map(n=>n.cn_id+': '+money(n.value)).join(String.fromCharCode(10));h+=' <span class="badge" title="'+esc(t)+'">+'+r.amendment_count+(r.amendment_count>1?' amendments':' amendment')+'</span>';}}if(!r.original_present){{h+=' <span class="badge">original not in data</span>';}}return h}}
+function rowHtml(r){{const large=Number(r.value||0)>=20000000?'<span class="badge badge-large">Large</span>':'',long=Number(r.duration_days||0)>=1826?'<span class="badge badge-long">5+ years</span>':'',sc=String(r.supplier||'').toLowerCase().includes('accenture')?'supplier-accent':'';return`<tr><td class="nowrap">${{esc(r.contract_id)}} ${{famBadge(r)}}</td><td class="desc">${{esc(r.description)}}</td><td>${{esc(r.agency)}}</td><td>${{esc(r.division)}}</td><td class="${{sc}}">${{esc(r.supplier)}}</td><td>${{esc(r.capability)}}</td><td class="money">${{money(r.value)}} ${{large}}</td><td class="nowrap">${{esc(r.start_date)}}</td><td class="nowrap">${{esc(r.end_date)}}</td><td>${{esc(r.duration_label)}} ${{long}}</td><td>${{esc(r.category)}}</td><td class="nowrap">${{esc(r.extensions)}}</td></tr>`}}
 
 const PAGE_SIZE = 100;
 const PAGE_STATE = new Map();
@@ -1175,7 +1201,7 @@ def main() -> None:
 
     agency_audit = (
         df.groupby([AGENCY_COL, "_division"], dropna=False)
-        .agg(contracts=(CN_ID_COL, "nunique") if CN_ID_COL in df.columns else ("_value", "size"), value=("_value", "sum"))
+        .agg(contracts=(FAMILY_COL, "nunique") if FAMILY_COL in df.columns else ("_value", "size"), value=("_value", "sum"))
         .reset_index()
         .sort_values("value", ascending=False)
     )
