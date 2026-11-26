@@ -931,3 +931,31 @@ jobs:
             audits/austender/defence/**
             audits/austender/health/**
             audits/austender/health_master/**
+
+      # ============================================================
+      # HEALTH DASHBOARD INPUTS (small download for local review)
+      # ============================================================
+
+      - name: Stage Health dashboard inputs
+        run: |
+          mkdir -p dashboard-inputs/health/data/processed
+          mkdir -p dashboard-inputs/data/gold/health
+          mkdir -p dashboard-inputs/audits/austender/health_master
+
+          cp health/data/processed/master_health_contracts.parquet \
+             dashboard-inputs/health/data/processed/
+          cp data/gold/health/health_classified.parquet \
+             dashboard-inputs/data/gold/health/
+          cp audits/austender/health_master/health_master_summary.json \
+             dashboard-inputs/audits/austender/health_master/
+
+          echo "Staged Health dashboard inputs:"
+          find dashboard-inputs -type f -exec ls -lh {} \;
+
+      - name: Upload Health dashboard inputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: atlas-health-dashboard-inputs
+          retention-days: 7
+          if-no-files-found: error
+          path: dashboard-inputs/**
