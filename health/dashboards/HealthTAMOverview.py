@@ -264,15 +264,31 @@ def fy_start(v: object) -> int:
     return int(m.group(0)) if m else -1
 
 
+def current_fy_start() -> int:
+    """First calendar year of the current Australian FY (1 July start), Sydney time."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    now = datetime.now(ZoneInfo("Australia/Sydney"))
+    return now.year if now.month >= 7 else now.year - 1
+
+
+def calendar_fy_window(years: int) -> list[str]:
+    """Labels for the last N Australian FYs, from the calendar. Independent of the population."""
+    current = current_fy_start()
+    return [f"{y}-{y + 1}" for y in range(current - years + 1, current + 1)]
+
+
 def fy_options(df: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
-    fys = sorted(df[FY_COL].dropna().astype(str).unique(), key=fy_start)
+    """Period options. Window boundaries come from the calendar, never from the
+    population passed in, so the TAM and All Market views always use the same FYs."""
+    fy_values = df[FY_COL].astype(str)
     options = [("All years", df)]
-    if len(fys) >= 5:
-        subset = fys[-5:]
-        options.append((f"Last 5 FY ({subset[0]} to {subset[-1]})", df[df[FY_COL].astype(str).isin(subset)]))
-    if len(fys) >= 3:
-        subset = fys[-3:]
-        options.append((f"Last 3 FY ({subset[0]} to {subset[-1]})", df[df[FY_COL].astype(str).isin(subset)]))
+    for n in (5, 3):
+        labels = calendar_fy_window(n)
+        subset = df[fy_values.isin(labels)]
+        if not subset.empty:
+            options.append((f"Last {n} FY ({labels[0]} to {labels[-1]})", subset))
     return options
 
 
