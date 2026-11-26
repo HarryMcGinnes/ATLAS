@@ -11,7 +11,8 @@ AUDIT_DIR = Path(__file__).resolve().parents[2] / "audits" / "austender" / "heal
 import pandas as pd
 
 from health_agency_groups import add_agency_groups, write_agency_audit
-from health_contract_families import add_family_fields, apply_family_fy, count_families, drop_beyond_horizon, FAMILY_COL
+from health_contract_families import add_family_fields, apply_family_fy, count_families, drop_beyond_horizon, family_first, FAMILY_COL
+from HealthAgencyIntelligence import labour_hire_mask
 
 VALUE_COL = "Value"
 ANNUALISED_VALUE_COL = "Value Per Year"
@@ -262,6 +263,8 @@ def classify(df: pd.DataFrame) -> pd.DataFrame:
     # Reporting-only historical agency consolidation; original Agency stays intact.
     out = add_agency_groups(out)
     out = apply_family_fy(out)
+    # Labour hire, by family (original notice decides). Used only by the TAM + Labour Hire view.
+    out["_labour_family"] = family_first(out.assign(_labour_notice=labour_hire_mask(out)), "_labour_notice").astype(bool)
     return out
 
 
@@ -381,7 +384,7 @@ def build_payloads(df: pd.DataFrame, value_col: str, market_mode: str = "tam", d
     The TAM decomposition remains visible as a clearly-labelled subset within
     the All Market view.
     """
-    if market_mode not in {"tam", "all"}:
+    if market_mode not in {"tam", "tam_labour", "all"}:
         raise ValueError(f"Unsupported market mode: {market_mode}")
 
     donut_sets, service_sets, supplier_sets = [], [], []
@@ -431,6 +434,11 @@ def build_payloads(df: pd.DataFrame, value_col: str, market_mode: str = "tam", d
                     frame["is_addressable"],
                     "Non-addressable / Unclassified",
                 )
+            if market_mode == "tam_labour":
+                bucketed = bucketed.where(
+                    frame["is_addressable"],
+                    "Labour hire (outside standard TAM)",
+                )
             return bucketed
 
         selected["_chart_service_offering"] = _chart_so(selected)
@@ -441,6 +449,8 @@ def build_payloads(df: pd.DataFrame, value_col: str, market_mode: str = "tam", d
         chart_offerings = SERVICE_OFFERINGS + ["Uncategorised"]
         if market_mode == "all":
             chart_offerings.append("Non-addressable / Unclassified")
+        if market_mode == "tam_labour":
+            chart_offerings.append("Labour hire (outside standard TAM)")
 
         service_rows = [{
             "name": so,
@@ -497,7 +507,7 @@ def build_html(
     market_mode: str = "tam",
     full_df: pd.DataFrame | None = None,
 ) -> None:
-    if market_mode not in {"tam", "all"}:
+    if market_mode not in {"tam", "tam_labour", "all"}:
         raise ValueError(f"Unsupported market mode: {market_mode}")
     full = full_df if full_df is not None else df
 
@@ -509,15 +519,25 @@ def build_html(
     s["avg_accenture"] = s["accenture"] / years
     data = json.dumps(payload, ensure_ascii=False)
 
-    is_tam = market_mode == "tam"
-    market_label = "Accenture TAM" if is_tam else "All Federal Health Market"
+    is_tam = market_mode in ("tam", "tam_labour")
+    is_labour_view = market_mode == "tam_labour"
+    market_label = (
+        "Accenture TAM + Labour Hire" if is_labour_view
+        else "Accenture TAM" if is_tam
+        else "All Federal Health Market"
+    )
     page_title = (
-        "Accenture Health Addressable Market Dashboard"
+        "Accenture Health Addressable Market Dashboard, including Labour Hire"
+        if is_labour_view
+        else "Accenture Health Addressable Market Dashboard"
         if is_tam
         else "Federal Health Procurement Market Dashboard"
     )
     page_subtitle = (
-        "Showing only contracts classified as addressable to Accenture."
+        "Addressable contracts plus labour-hire contracts. Labour hire is excluded from the standard TAM "
+        "because its descriptions are too vague to classify; this view tests the wider scope."
+        if is_labour_view
+        else "Showing only contracts classified as addressable to Accenture."
         if is_tam
         else "Showing every procurement contract in the Federal Health industry scope."
     )
@@ -539,7 +559,9 @@ def build_html(
         else "Top Suppliers by Share of All Federal Health Market"
     )
     selected_market_card_note = (
-        "Contracts where is_addressable is True"
+        "Addressable contracts plus labour hire"
+        if is_labour_view
+        else "Contracts where is_addressable is True"
         if is_tam
         else "All Federal Health contracts in scope"
     )
@@ -549,10 +571,12 @@ def build_html(
         else "Share of All Federal Health Market (%)"
     )
 
-    tam_active = " active" if is_tam else ""
-    all_active = " active" if not is_tam else ""
-    tam_current = ' aria-current="page"' if is_tam else ""
-    all_current = ' aria-current="page"' if not is_tam else ""
+    tam_active = " active" if market_mode == "tam" else ""
+    labour_active = " active" if is_labour_view else ""
+    all_active = " active" if market_mode == "all" else ""
+    tam_current = ' aria-current="page"' if market_mode == "tam" else ""
+    labour_current = ' aria-current="page"' if is_labour_view else ""
+    all_current = ' aria-current="page"' if market_mode == "all" else ""
 
     market_controls = (
         '<section class="atlas-market-controls" aria-label="Market selection">'
@@ -560,6 +584,7 @@ def build_html(
         '<p>Choose the procurement population for every KPI and visual on this page.</p></div>'
         '<div class="atlas-market-actions">'
         f'<a class="atlas-market-choice{tam_active}" href="AccentureHealthTAMOverview.html"{tam_current}>Accenture TAM</a>'
+        f'<a class="atlas-market-choice{labour_active}" href="AccentureHealthTAMOverview_TAMLabour.html"{labour_current}>Accenture TAM + Labour Hire</a>'
         f'<a class="atlas-market-choice{all_active}" href="AccentureHealthTAMOverview_AllMarket.html"{all_current}>All Federal Health Market</a>'
         '<button type="button" id="atlasClearFilters">Clear All Filters</button>'
         '</div></section>'
@@ -774,8 +799,11 @@ def main() -> None:
     )
 
     tam_dashboard = outdir / "AccentureHealthTAMOverview.html"
+    labour_dashboard = outdir / "AccentureHealthTAMOverview_TAMLabour.html"
     all_dashboard = outdir / "AccentureHealthTAMOverview_AllMarket.html"
+    tam_labour_df = df.loc[df["is_addressable"].astype(bool) | df["_labour_family"].astype(bool)].copy()
     build_html(tam_df, value_col, tam_dashboard, market_mode="tam", full_df=df)
+    build_html(tam_labour_df, value_col, labour_dashboard, market_mode="tam_labour", full_df=df)
     build_html(df, value_col, all_dashboard, market_mode="all", full_df=df)
     if not args.skip_health_home:
         build_health_home(df, VALUE_COL, Path(args.health_home))
@@ -794,6 +822,7 @@ def main() -> None:
         f"({all_summary['accenture_share']:.1f}% share)"
     )
     print(f"TAM dashboard:            {tam_dashboard}")
+    print(f"TAM + Labour dashboard:   {labour_dashboard}")
     print(f"All Market dashboard:     {all_dashboard}")
     print(f"Classification audit:     {AUDIT_DIR / 'health_tam_classification_audit.csv'}")
     print("=" * 72)
@@ -908,7 +937,7 @@ def atlas_quality_panel(df: pd.DataFrame, value_col: str, market_mode: str) -> s
         unknown = (so.isna() | so.astype(str).str.strip().str.lower().isin(['', 'unclassified', 'uncategorised', 'unresolved', 'none'])) & df['is_addressable']
         total_unclassified = float(pd.to_numeric(df.loc[unknown, value_col], errors='coerce').fillna(0).sum())
         unclassified_text = money(total_unclassified)
-    label = 'Accenture TAM' if market_mode == 'tam' else 'All Federal Health Market'
+    label = 'Accenture TAM + Labour Hire' if market_mode == 'tam_labour' else 'Accenture TAM' if market_mode == 'tam' else 'All Federal Health Market'
     return f"""<section class="atlas-health-quality" aria-label="Data quality and coverage">
       <div class="atlas-quality-title"><h2>Data coverage & quality</h2><p>Selected scope: {escape(label)} · Review indicators, not a guarantee of perfect source records.</p></div>
       <div class="atlas-quality-metrics">
@@ -969,9 +998,13 @@ def atlas_agency_breakdown(html_text: str, df: pd.DataFrame, value_col: str, mar
     """
     if "agency_group" not in df.columns:
         raise ValueError("Agency reporting groups missing from Health TAM input")
-    is_tam = market_mode == "tam"
+    is_tam = market_mode in ("tam", "tam_labour")
     full = full_df if full_df is not None else df
-    base_label = "Accenture TAM" if is_tam else "All Federal Health Market"
+    base_label = (
+        "Accenture TAM + labour hire" if market_mode == "tam_labour"
+        else "Accenture TAM" if is_tam
+        else "All Federal Health Market"
+    )
     overlay_label = "Accenture wins" if is_tam else "Accenture TAM"
     if is_tam:
         base_frame = df
