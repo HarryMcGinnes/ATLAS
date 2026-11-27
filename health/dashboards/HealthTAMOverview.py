@@ -1035,46 +1035,39 @@ def atlas_agency_breakdown(html_text: str, df: pd.DataFrame, value_col: str, mar
 
     from html import escape
     heading = f"{base_label} by Agency"
-    base_short = "market" if market_mode == "all" else "TAM"
+    mode = "all" if market_mode == "all" else "tam"
+    legend_win = "Accenture TAM" if mode == "all" else "Accenture wins"
+    legend_rem = "Rest of market" if mode == "all" else "Remaining TAM"
     panel = (
         AGENCY_ROWS_CSS
         + '<section class="panel" id="atlas-agency"><div class="ahr-head"><div>'
         + '<p class="ahr-eyebrow">MARKET CONCENTRATION</p>'
-        + f'<h2 class="ahr-title" id="agencyTitle">{escape(heading)}</h2>'
-        + '<p class="ahr-desc">Light bars show the market by agency; the dark segment shows the overlay within it. Follows the financial-year selection above.</p>'
-        + '</div><div class="ahr-total" id="agencyTotal">-</div></div>'
+        + f'<h2 class="ahr-title" id="agencyTitle">{escape(heading)}</h2></div>'
+        + f'<div class="ahr-legend"><span><i class="win"></i>{escape(legend_win)}</span><span><i class="rem"></i>{escape(legend_rem)}</span></div></div>'
+        + '<div class="ahr-colhead"><span>Agency</span><span></span><span>TAM</span></div>'
         + '<div class="ahr-rows" id="agencyRows"></div>'
-        + '<p class="ahr-foot">Source: AusTender. Values are contract awards, not annual expenditure. Contracts are counted as families (an original notice and its amendments).</p></section>'
+        + '<p class="ahr-foot">Source: AusTender. Values are contract awards, not annual expenditure.</p></section>'
     )
     script = (
         "<script>" + AGENCY_ROWS_JS + """
 (function(){
   const periods = __DATA__;
-  const OVERLAY_LABEL = __OVERLAY_LABEL__;
-  const BASE_SHORT = __BASE_SHORT__;
+  const MODE = __MODE__;
   function renderAgency(){
     const control = document.querySelector('input[name="donutRange"]:checked');
     const i = control ? Number(control.value) : 0;
     const p = periods[i] || periods[0];
     if(!p){return;}
-    const rows = p.rows.map(r=>({agency:String(r.agency),base:Number(r.base||0),families:Number(r.base_contracts||0),
-                                 overlay:Number(r.overlay||0)}));
+    const rows = p.rows.map(r=>({agency:String(r.agency),base:Number(r.base||0),overlay:Number(r.overlay||0)}));
     const total = rows.reduce((s,r)=>s+r.base,0);
-    const wins = rows.reduce((s,r)=>s+r.overlay,0);
-    const head = document.getElementById('agencyTotal');
-    if(head){head.textContent = __BASE_LABEL__ + ': ' + moneyText(total) + '  \u00b7  ' + OVERLAY_LABEL + ': ' + moneyText(wins);}
     const target = document.getElementById('agencyRows');
-    if(target){renderAgencyRows(target, rows, {baseTotal: total, overlayLabel: OVERLAY_LABEL, baseShort: BASE_SHORT});}
+    if(target){renderAgencyRows(target, rows, {mode: MODE, baseTotal: total});}
   }
-  function moneyText(n){ n=Number(n||0); const x=Math.abs(n);
-    return (n<0?'-':'')+'A$'+(x>=1e9?(x/1e9).toFixed(2)+'B':x>=1e6?(x/1e6).toFixed(1)+'M':Math.round(x).toLocaleString('en-AU')); }
   document.querySelectorAll('input[name="donutRange"]').forEach(el=>el.addEventListener('change',renderAgency));
   renderAgency();
 })();</script>"""
     ).replace('__DATA__', json.dumps(per_period, ensure_ascii=False, allow_nan=False)) \
-        .replace('__BASE_LABEL__', json.dumps(base_label)) \
-        .replace('__OVERLAY_LABEL__', json.dumps(overlay_label)) \
-        .replace('__BASE_SHORT__', json.dumps(base_short))
+        .replace('__MODE__', json.dumps(mode))
     donut_anchor = 'id="donutChart"'
     donut_at = html_text.find(donut_anchor)
     next_panel = html_text.find('<div class="panel"><h3>', donut_at + len(donut_anchor)) if donut_at >= 0 else -1
@@ -1122,43 +1115,58 @@ AGENCY_ROWS_CSS = """<style id="atlas-agency-rows-style">
 .ahr-head{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;flex-wrap:wrap}
 .ahr-eyebrow{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#7535ac;font-weight:900;letter-spacing:.13em;margin:0 0 8px}
 .ahr-title{font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;color:#101828;margin:0}
-.ahr-desc{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#667085;margin:6px 0 0;line-height:1.5}
-.ahr-total{font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:700;color:#4c1d95;white-space:nowrap}
-.ahr-rows{display:flex;flex-direction:column;gap:14px;margin-top:18px;font-family:Arial,Helvetica,sans-serif;color:#1f2937}
-.ahr-row{display:grid;grid-template-columns:minmax(170px,240px) minmax(120px,1fr) minmax(200px,250px);gap:18px;align-items:center}
-.ahr-name{font-size:12px;font-weight:700;line-height:1.35;overflow-wrap:anywhere}
-.ahr-bar{height:16px;background:#f0eaf5;border-radius:5px;overflow:hidden}
-.ahr-fill{height:100%;background:#8756c2;border-radius:5px;overflow:hidden;min-width:0}
-.ahr-over{height:100%;background:#2e1065;border-radius:5px}
-.ahr-num{text-align:right;font-size:13px;font-weight:700;line-height:1.3;white-space:normal}
-.ahr-sub{display:block;font-size:11px;font-weight:400;color:#6b7280;margin-top:2px;line-height:1.35}
+.ahr-legend{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#374151;display:flex;gap:16px;align-items:center;white-space:nowrap}
+.ahr-legend i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.ahr-legend .win{background:#2e1065}.ahr-legend .rem{background:#8756c2}
+.ahr-colhead,.ahr-row{display:grid;grid-template-columns:minmax(180px,260px) minmax(160px,1fr) minmax(170px,220px);gap:20px;align-items:center}
+.ahr-colhead{font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;color:#6b7280;letter-spacing:.06em;text-transform:uppercase;margin-top:20px;padding-bottom:8px;border-bottom:1px solid #e5e7eb}
+.ahr-colhead span:last-child{text-align:right}
+.ahr-rows{display:flex;flex-direction:column;gap:0;font-family:Arial,Helvetica,sans-serif;color:#1f2937}
+.ahr-row{padding:12px 0;border-bottom:1px solid #f1f1f4}
+.ahr-name{font-size:13px;font-weight:700;line-height:1.35;overflow-wrap:anywhere}
+.ahr-bar{height:18px;display:flex;align-items:center}
+.ahr-fill{height:100%;display:flex;border-radius:4px;overflow:hidden;min-width:2px;background:#8756c2}
+.ahr-win{height:100%;background:#2e1065}
+.ahr-val{text-align:right;line-height:1.3}
+.ahr-tam{font-size:14px;font-weight:700;color:#101828}
+.ahr-share{font-size:12px;font-weight:700;margin-top:3px}
 .ahr-foot{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#6b7280;line-height:1.6;margin:16px 0 0}
-@media (max-width:900px){.ahr-row{grid-template-columns:1fr}.ahr-num{text-align:left}}
+@media (max-width:900px){.ahr-colhead,.ahr-row{grid-template-columns:1fr}.ahr-val{text-align:left}.ahr-colhead span:last-child{text-align:left}}
 </style>"""
 
 AGENCY_ROWS_JS = """function renderAgencyRows(target, rows, o){
   const nfa=new Intl.NumberFormat('en-AU');
   const fmt=n=>{n=Number(n||0);const x=Math.abs(n);return (n<0?'-':'')+'A$'+(x>=1e9?(x/1e9).toFixed(2)+'B':x>=1e6?(x/1e6).toFixed(1)+'M':nfa.format(Math.round(x)))};
+  const pct=x=>x.toFixed(1)+'%';
+  // Win rate colour: 0% deep red, 100% deep green (hue sweeps 0 to 120).
+  const winColour=p=>'hsl('+Math.round(Math.max(0,Math.min(100,p))/100*120)+',70%,32%)';
   const data=rows.filter(r=>Number(r.base)>0).slice().sort((a,b)=>b.base-a.base);
   const max=Math.max(0,...data.map(r=>r.base));
   target.replaceChildren();
   data.forEach(r=>{
-    const row=document.createElement('div');row.className='ahr-row';
+    const row=document.createElement('div');row.className='ahr-row ahr-grid';
     const name=document.createElement('div');name.className='ahr-name';name.textContent=r.agency;
     const bar=document.createElement('div');bar.className='ahr-bar';
-    const fill=document.createElement('div');fill.className='ahr-fill';fill.style.width=(max?r.base/max*100:0).toFixed(2)+'%';
-    const over=document.createElement('div');over.className='ahr-over';
-    over.style.width=(r.base?Math.min(100,r.overlay/r.base*100):0).toFixed(2)+'%';
-    fill.appendChild(over);bar.appendChild(fill);
-    const num=document.createElement('div');num.className='ahr-num';num.textContent=fmt(r.base);
-    const share=o.baseTotal?(r.base/o.baseTotal*100):0;
-    const ov=r.base?(r.overlay/r.base*100):0;
-    const s1=document.createElement('span');s1.className='ahr-sub';
-    s1.textContent=share.toFixed(1)+'% \u00b7 '+nfa.format(r.families)+' contracts';
-    const s2=document.createElement('span');s2.className='ahr-sub';
-    s2.textContent=o.overlayLabel+' '+fmt(r.overlay)+' ('+ov.toFixed(1)+'% of '+o.baseShort+')';
-    num.append(s1,s2);
-    row.append(name,bar,num);target.appendChild(row);
+    const fill=document.createElement('div');fill.className='ahr-fill';
+    fill.style.width=(max?r.base/max*100:0).toFixed(2)+'%';
+    const win=document.createElement('div');win.className='ahr-win';
+    const ov=r.base?Math.min(100,r.overlay/r.base*100):0;
+    win.style.width=ov.toFixed(2)+'%';
+    fill.appendChild(win);bar.appendChild(fill);
+    const val=document.createElement('div');val.className='ahr-val';
+    const tam=document.createElement('div');tam.className='ahr-tam';tam.textContent=fmt(r.base);
+    const share=document.createElement('div');share.className='ahr-share';
+    if(o.mode==='tam'){
+      const p=r.base?r.overlay/r.base*100:0;
+      share.style.color=winColour(p);
+      share.textContent='Accenture wins '+pct(p)+' of TAM';
+    }else{
+      const p=o.baseTotal?r.base/o.baseTotal*100:0;
+      share.style.color='#6b7280';
+      share.textContent='TAM '+pct(p)+' of market';
+    }
+    val.append(tam,share);
+    row.append(name,bar,val);target.appendChild(row);
   });
 }
 """
@@ -1262,7 +1270,7 @@ def build_health_home(df: pd.DataFrame, value_col: str, output_path: Path) -> No
     <div class="kpi"><small>Contracts</small><strong id="kContracts">–</strong><small>Families: original notice plus amendments</small></div>
     <div class="kpi"><small>Accenture awards</small><strong id="kAccenture">–</strong><small>Value in selected market</small></div>
     <div class="kpi"><small>Federal Health agencies</small><strong id="kAgencies">–</strong><small>Agencies with contracts</small></div></div></section>
-    __AGENCY_ROWS_CSS__<section class="panel" id="atlas-agency"><div class="ahr-head"><div><p class="ahr-eyebrow">MARKET CONCENTRATION</p><h2 class="ahr-title" id="agencyTitle">Accenture TAM by Agency</h2><p class="ahr-desc">Light bars show the market by agency; the dark segment shows the overlay within it. Follows the market selection above.</p></div><div class="ahr-total" id="agencyTotal">-</div></div><div class="ahr-rows" id="agencyRows"></div><p class="ahr-foot">Source: AusTender. Values are contract awards, not annual expenditure. Contracts are counted as families (an original notice and its amendments).</p></section>
+    __AGENCY_ROWS_CSS__<section class="panel" id="atlas-agency"><div class="ahr-head"><div><p class="ahr-eyebrow">MARKET CONCENTRATION</p><h2 class="ahr-title" id="agencyTitle">Accenture TAM by Agency</h2></div><div class="ahr-legend"><span><i class="win"></i><span id="legendWin">Accenture wins</span></span><span><i class="rem"></i><span id="legendRem">Remaining TAM</span></span></div></div><div class="ahr-colhead"><span>Agency</span><span></span><span>TAM</span></div><div class="ahr-rows" id="agencyRows"></div><p class="ahr-foot">Source: AusTender. Values are contract awards, not annual expenditure.</p></section>
     <section aria-label="Explore dashboards"><h2>Explore the market</h2><div class="cards">
     <a class="tile" href="AccentureHealthTAMOverview.html"><h3>TAM overview</h3><p>Understand addressable spend, Service Offering demand, leading suppliers and agency share.</p><strong>Open overview</strong></a>
     <a class="tile" href="HealthCompetitiveIntelligence.html"><h3>Competitive intelligence</h3><p>Compare supplier market positions, contract portfolios and agency concentration.</p><strong>Compare suppliers</strong></a>
@@ -1354,7 +1362,7 @@ __AGENCY_ROWS_JS__
       text('kValue',money(m.total));text('kContracts',nf.format(m.count));text('kAccenture',money(m.accenture_value));text('kAgencies',nf.format(m.agency_count));
       text('agencyTitle',(tam?'Accenture TAM':'All Federal Health Market')+' by Agency');
       const target=document.getElementById('agencyRows');target.replaceChildren();
-      const max=Math.max(0,...m.agencies.map(r=>r.value));renderAgencyRows(target,m.agencies.map(r=>({agency:r.agency,base:r.value,families:r.families,overlay:r.overlay})),{baseTotal:m.total,overlayLabel:m.overlay_label,baseShort:tam?'TAM':'market'});text('agencyTotal',(tam?'Accenture TAM':'All Federal Health Market')+': '+money(m.total)+'  \u00b7  '+m.overlay_label+': '+money(m.overlay_total));
+      const max=Math.max(0,...m.agencies.map(r=>r.value));renderAgencyRows(target,m.agencies.map(r=>({agency:r.agency,base:r.value,overlay:r.overlay})),{mode:tam?'tam':'all',baseTotal:m.total});text('legendWin',tam?'Accenture wins':'Accenture TAM');text('legendRem',tam?'Remaining TAM':'Rest of market');
       text('qReview',m.review===null?'Not available':nf.format(m.review));text('qInferred',m.inferred===null?'Not available':nf.format(m.inferred));text('qUnclassified',m.unclassified===null?'Not available':nf.format(m.unclassified));
     }
     document.querySelectorAll('[data-scope]').forEach(b=>b.addEventListener('click',()=>{scope=b.dataset.scope;render()}));
