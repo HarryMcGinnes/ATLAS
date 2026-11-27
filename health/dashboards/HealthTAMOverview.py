@@ -1035,69 +1035,46 @@ def atlas_agency_breakdown(html_text: str, df: pd.DataFrame, value_col: str, mar
 
     from html import escape
     heading = f"{base_label} by Agency"
-    panel = f"""<style>
-      .atlas-agency-panel .eyebrow{{font-size:11px;color:#7535ac;font-weight:900;letter-spacing:.13em;margin:0 0 8px}}
-      .atlas-agency-panel .section-head{{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;flex-wrap:wrap}}
-      .atlas-agency-panel .rows{{margin-top:19px;display:flex;flex-direction:column;gap:13px}}
-      .atlas-agency-panel .agency-row{{display:grid;grid-template-columns:minmax(160px,1.35fr) minmax(100px,2fr) 165px;gap:16px;align-items:center}}
-      .atlas-agency-panel .agency-name{{font-size:12px;font-weight:800;line-height:1.35}}
-      .atlas-agency-panel .agency-bar{{height:16px;background:#f0eaf5;border-radius:5px;overflow:hidden}}
-      .atlas-agency-panel .agency-bar>div{{height:100%;background:#8756c2;border-radius:5px;overflow:hidden}}
-      .atlas-agency-panel .agency-bar>div>div{{height:100%;background:#2e1065;border-radius:5px}}
-      .atlas-agency-panel .agency-num{{text-align:right;font-size:13px;font-weight:800;white-space:nowrap}}
-      .atlas-agency-panel .agency-num span{{display:block;color:#6b7280;font-size:11px;font-weight:400;margin-top:3px}}
-      .atlas-agency-panel .foot{{font-size:12px;color:#6b7280;line-height:1.6}}
-      @media (max-width:900px){{.atlas-agency-panel .agency-row{{grid-template-columns:1fr}}}}
-    </style>
-    <section class="panel atlas-agency-panel" id="atlas-agency"><div class="section-head"><div><p class="eyebrow">MARKET CONCENTRATION</p><h2 id="atlasAgencyHeading">{escape(heading)}</h2>
-    <p>Light bars show {escape(base_label.lower())} by agency; the dark segment shows {escape(overlay_label.lower())} within it. Follows the financial-year selection above.</p></div>
-    <div class="agency-total" id="atlasAgencyTotal">-</div></div>
-    <div class="rows" id="atlasAgencyRows"></div>
-    <p class="foot">Values are AusTender contract awards, not annual expenditure. Contracts are counted as families (an original notice and its amendments).</p></section>"""
-    script = r"""<script>(function(){
-      const periods = __DATA__;
-      const BASE_LABEL = __BASE_LABEL__;
-      const OVERLAY_LABEL = __OVERLAY_LABEL__;
-      const nf = new Intl.NumberFormat('en-AU');
-      function money(n){ n=Number(n||0); const x=Math.abs(n);
-        return (n<0?'-':'')+'A$'+(x>=1e9?(x/1e9).toFixed(2)+'B':x>=1e6?(x/1e6).toFixed(1)+'M':nf.format(Math.round(x))); }
-      function renderAgency(){
-        const control = document.querySelector('input[name="donutRange"]:checked');
-        const i = control ? Number(control.value) : 0;
-        const p = periods[i] || periods[0];
-        if(!p){return;}
-        const rows = p.rows.map(r=>({agency:String(r.agency),base:Number(r.base||0),bc:Number(r.base_contracts||0),
-                                     overlay:Number(r.overlay||0),oc:Number(r.overlay_contracts||0)}))
-          .filter(r=>r.base>0).sort((a,b)=>b.base-a.base);
-        const total = rows.reduce((s,r)=>s+r.base,0);
-        const wins = rows.reduce((s,r)=>s+r.overlay,0);
-        const max = Math.max(0,...rows.map(r=>r.base));
-        const head = document.getElementById('atlasAgencyTotal');
-        if(head){head.textContent = BASE_LABEL+': '+money(total)+'  ·  '+OVERLAY_LABEL+': '+money(wins);}
-        const target = document.getElementById('atlasAgencyRows');
-        if(!target){return;}
-        target.replaceChildren();
-        rows.forEach(r=>{
-          const row=document.createElement('div'); row.className='agency-row';
-          const name=document.createElement('div'); name.className='agency-name'; name.textContent=r.agency;
-          const bar=document.createElement('div'); bar.className='agency-bar';
-          const fill=document.createElement('div'); fill.style.width=(max>0?(r.base/max*100):0).toFixed(2)+'%';
-          const inner=document.createElement('div'); inner.style.width=(r.base>0?(r.overlay/r.base*100):0).toFixed(2)+'%';
-          fill.appendChild(inner); bar.appendChild(fill);
-          const num=document.createElement('div'); num.className='agency-num'; num.textContent=money(r.base);
-          const sub=document.createElement('span');
-          const share=total>0?(r.base/total*100):0;
-          const wshare=r.base>0?(r.overlay/r.base*100):0;
-          sub.textContent=share.toFixed(1)+'% · '+nf.format(r.bc)+' contracts · '+OVERLAY_LABEL+' '+money(r.overlay)+' ('+wshare.toFixed(1)+'%)';
-          num.appendChild(sub);
-          row.append(name,bar,num); target.appendChild(row);
-        });
-      }
-      document.querySelectorAll('input[name="donutRange"]').forEach(el=>el.addEventListener('change',renderAgency));
-      renderAgency();
-    })();</script>""".replace('__DATA__', json.dumps(per_period, ensure_ascii=False, allow_nan=False)) \
+    base_short = "market" if market_mode == "all" else "TAM"
+    panel = (
+        AGENCY_ROWS_CSS
+        + '<section class="panel" id="atlas-agency"><div class="ahr-head"><div>'
+        + '<p class="ahr-eyebrow">MARKET CONCENTRATION</p>'
+        + f'<h2 class="ahr-title" id="agencyTitle">{escape(heading)}</h2>'
+        + '<p class="ahr-desc">Light bars show the market by agency; the dark segment shows the overlay within it. Follows the financial-year selection above.</p>'
+        + '</div><div class="ahr-total" id="agencyTotal">-</div></div>'
+        + '<div class="ahr-rows" id="agencyRows"></div>'
+        + '<p class="ahr-foot">Source: AusTender. Values are contract awards, not annual expenditure. Contracts are counted as families (an original notice and its amendments).</p></section>'
+    )
+    script = (
+        "<script>" + AGENCY_ROWS_JS + """
+(function(){
+  const periods = __DATA__;
+  const OVERLAY_LABEL = __OVERLAY_LABEL__;
+  const BASE_SHORT = __BASE_SHORT__;
+  function renderAgency(){
+    const control = document.querySelector('input[name="donutRange"]:checked');
+    const i = control ? Number(control.value) : 0;
+    const p = periods[i] || periods[0];
+    if(!p){return;}
+    const rows = p.rows.map(r=>({agency:String(r.agency),base:Number(r.base||0),families:Number(r.base_contracts||0),
+                                 overlay:Number(r.overlay||0)}));
+    const total = rows.reduce((s,r)=>s+r.base,0);
+    const wins = rows.reduce((s,r)=>s+r.overlay,0);
+    const head = document.getElementById('agencyTotal');
+    if(head){head.textContent = __BASE_LABEL__ + ': ' + moneyText(total) + '  \u00b7  ' + OVERLAY_LABEL + ': ' + moneyText(wins);}
+    const target = document.getElementById('agencyRows');
+    if(target){renderAgencyRows(target, rows, {baseTotal: total, overlayLabel: OVERLAY_LABEL, baseShort: BASE_SHORT});}
+  }
+  function moneyText(n){ n=Number(n||0); const x=Math.abs(n);
+    return (n<0?'-':'')+'A$'+(x>=1e9?(x/1e9).toFixed(2)+'B':x>=1e6?(x/1e6).toFixed(1)+'M':Math.round(x).toLocaleString('en-AU')); }
+  document.querySelectorAll('input[name="donutRange"]').forEach(el=>el.addEventListener('change',renderAgency));
+  renderAgency();
+})();</script>"""
+    ).replace('__DATA__', json.dumps(per_period, ensure_ascii=False, allow_nan=False)) \
         .replace('__BASE_LABEL__', json.dumps(base_label)) \
-        .replace('__OVERLAY_LABEL__', json.dumps(overlay_label))
+        .replace('__OVERLAY_LABEL__', json.dumps(overlay_label)) \
+        .replace('__BASE_SHORT__', json.dumps(base_short))
     donut_anchor = 'id="donutChart"'
     donut_at = html_text.find(donut_anchor)
     next_panel = html_text.find('<div class="panel"><h3>', donut_at + len(donut_anchor)) if donut_at >= 0 else -1
@@ -1140,6 +1117,52 @@ def atlas_overview_extras(html_text: str, df: pd.DataFrame, value_col: str, mark
     return html_text
 
 
+# ---- Shared agency rows: one stylesheet and one renderer for the home page and the TAM pages.
+AGENCY_ROWS_CSS = """<style id="atlas-agency-rows-style">
+.ahr-head{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;flex-wrap:wrap}
+.ahr-eyebrow{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#7535ac;font-weight:900;letter-spacing:.13em;margin:0 0 8px}
+.ahr-title{font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;color:#101828;margin:0}
+.ahr-desc{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#667085;margin:6px 0 0;line-height:1.5}
+.ahr-total{font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:700;color:#4c1d95;white-space:nowrap}
+.ahr-rows{display:flex;flex-direction:column;gap:14px;margin-top:18px;font-family:Arial,Helvetica,sans-serif;color:#1f2937}
+.ahr-row{display:grid;grid-template-columns:minmax(170px,240px) minmax(120px,1fr) minmax(200px,250px);gap:18px;align-items:center}
+.ahr-name{font-size:12px;font-weight:700;line-height:1.35;overflow-wrap:anywhere}
+.ahr-bar{height:16px;background:#f0eaf5;border-radius:5px;overflow:hidden}
+.ahr-fill{height:100%;background:#8756c2;border-radius:5px;overflow:hidden;min-width:0}
+.ahr-over{height:100%;background:#2e1065;border-radius:5px}
+.ahr-num{text-align:right;font-size:13px;font-weight:700;line-height:1.3;white-space:normal}
+.ahr-sub{display:block;font-size:11px;font-weight:400;color:#6b7280;margin-top:2px;line-height:1.35}
+.ahr-foot{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#6b7280;line-height:1.6;margin:16px 0 0}
+@media (max-width:900px){.ahr-row{grid-template-columns:1fr}.ahr-num{text-align:left}}
+</style>"""
+
+AGENCY_ROWS_JS = """function renderAgencyRows(target, rows, o){
+  const nfa=new Intl.NumberFormat('en-AU');
+  const fmt=n=>{n=Number(n||0);const x=Math.abs(n);return (n<0?'-':'')+'A$'+(x>=1e9?(x/1e9).toFixed(2)+'B':x>=1e6?(x/1e6).toFixed(1)+'M':nfa.format(Math.round(x)))};
+  const data=rows.filter(r=>Number(r.base)>0).slice().sort((a,b)=>b.base-a.base);
+  const max=Math.max(0,...data.map(r=>r.base));
+  target.replaceChildren();
+  data.forEach(r=>{
+    const row=document.createElement('div');row.className='ahr-row';
+    const name=document.createElement('div');name.className='ahr-name';name.textContent=r.agency;
+    const bar=document.createElement('div');bar.className='ahr-bar';
+    const fill=document.createElement('div');fill.className='ahr-fill';fill.style.width=(max?r.base/max*100:0).toFixed(2)+'%';
+    const over=document.createElement('div');over.className='ahr-over';
+    over.style.width=(r.base?Math.min(100,r.overlay/r.base*100):0).toFixed(2)+'%';
+    fill.appendChild(over);bar.appendChild(fill);
+    const num=document.createElement('div');num.className='ahr-num';num.textContent=fmt(r.base);
+    const share=o.baseTotal?(r.base/o.baseTotal*100):0;
+    const ov=r.base?(r.overlay/r.base*100):0;
+    const s1=document.createElement('span');s1.className='ahr-sub';
+    s1.textContent=share.toFixed(1)+'% \u00b7 '+nfa.format(r.families)+' contracts';
+    const s2=document.createElement('span');s2.className='ahr-sub';
+    s2.textContent=o.overlayLabel+' '+fmt(r.overlay)+' ('+ov.toFixed(1)+'% of '+o.baseShort+')';
+    num.append(s1,s2);
+    row.append(name,bar,num);target.appendChild(row);
+  });
+}
+"""
+
 def build_health_home(df: pd.DataFrame, value_col: str, output_path: Path) -> None:
     """Build the Health homepage from canonical master fields (no reclassification).
 
@@ -1149,18 +1172,22 @@ def build_health_home(df: pd.DataFrame, value_col: str, output_path: Path) -> No
     """
     from html import escape
 
-    def market_payload(frame: pd.DataFrame) -> dict:
+    def market_payload(frame: pd.DataFrame, overlay: str) -> dict:
         frame = frame.copy()
         amount = pd.to_numeric(frame[value_col], errors="coerce").fillna(0)
         total = float(amount.sum())
-        agencies = frame["agency_group"]
+        overlay_mask = frame["is_accenture"].astype(bool) if overlay == "wins" else frame["is_addressable"].astype(bool)
         agency_frame = pd.DataFrame({
-            "agency": agencies.fillna("Unspecified agency").astype(str).str.strip().replace("", "Unspecified agency"),
+            "agency": frame["agency_group"].fillna("Unspecified agency").astype(str).str.strip().replace("", "Unspecified agency"),
             "value": amount,
+            "family": frame[FAMILY_COL].astype(str),
+            "overlay": amount.where(overlay_mask, 0.0),
         })
-        grouped = agency_frame.groupby("agency", dropna=False)["value"].agg(["sum", "size"]).sort_values("sum", ascending=False)
+        grouped = agency_frame.groupby("agency", dropna=False).agg(
+            value=("value", "sum"), families=("family", "nunique"), overlay=("overlay", "sum"),
+        ).sort_values("value", ascending=False)
         agency_data = [
-            {"agency": str(name), "value": float(row["sum"]), "count": int(row["size"])}
+            {"agency": str(name), "value": float(row["value"]), "families": int(row["families"]), "overlay": float(row["overlay"])}
             for name, row in grouped.iterrows()
         ]
         # Never publish agency figures that do not reconcile to the selected market.
@@ -1179,6 +1206,8 @@ def build_health_home(df: pd.DataFrame, value_col: str, output_path: Path) -> No
             "agency_count": int(len(grouped)),
             "accenture_value": acc_value,
             "agencies": agency_data,
+            "overlay_label": "Accenture wins" if overlay == "wins" else "Accenture TAM",
+            "overlay_total": float(sum(row["overlay"] for row in agency_data)),
             "review": review,
             "inferred": inferred,
             "unclassified": unknown_count,
@@ -1187,7 +1216,7 @@ def build_health_home(df: pd.DataFrame, value_col: str, output_path: Path) -> No
     tam = df.loc[df["is_addressable"]].copy()
     if tam.empty:
         raise RuntimeError("Cannot build Health landing page: no addressable contracts")
-    payload = {"tam": market_payload(tam), "all": market_payload(df)}
+    payload = {"tam": market_payload(tam, "wins"), "all": market_payload(df, "tam")}
     source_meta = atlas_freshness(df)
     # Avoid unsafe HTML/script injection from raw agency names inside JSON.
     safe_data = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace("<", "\\u003c")
@@ -1233,9 +1262,7 @@ def build_health_home(df: pd.DataFrame, value_col: str, output_path: Path) -> No
     <div class="kpi"><small>Contracts</small><strong id="kContracts">–</strong><small>Families: original notice plus amendments</small></div>
     <div class="kpi"><small>Accenture awards</small><strong id="kAccenture">–</strong><small>Value in selected market</small></div>
     <div class="kpi"><small>Federal Health agencies</small><strong id="kAgencies">–</strong><small>Agencies with contracts</small></div></div></section>
-    <section class="panel" id="atlas-agency"><div class="section-head"><div><p class="eyebrow">MARKET CONCENTRATION</p><h2 id="agencyTitle">TAM by Agency</h2>
-    <p>Share of the selected market's recorded contract value. Select the market above to compare.</p></div></div>
-    <div class="rows" id="agencyRows"></div><p class="foot">Source: AusTender. Each contract notice contributes its recorded value, including amendments. Values may be negative where amendments reduce reported contract value.</p></section>
+    __AGENCY_ROWS_CSS__<section class="panel" id="atlas-agency"><div class="ahr-head"><div><p class="ahr-eyebrow">MARKET CONCENTRATION</p><h2 class="ahr-title" id="agencyTitle">Accenture TAM by Agency</h2><p class="ahr-desc">Light bars show the market by agency; the dark segment shows the overlay within it. Follows the market selection above.</p></div><div class="ahr-total" id="agencyTotal">-</div></div><div class="ahr-rows" id="agencyRows"></div><p class="ahr-foot">Source: AusTender. Values are contract awards, not annual expenditure. Contracts are counted as families (an original notice and its amendments).</p></section>
     <section aria-label="Explore dashboards"><h2>Explore the market</h2><div class="cards">
     <a class="tile" href="AccentureHealthTAMOverview.html"><h3>TAM overview</h3><p>Understand addressable spend, Service Offering demand, leading suppliers and agency share.</p><strong>Open overview</strong></a>
     <a class="tile" href="HealthCompetitiveIntelligence.html"><h3>Competitive intelligence</h3><p>Compare supplier market positions, contract portfolios and agency concentration.</p><strong>Compare suppliers</strong></a>
@@ -1320,18 +1347,20 @@ def build_health_home(df: pd.DataFrame, value_col: str, output_path: Path) -> No
       const share=document.createElement('span');share.textContent=(total?r.value/total*100:0).toFixed(1)+'% · '+nf.format(r.count)+' contracts';number.appendChild(share);
       row.append(label,bar,number);target.appendChild(row);
     }
+__AGENCY_ROWS_JS__
     function render(){
       const m=MARKETS[scope];const tam=scope==='tam';
       document.querySelectorAll('[data-scope]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.scope===scope)));
       text('kValue',money(m.total));text('kContracts',nf.format(m.count));text('kAccenture',money(m.accenture_value));text('kAgencies',nf.format(m.agency_count));
       text('agencyTitle',(tam?'Accenture TAM':'All Federal Health Market')+' by Agency');
       const target=document.getElementById('agencyRows');target.replaceChildren();
-      const max=Math.max(0,...m.agencies.map(r=>r.value));m.agencies.forEach(r=>addRow(target,r,max,m.total));
+      const max=Math.max(0,...m.agencies.map(r=>r.value));renderAgencyRows(target,m.agencies.map(r=>({agency:r.agency,base:r.value,families:r.families,overlay:r.overlay})),{baseTotal:m.total,overlayLabel:m.overlay_label,baseShort:tam?'TAM':'market'});text('agencyTotal',(tam?'Accenture TAM':'All Federal Health Market')+': '+money(m.total)+'  \u00b7  '+m.overlay_label+': '+money(m.overlay_total));
       text('qReview',m.review===null?'Not available':nf.format(m.review));text('qInferred',m.inferred===null?'Not available':nf.format(m.inferred));text('qUnclassified',m.unclassified===null?'Not available':nf.format(m.unclassified));
     }
     document.querySelectorAll('[data-scope]').forEach(b=>b.addEventListener('click',()=>{scope=b.dataset.scope;render()}));
     render();
     </script></body></html>'''
+    page = page.replace("__AGENCY_ROWS_CSS__", AGENCY_ROWS_CSS).replace("__AGENCY_ROWS_JS__", AGENCY_ROWS_JS)
     page = page.replace("__DATA__", safe_data).replace("__FRESHNESS__", source_meta)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     page, method_page = atlas_separate_methodology(page)
